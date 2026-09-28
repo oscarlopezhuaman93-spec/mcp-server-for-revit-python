@@ -86,10 +86,11 @@ def save_bar_slots(keys):
 def load_splice_settings():
     """{"on": bool, "max": m, "laps": {diameter key: cm}} - the lap splice
     settings of the window (pyRevit settings of this button)."""
-    settings = {"on": False, "max": rs.MAX_BAR_LENGTH, "laps": {}}
+    settings = {"on": True, "max": rs.MAX_BAR_LENGTH, "laps": {}}
     try:
         config = script.get_config(CONFIG_SECTION)
-        settings["on"] = (config.get_option("splice_on", u"0") or u"0") == u"1"
+        # on unless turned off: stacked columns get continuous bars
+        settings["on"] = (config.get_option("splice_on", u"1") or u"1") == u"1"
         settings["max"] = float(config.get_option("splice_max", u"") or rs.MAX_BAR_LENGTH)
         for pair in (config.get_option("splice_laps", u"") or u"").split(u"|"):
             if u"=" in pair:
@@ -2003,15 +2004,11 @@ splice = splice_for_generation(load_splice_settings())
 if splice is None:
     stacks = [[c] for c in with_spec]
 else:
-    # Continuous bars run a whole stack (same type and axis, all levels):
-    # every column of a stack holding one of the targets is built with it.
-    wanted = set(id_of(c.Id) for c in with_spec)
-    stacks = [s for s in rc.column_stacks([c for type_id in specs for c in by_id[type_id].columns])
-              if any(id_of(c.Id) in wanted for c in s)]
-    added = sum(len(s) for s in stacks) - len(with_spec)
+    # Continuous bars run each stack of the columns being built (same type
+    # and axis, one on another): only those chosen - picked ones when
+    # picking -, from the base of the lowest to the top of the highest.
+    stacks = rc.column_stacks(with_spec)
     with_spec = [c for s in stacks for c in s]
-    if added:
-        scope_label += u" (+{} de sus pilas: barras continuas)".format(added)
     missing = set()
     for s in stacks:
         length = (rc.Section(s[-1]).z_top - rc.Section(s[0]).z_bottom) * rc.FT

@@ -90,10 +90,11 @@ def save_bar_slots(keys):
 def load_splice_settings():
     """{"on": bool, "max": m, "laps": {diameter key: cm}} - the lap splice
     settings of the window (pyRevit settings of this button)."""
-    settings = {"on": False, "max": rs.MAX_BAR_LENGTH, "laps": {}}
+    settings = {"on": True, "max": rs.MAX_BAR_LENGTH, "laps": {}}
     try:
         config = script.get_config(CONFIG_SECTION)
-        settings["on"] = (config.get_option("splice_on", u"0") or u"0") == u"1"
+        # on unless turned off: stacked columns get continuous bars
+        settings["on"] = (config.get_option("splice_on", u"1") or u"1") == u"1"
         settings["max"] = float(config.get_option("splice_max", u"") or rs.MAX_BAR_LENGTH)
         for pair in (config.get_option("splice_laps", u"") or u"").split(u"|"):
             if u"=" in pair:

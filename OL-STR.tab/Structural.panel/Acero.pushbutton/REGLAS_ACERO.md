@@ -62,14 +62,15 @@ Código: `revit_mcp/rebar_spec.py` → `stack_lifts`; `rebar_columns.py` → `_r
 
 Código: `revit_mcp/rebar_spec.py` → `place_bar`.
 
-## 5. Empalme de barras longitudinales (opcional)
+## 5. Barras longitudinales continuas y empalme
 
-Se activa en la ventana, sección **3. Empalme de barras longitudinales**; los
-valores se guardan en la configuración del usuario.
+Sección **3. Empalme de barras longitudinales** de la ventana; los valores
+se guardan en la configuración del usuario.
 
-- Las barras longitudinales son **continuas en cada pila de columnas**: las
-  del mismo tipo, en el mismo eje, una sobre otra (todos los niveles). Al
-  generar una columna de la pila se genera la pila completa.
+- **Activado por defecto.** Las barras longitudinales son **continuas en las
+  columnas apiladas que se generan juntas** (mismo tipo, mismo eje, una
+  sobre otra): al seleccionar columnas, solo por las seleccionadas, de la
+  base de la más baja al tope de la más alta. No se corta una barra por piso.
 - Cada barra mide como máximo la **longitud máxima** (9 m por defecto). Al
   superarla se corta con un **empalme** de la longitud indicada para su
   diámetro (en cm).
