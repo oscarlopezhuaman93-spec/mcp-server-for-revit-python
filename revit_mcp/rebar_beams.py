@@ -143,6 +143,55 @@ class BeamLine(object):
         if (sec.direction - d).GetLength() > 1e-6:  # the section read from a reversed curve
             sec.direction = d
             sec.across = DB.XYZ.BasisZ.CrossProduct(d).Normalize()
+        ys = [p[1] for p in sec.polygon_m]
+        self.ref_bottom, self.ref_top = min(ys), max(ys)  # the reference (deepest end) section
+        self._read_profile()
+
+    def _read_profile(self):
+        """Bottom and top faces along the line, [(s, y)] each, from the
+        vertices of its elements' solids: at every s the lowest and highest
+        vertex (a lone vertex goes to the face it is nearer, in the
+        reference section). `variable`: a haunch - the depth changes along
+        the beam."""
+        by_s = {}
+        for element in self.elements:
+            for solid in rc._solids(element.get_Geometry(DB.Options())):
+                for edge in solid.Edges:
+                    curve = edge.AsCurve()
+                    for k in (0, 1):
+                        x, y, s = self.local(curve.GetEndPoint(k))
+                        by_s.setdefault(round(s, 3), []).append(y)
+        bottom, top = [], []
+        for s in sorted(by_s):
+            lo, hi = min(by_s[s]), max(by_s[s])
+            if hi - lo > 0.02:
+                bottom.append((s, lo))
+                top.append((s, hi))
+            elif abs(lo - self.ref_top) < abs(lo - self.ref_bottom):
+                top.append((s, hi))
+            else:
+                bottom.append((s, lo))
+        self.bottom_points = bottom or [(0.0, self.ref_bottom)]
+        self.top_points = top or [(0.0, self.ref_top)]
+        self.variable = any(abs(y - self.ref_bottom) > 0.01 for _, y in self.bottom_points) or \
+            any(abs(y - self.ref_top) > 0.01 for _, y in self.top_points)
+        self.breaks = sorted(set(s for s, _ in self.bottom_points + self.top_points))
+
+    def depth_at(self, s):
+        """(bottom, top) of the section at s (local y)."""
+        return spec.interpolate(self.bottom_points, s), spec.interpolate(self.top_points, s)
+
+    def polygon_at(self, points, s):
+        """Points drawn on the reference section, fitted to the section at s."""
+        bottom, top = self.depth_at(s)
+        return spec.haunch_polyline(points, self.ref_bottom, self.ref_top, bottom, top)
+
+    def shift_at(self, y):
+        """The vertical shift along the beam of a bar at reference height y."""
+        def shift(s):
+            bottom, top = self.depth_at(s)
+            return spec.haunch_shift(y, self.ref_bottom, self.ref_top, bottom, top)
+        return shift
 
     @property
     def type_id(self):
@@ -394,33 +443,39 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         for a, b in spans:
             host = line.element_at((a + b) / 2.0)
             for start, n, spacing, _, side in spec.stirrup_sets(b - a, family.zones, family.rest):
-                for index, (pts, is_open, shape_name) in enumerate(loops):
-                    s = a + start + side * lifts[(kind, index, False)]
-                    if is_open:
-                        world = [line.point(x, y, s) for x, y in pts]
-                        curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]
-                        rebar = rc._create_stirrup(
-                            doc, shapes, shape_name, host, bar_type, None, hooks, family.key,
-                            List[DB.Curve](curves), RebarHookOrientation.Left, RebarHookOrientation.Left, axis)
-                    else:
-                        world = [line.point(x, y, s) for x, y in _counterclockwise(pts)]
-                        curves = [DB.Line.CreateBound(world[k], world[(k + 1) % len(world)])
-                                  for k in range(len(world))]
+                # On a haunch every stirrup has its own height: one by one
+                # (a rebar set holds identical bars), each fitted there.
+                runs = ([(start + k * spacing, 1) for k in range(n)] if line.variable else [(start, n)])
+                for offset, count in runs:
+                    for index, (pts, is_open, shape_name) in enumerate(loops):
+                        s = a + offset + side * lifts[(kind, index, False)]
+                        fitted = line.polygon_at(pts, s) if line.variable else pts
+                        if is_open:
+                            world = [line.point(x, y, s) for x, y in fitted]
+                            curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]
+                            rebar = rc._create_stirrup(
+                                doc, shapes, shape_name, host, bar_type, None, hooks, family.key,
+                                List[DB.Curve](curves), RebarHookOrientation.Left, RebarHookOrientation.Left, axis)
+                        else:
+                            world = [line.point(x, y, s) for x, y in _counterclockwise(fitted)]
+                            curves = [DB.Line.CreateBound(world[k], world[(k + 1) % len(world)])
+                                      for k in range(len(world))]
+                            rebar = rc._create_stirrup(
+                                doc, shapes, shape_name, host, bar_type, hook, hooks, family.key,
+                                List[DB.Curve](curves), RebarHookOrientation.Left, RebarHookOrientation.Left, axis)
+                        rc._set(rebar, count, spacing / FT)
+                        rc._tag(rebar, host)
+                        created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
+                    for index, (ta, tb, shape_name) in enumerate(ties):
+                        s = a + offset + side * lifts[(kind, index, True)]
+                        (pa, pb) = line.polygon_at([ta, tb], s) if line.variable else (ta, tb)
+                        curve = DB.Line.CreateBound(line.point(pa[0], pa[1], s), line.point(pb[0], pb[1], s))
                         rebar = rc._create_stirrup(
                             doc, shapes, shape_name, host, bar_type, hook, hooks, family.key,
-                            List[DB.Curve](curves), RebarHookOrientation.Left, RebarHookOrientation.Left, axis)
-                    rc._set(rebar, n, spacing / FT)
-                    rc._tag(rebar, host)
-                    created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
-                for index, (ta, tb, shape_name) in enumerate(ties):
-                    s = a + start + side * lifts[(kind, index, True)]
-                    curve = DB.Line.CreateBound(line.point(ta[0], ta[1], s), line.point(tb[0], tb[1], s))
-                    rebar = rc._create_stirrup(
-                        doc, shapes, shape_name, host, bar_type, hook, hooks, family.key,
-                        List[DB.Curve]([curve]), RebarHookOrientation.Left, RebarHookOrientation.Right, axis)
-                    rc._set(rebar, n, spacing / FT)
-                    rc._tag(rebar, host)
-                    created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
+                            List[DB.Curve]([curve]), RebarHookOrientation.Left, RebarHookOrientation.Right, axis)
+                        rc._set(rebar, count, spacing / FT)
+                        rc._tag(rebar, host)
+                        created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
 
     # longitudinal bars along the whole line
     cover = beam_spec.cover_m
@@ -450,6 +505,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             last = index == len(pieces) - 1
             path = spec.beam_bar_points(x, y, d, s0, s1, lap, not last,
                                         leg if index == 0 else 0.0, leg if last else 0.0)
+            if line.variable:  # along the sloped face of a haunch
+                path = spec.follow_profile(path, line.shift_at(y), line.breaks)
             world = [line.point(px, py, ps) for px, py, ps in path]
             curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]
             host = line.element_at((s0 + s1) / 2.0)

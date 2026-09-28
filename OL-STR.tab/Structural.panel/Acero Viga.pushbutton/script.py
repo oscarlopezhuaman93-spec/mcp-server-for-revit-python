@@ -462,9 +462,15 @@ class AceroWindow(forms.WPFWindow):
         if section is None:
             self.txt_section.Text = u"Seccion {}: {}".format(t.name, t.section_error)
         else:
-            self.txt_section.Text = u"Seccion {}  ({:.0f} x {:.0f} cm{})".format(
-                t.name, section.b * rc.FT * 100, section.h * rc.FT * 100,
-                u"" if section.is_rectangle else u", irregular")
+            line = self._view_line
+            haunch = u""
+            if line is not None and line.variable:
+                depths = [line.depth_at(c) for c in line.breaks]
+                haunch = u" - cartela: peralte {:.2f} a {:.2f} m (se dibuja en el mayor)".format(
+                    min(t_ - b_ for b_, t_ in depths), max(t_ - b_ for b_, t_ in depths))
+            self.txt_section.Text = u"Seccion {}  ({:.0f} x {:.0f} cm{}){}".format(
+                t.short_name, section.b * rc.FT * 100, section.h * rc.FT * 100,
+                u"" if section.is_rectangle else u", irregular", haunch)
         self.redraw()
 
     def _keep_draft(self):
@@ -977,6 +983,13 @@ class AceroWindow(forms.WPFWindow):
         section, scale = frame[0], frame[1]
         bars = self.design["bars"]
         self._polyline(frame, section.polygon_m, C_OUTLINE, 2, closed=True, fill=C_CONCRETE)
+        line = getattr(self, "_view_line", None)
+        if line is not None and line.variable:
+            # a haunch: its shallowest section too (the drawing is on the deepest)
+            shallow = min((line.depth_at(c) for c in line.breaks), key=lambda bt: bt[1] - bt[0])
+            self._polyline(frame, rs.haunch_polyline(section.polygon_m, line.ref_bottom, line.ref_top,
+                                                     shallow[0], shallow[1]),
+                           C_OUTLINE, 1.2, closed=True, dash=True)
         try:
             cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
             self._polyline(frame, rs.offset_polygon_outward(section.polygon_m, -cover), C_COVER, 1,
@@ -1475,7 +1488,11 @@ class AceroWindow(forms.WPFWindow):
             for a, b in spans:
                 for z, _ in rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]):
                     ss.append(a + z + (-lift if z > (b - a) / 2.0 + 1e-6 else lift))
-            loops.append((kind, pts, closed, ss, rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
+            radius = rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0
+            if line.variable:  # a haunch: each stirrup fitted to its section
+                loops += [(kind, line.polygon_at(pts, s_), closed, [s_], radius) for s_ in ss]
+            else:
+                loops.append((kind, pts, closed, ss, radius))
         # longitudinal bars along the whole beam
         try:
             cover = float(f["cover"].replace(u",", u".")) / 100.0
@@ -1505,8 +1522,11 @@ class AceroWindow(forms.WPFWindow):
                                               lap, splice["max"] - leg)
             for i, (s0, s1) in enumerate(pieces):
                 last = i == len(pieces) - 1
-                bar_paths.append((rs.beam_bar_points(x, y, d, s0, s1, lap, not last,
-                                                     leg if i == 0 else 0.0, leg if last else 0.0), d / 2.0))
+                path = rs.beam_bar_points(x, y, d, s0, s1, lap, not last,
+                                          leg if i == 0 else 0.0, leg if last else 0.0)
+                if line.variable:  # along the sloped face of a haunch
+                    path = rs.follow_profile(path, line.shift_at(y), line.breaks)
+                bar_paths.append((path, d / 2.0))
                 if not last:
                     laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
         if missing_legs:
@@ -1515,6 +1535,15 @@ class AceroWindow(forms.WPFWindow):
             messages.append(u"Falta la longitud de empalme de " + u", ".join(sorted(missing_laps)))
         polygon = line.section.polygon_m
         supports_view = [{"label": s["label"], "s0": s["s0"], "s1": s["s1"]} for s in supports]
+        # the concrete as it is: each element's outline (elevation) and its
+        # stretches between slope changes with their sections (3D)
+        outlines, pieces = [], []
+        for r0, r1 in line.ranges:
+            cuts = [r0] + [b for b in line.breaks if r0 + 1e-6 < b < r1 - 1e-6] + [r1]
+            outlines.append([(c, line.depth_at(c)[1]) for c in cuts]
+                            + [(c, line.depth_at(c)[0]) for c in reversed(cuts)])
+            pieces += [(c0, line.polygon_at(polygon, c0), c1, line.polygon_at(polygon, c1))
+                       for c0, c1 in zip(cuts, cuts[1:])]
         elev = {
             "polygon": polygon,
             "length": line.length,
@@ -1525,6 +1554,9 @@ class AceroWindow(forms.WPFWindow):
             "laps": sorted(set(laps)),
             "cover": cover,
             "message": messages[0] if messages else None,
+            "outlines": outlines,
+            "bottom": line.bottom_points,
+            "top": line.top_points,
         }
         scene = {
             "polygon": polygon,
@@ -1533,6 +1565,7 @@ class AceroWindow(forms.WPFWindow):
             "bar_paths": bar_paths,
             "loops": loops,
             "supports_mesh": [tri for s in supports for tri in s["triangles"]],
+            "pieces": pieces,
         }
         return elev, scene
 

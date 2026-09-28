@@ -13,7 +13,7 @@ import math
 
 from System.Windows import FontWeights, Point, Size
 from System.Windows.Controls import Canvas, TextBlock
-from System.Windows.Media import Color, Colors, DoubleCollection, RotateTransform, SolidColorBrush
+from System.Windows.Media import Color, Colors, DoubleCollection, PointCollection, RotateTransform, SolidColorBrush
 from System.Windows.Media.Media3D import (
     AmbientLight,
     DiffuseMaterial,
@@ -28,7 +28,7 @@ from System.Windows.Media.Media3D import (
     SpecularMaterial,
     Vector3D,
 )
-from System.Windows.Shapes import Line, Rectangle
+from System.Windows.Shapes import Line, Polygon, Rectangle
 
 DETAIL_LEVELS = (u"Bajo", u"Medio", u"Alto")
 
@@ -133,6 +133,21 @@ def _line(canvas, frame, a, b, brush, thickness, dash=False):
         line.StrokeDashArray = dashes
     line.IsHitTestVisible = False
     canvas.Children.Add(line)
+
+
+def _polygon(canvas, frame, points, fill, stroke=None):
+    shape = Polygon()
+    pts = PointCollection()
+    for x, y in points:
+        px, py = _px(frame, x, y)
+        pts.Add(Point(px, py))
+    shape.Points = pts
+    shape.Fill = fill
+    if stroke is not None:
+        shape.Stroke = stroke
+        shape.StrokeThickness = 1
+    shape.IsHitTestVisible = False
+    canvas.Children.Add(shape)
 
 
 def _rect(canvas, frame, x0, y0, x1, y1, fill, stroke=None):
@@ -681,6 +696,36 @@ def _add_beam_prism(mesh, polygon, s0, s1):
             mesh.TriangleIndices.Add(idx)
 
 
+def _add_beam_piece(mesh, s0, poly0, s1, poly1):
+    """A stretch of beam from section poly0 at s0 to poly1 at s1 (the same
+    corners, moved: a haunch)."""
+    n = len(poly0)
+    base = mesh.Positions.Count
+    for s, poly in ((s0, poly0), (s1, poly1)):
+        cx = sum(p[0] for p in poly) / n
+        cy = sum(p[1] for p in poly) / n
+        mesh.Positions.Add(Point3D(s, cx, cy))
+        for x, y in poly:
+            mesh.Positions.Add(Point3D(s, x, y))
+    top = base + n + 1
+    for k in range(n):
+        a, b = 1 + k, 1 + (k + 1) % n
+        for idx in (base, base + a, base + b, top, top + b, top + a):
+            mesh.TriangleIndices.Add(idx)
+        for idx in (base + a, top + b, base + b, base + a, top + a, top + b):
+            mesh.TriangleIndices.Add(idx)
+
+
+def _interp(points, s):
+    """Piecewise-linear value at s of [(s, value)] (flat beyond the ends)."""
+    if s <= points[0][0]:
+        return points[0][1]
+    for (s0, v0), (s1, v1) in zip(points, points[1:]):
+        if s <= s1:
+            return v0 if s1 - s0 < 1e-9 else v0 + (v1 - v0) * (s - s0) / (s1 - s0)
+    return points[-1][1]
+
+
 def build_beam(scene, data, detail):
     """Fill a Scene3D with a beam line: `data` polygon, ranges [(s0, s1)]
     of its elements, length, bar_paths [(points (x, y, s), radius)], loops
@@ -730,8 +775,12 @@ def build_beam(scene, data, detail):
         group.Children.Add(model)
     if detail != u"Bajo":
         concrete = MeshGeometry3D()
-        for s0, s1 in data["ranges"]:
-            _add_beam_prism(concrete, data["polygon"], s0, s1)
+        if data.get("pieces"):  # the real shape, a haunch included
+            for s0, poly0, s1, poly1 in data["pieces"]:
+                _add_beam_piece(concrete, s0, poly0, s1, poly1)
+        else:
+            for s0, s1 in data["ranges"]:
+                _add_beam_prism(concrete, data["polygon"], s0, s1)
         glass = DiffuseMaterial(SolidColorBrush(_color(170, 180, 195, 70)))
         model = GeometryModel3D(concrete, glass)
         model.BackMaterial = glass
@@ -791,8 +840,14 @@ def draw_beam_elevation(canvas, data, frame):
         _rect(canvas, frame, f["s0"], y0 - reach, f["s1"], y1 + reach, C_NEIGHBOR, C_NEIGHBOR_EDGE)
         _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + (index % 2) * 1.2 * u, f["label"],
               brush=C_NEIGHBOR_TEXT, size=9, bold=True)
-    for s0, s1 in data["ranges"]:
-        _rect(canvas, frame, s0, y0, s1, y1, C_CONCRETE, C_BAR)
+    if data.get("outlines"):  # the real outline, a haunch included
+        for outline in data["outlines"]:
+            _polygon(canvas, frame, [(s, y * k) for s, y in outline], C_CONCRETE, C_BAR)
+    else:
+        for s0, s1 in data["ranges"]:
+            _rect(canvas, frame, s0, y0, s1, y1, C_CONCRETE, C_BAR)
+    bottom = data.get("bottom") or [(0.0, y0 / k)]
+    top = data.get("top") or [(0.0, y1 / k)]
     cover = (data.get("cover") or 0.04) * k
     band0, band1 = y0 - 1.6 * u, y0 - 0.6 * u
     for span in data["spans"]:
@@ -808,11 +863,13 @@ def draw_beam_elevation(canvas, data, frame):
                     _text(canvas, frame, a + (lo + hi) / 2.0, (band0 + band1) / 2.0,
                           u"Z{}".format(zone + 1), size=9, bold=True)
             for offset, _ in edge["tagged"]:
-                _line(canvas, frame, (a + offset, y0 + cover * 0.5), (a + offset, y1 - cover * 0.5), C_EDGE, 1.5)
+                sb, st = _interp(bottom, a + offset) * k, _interp(top, a + offset) * k
+                _line(canvas, frame, (a + offset, sb + cover * 0.5), (a + offset, st - cover * 0.5), C_EDGE, 1.5)
         conf = span.get("conf")
         if conf:
             for offset, _ in conf["tagged"]:
-                _line(canvas, frame, (a + offset, y0 + cover), (a + offset, y1 - cover), C_CONF, 1, dash=True)
+                sb, st = _interp(bottom, a + offset) * k, _interp(top, a + offset) * k
+                _line(canvas, frame, (a + offset, sb + cover), (a + offset, st - cover), C_CONF, 1, dash=True)
     # longitudinal bars (seen from the side: hooks and cranks show)
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):

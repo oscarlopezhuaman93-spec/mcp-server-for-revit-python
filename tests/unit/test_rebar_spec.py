@@ -238,6 +238,42 @@ class TestBeams:
         assert bottom[-1] == pytest.approx((0.1, -0.09, 3.0))
 
 
+class TestHaunch:
+    # a 0.25 wide haunch: top at +0.425, bottom from -0.425 (0.85 deep,
+    # the reference) at s = 2.5 up to -0.075 (0.50 deep) at s = 0
+    bottom = [(0.0, -0.075), (2.5, -0.425)]
+
+    def test_interpolate(self):
+        from revit_mcp.rebar_spec import interpolate
+
+        assert interpolate(self.bottom, 1.25) == pytest.approx(-0.25)
+        assert interpolate(self.bottom, -1.0) == pytest.approx(-0.075)
+        assert interpolate(self.bottom, 9.0) == pytest.approx(-0.425)
+
+    def test_stirrup_keeps_its_cover_on_both_faces(self):
+        from revit_mcp.rebar_spec import haunch_polyline
+
+        stirrup = [(-0.07, -0.37), (0.07, -0.37), (0.07, 0.37), (-0.07, 0.37)]  # drawn on the 0.85 section
+        fitted = haunch_polyline(stirrup, -0.425, 0.425, -0.075, 0.425)  # at the 0.50 end
+        assert fitted[0] == pytest.approx((-0.07, -0.02))  # 5.5 cm over the bottom, as drawn
+        assert fitted[2] == pytest.approx((0.07, 0.37))  # the top corners stay
+
+    def test_bottom_bar_follows_the_sloped_face(self):
+        from revit_mcp.rebar_spec import follow_profile, haunch_shift, interpolate
+
+        def shift(s):
+            return haunch_shift(-0.36, -0.425, 0.425, interpolate(self.bottom, s), 0.425)
+
+        path = [(0.07, -0.36, -0.2), (0.07, -0.36, 3.0)]
+        out = follow_profile(path, shift, [0.0, 2.5])
+        assert [p[2] for p in out] == pytest.approx([-0.2, 0.0, 2.5, 3.0])
+        assert out[1][1] == pytest.approx(-0.36 + 0.35)  # 0.50 end
+        assert out[2][1] == pytest.approx(-0.36)  # 0.85 end
+        # a top bar keeps its height: no point left in line with its neighbours
+        flat = follow_profile([(0.07, 0.36, -0.2), (0.07, 0.36, 3.0)], lambda s: 0.0, [0.0, 2.5])
+        assert flat == [(0.07, 0.36, -0.2), (0.07, 0.36, 3.0)]
+
+
 def test_a_diameter_added_to_the_table_becomes_known(tmp_path, monkeypatch):
     import revit_mcp.rebar_spec as rs
 

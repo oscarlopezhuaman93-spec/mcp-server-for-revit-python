@@ -194,6 +194,61 @@ def beam_bar_points(x, y, diameter, s_start, s_end, lap, cranked, leg_start=0.0,
     return points
 
 
+def interpolate(points, s):
+    """Piecewise-linear value at s of [(s, value)] sorted by s (held flat
+    beyond the ends)."""
+    if not points:
+        return 0.0
+    if s <= points[0][0]:
+        return points[0][1]
+    for (s0, v0), (s1, v1) in zip(points, points[1:]):
+        if s <= s1:
+            return v0 if s1 - s0 < 1e-9 else v0 + (v1 - v0) * (s - s0) / (s1 - s0)
+    return points[-1][1]
+
+
+def haunch_shift(y, ref_bottom, ref_top, bottom, top):
+    """How far a point of the reference (deepest) section at height y moves
+    where the section runs from `bottom` to `top`: a point in the upper
+    half keeps its distance to the top face, one in the lower half to the
+    bottom face (so the cover holds on a haunch)."""
+    if y >= (ref_bottom + ref_top) / 2.0:
+        return top - ref_top
+    return bottom - ref_bottom
+
+
+def haunch_polyline(points, ref_bottom, ref_top, bottom, top):
+    """A stirrup drawn on the reference section, fitted to a section running
+    from `bottom` to `top`: each corner moves with its nearer face."""
+    return [(x, y + haunch_shift(y, ref_bottom, ref_top, bottom, top)) for x, y in points]
+
+
+def follow_profile(path, shift_at, breaks):
+    """A bar path [(x, y, s)] made to follow a sloped face: the points where
+    the face changes slope (`breaks`, s values) inserted along its runs and
+    every point moved up or down by shift_at(s)."""
+    out = []
+    for k, (x, y, s) in enumerate(path):
+        if k:
+            px, py, ps = path[k - 1]
+            lo, hi = sorted((ps, s))
+            inner = [b for b in breaks if lo + 1e-6 < b < hi - 1e-6]
+            for b in (sorted(inner) if s > ps else sorted(inner, reverse=True)):
+                t = (b - ps) / (s - ps)
+                out.append((px + (x - px) * t, py + (y - py) * t, b))
+        out.append((x, y, s))
+    moved = [(x, y + shift_at(s), s) for x, y, s in out]
+    # a point in line with its neighbours goes (Revit refuses collinear runs)
+    kept = moved[:1]
+    for k in range(1, len(moved) - 1):
+        a, b, c = kept[-1], moved[k], moved[k + 1]
+        u = (b[1] - a[1], b[2] - a[2])
+        v = (c[1] - b[1], c[2] - b[2])
+        if abs(u[0] * v[1] - u[1] * v[0]) > 1e-9 or abs(b[0] - a[0]) > 1e-9:
+            kept.append(b)
+    return kept + moved[-1:]
+
+
 def bar_piece_points(x, y, diameter, z_start, z_end, lap, cranked, inward=None):
     """Points (x, y, z) of one piece of a spliced longitudinal bar at plan
     position (x, y): straight, or - `cranked`, the lower bar of a lap -

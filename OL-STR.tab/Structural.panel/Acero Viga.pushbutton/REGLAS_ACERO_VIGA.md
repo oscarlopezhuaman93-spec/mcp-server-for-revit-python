@@ -60,6 +60,24 @@ Código: `rebar_beams.py` → `line_supports`, `spans_and_ends`;
 Código: `rebar_spec.py` → `beam_lap_zones`, `lap_pieces`, `beam_bar_points`;
 `rebar_beams.py` → `generate_line`.
 
-## 6. Pendiente (segunda etapa)
+## 6. Vigas de peralte variable (cartelas)
+
+- El plugin lee la forma real de la viga (fondo y tope a lo largo). Si el
+  peralte cambia, la trata como **cartela**; el título lo indica
+  ("cartela: peralte 0.50 a 0.85 m").
+- La sección se **dibuja en el mayor peralte**; en la planta, la línea
+  punteada marca la sección menor.
+- Cada estribo toma la altura de su posición: sus esquinas de arriba
+  conservan la distancia al tope y las de abajo al fondo (el recubrimiento
+  se mantiene). Como cada uno tiene su altura, se crean **uno por uno**
+  (regla Individual), con la misma distribución.
+- Las barras siguen su cara: las inferiores el fondo inclinado, con doblez
+  donde cambia la pendiente.
+- Supone ancho constante (solo cambia el peralte).
+
+Código: `rebar_spec.py` → `haunch_polyline`, `follow_profile`;
+`rebar_beams.py` → `BeamLine._read_profile`, `polygon_at`.
+
+## 7. Pendiente (segunda etapa)
 
 - Bastones (barras adicionales en apoyos y al centro).
