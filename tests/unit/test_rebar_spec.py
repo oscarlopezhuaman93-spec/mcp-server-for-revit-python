@@ -238,6 +238,21 @@ class TestBeams:
         assert bottom[-1] == pytest.approx((0.1, -0.09, 3.0))
 
 
+def test_tie_hook_marks_c_and_s():
+    from revit_mcp.rebar_spec import TIE_C, TIE_S, tie_hook_marks
+
+    a, b = (0.0, 0.0), (0.2, 0.0)
+    c = tie_hook_marks(a, b, TIE_C, 0.01)
+    s = tie_hook_marks(a, b, TIE_S, 0.01)
+    assert len(c) == 2 and len(s) == 2
+    # C: both hooks bend to the same side (+y); S: to opposite sides
+    assert max(p[1] for p in c[0]) > 0.015 and max(p[1] for p in c[1]) > 0.015
+    assert max(p[1] for p in s[0]) > 0.015 and min(p[1] for p in s[1]) < -0.015
+    # each hook turns back towards the inside of the tie
+    assert c[0][-1][0] > 0 and c[1][-1][0] < 0.2
+    assert tie_hook_marks(a, b, None, 0.01) == []
+
+
 def test_e060_class_b_laps():
     from revit_mcp.rebar_spec import e060_lap_cm
 

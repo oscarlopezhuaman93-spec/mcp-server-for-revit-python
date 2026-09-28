@@ -325,6 +325,45 @@ class StirrupHooks(object):
             self.cache[key] = stirrup_hook(self.doc, diameter_key, angle_deg)
         return self.cache[key]
 
+    def tie_180(self, diameter_key):
+        """The 180-degree hook of the C/S crossties; when the project has
+        none, one is made (inside the running Transaction): stirrup/tie
+        style, straight extension 4 db (E.060 standard 180-degree hook).
+        The bend follows each bar type's own diameter."""
+        hook = self.get(diameter_key, 180.0)
+        if hook is None:
+            hook = RebarHookType.Create(self.doc, math.pi, 4.0)
+            hook.Style = RebarStyle.StirrupTie
+            try:
+                hook.Name = u"Grapa 180 (OL-STR)"
+            except Exception:
+                pass
+            self.cache = dict((k, v) for k, v in self.cache.items() if k[1] != 180)
+            self.cache[(diameter_key, 180)] = hook
+        return hook
+
+
+# Hook orientations (start, end) of the C/S crossties along their line.
+TIE_ORIENTATIONS = {
+    spec.TIE_C: (RebarHookOrientation.Left, RebarHookOrientation.Right),
+    spec.TIE_S: (RebarHookOrientation.Left, RebarHookOrientation.Left),
+}
+
+
+def _create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks, key, curve, normal=None):
+    """A crosstie: a C or S one (shape_name in spec.TIE_STYLES) with
+    180-degree hooks, else as `_create_stirrup` (135-degree hooks or the
+    shape chosen for it)."""
+    if shape_name in spec.TIE_STYLES:
+        start, end = TIE_ORIENTATIONS[shape_name]
+        h180 = hooks.tie_180(key)
+        return Rebar.CreateFromCurves(
+            doc, RebarStyle.StirrupTie, bar_type, h180, h180, host, normal or DB.XYZ.BasisZ,
+            List[DB.Curve]([curve]), start, end, True, True)
+    return _create_stirrup(doc, shapes, shape_name, host, bar_type, hook, hooks, key,
+                           List[DB.Curve]([curve]), RebarHookOrientation.Left, RebarHookOrientation.Right,
+                           normal)
+
 
 class RebarShapes(object):
     """The project's rebar shapes by name, for the stirrups and ties drawn
@@ -661,10 +700,8 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 line = DB.Line.CreateBound(
                     section.point_m(a[0], a[1], z), section.point_m(b[0], b[1], z)
                 )
-                rebar = _create_stirrup(
-                    doc, shapes, shape_name, column, stirrup_type, hook, hooks, family.key,
-                    List[DB.Curve]([line]), RebarHookOrientation.Left, RebarHookOrientation.Right,
-                )
+                rebar = _create_tie(doc, shapes, shape_name, column, stirrup_type, hook, hooks,
+                                    family.key, line)
                 _set(rebar, n, spacing)
                 _tag(rebar, column)
                 created.append((rebar, family.key, kind))

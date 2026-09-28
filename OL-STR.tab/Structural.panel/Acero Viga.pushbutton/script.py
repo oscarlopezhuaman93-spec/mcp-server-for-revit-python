@@ -1072,13 +1072,18 @@ class AceroWindow(forms.WPFWindow):
                     self._side_labels(frame, outline, closed=not is_open)
                 except rs.SpecError:
                     pass
-        for kind, a, b in self.design["ties"]:
+        tie_styles = rs.design_shapes(self.design, "ties")
+        for (kind, a, b), style in zip(self.design["ties"], tie_styles):
             key = self._family_key(kind)
             try:
                 a2, b2 = rs.tie_centerline(a, b, bars, key)
             except rs.SpecError:
                 a2, b2 = a, b
-            self._polyline(frame, [a2, b2], color(kind), max(2, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale))
+            thickness = max(2, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale)
+            self._polyline(frame, [a2, b2], color(kind), thickness)
+            # C / S crossties: their 180-degree hooks
+            for mark in rs.tie_hook_marks(a2, b2, style, 2.5 * rs.BAR_DIAMETERS_MM[key] / 1000.0):
+                self._polyline(frame, mark, color(kind), thickness)
         for x, y, key in bars:
             self._dot(frame, x, y, max(3.5, rs.BAR_DIAMETERS_MM[key] / 2000.0 * scale), C_BAR)
 
@@ -1867,7 +1872,23 @@ class AceroWindow(forms.WPFWindow):
         self._push_undo()
         shape = self.active_shape
         rs.add_item(self.design, "ties", (self.kind_for["tie"], a, b),
-                    shape["name"] if shape and shape["tie"] else None)
+                    shape["name"] if shape and shape["tie"] else self._tie_style())
+
+    def _tie_style(self):
+        """The crosstie type chosen in "Grapa:": rs.TIE_C / rs.TIE_S (180-
+        degree hooks) or None (135-degree stirrup hooks)."""
+        if self.rb_tie_c.IsChecked:
+            return rs.TIE_C
+        if self.rb_tie_s.IsChecked:
+            return rs.TIE_S
+        return None
+
+    def tie_style_changed(self, sender, args):
+        """Choosing a crosstie type takes the Grapa tool."""
+        if not hasattr(self, "kind_for"):
+            return  # fired while the XAML loads
+        self.rb_tie.IsChecked = True
+        self.redraw()
 
     def _erase(self, frame, p):
         """Remove the bar, tie or stirrup nearest to the click."""

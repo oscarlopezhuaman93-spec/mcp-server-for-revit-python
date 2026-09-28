@@ -86,6 +86,40 @@ def bar_weight_kg_per_m(diameter_key):
     return STEEL_DENSITY_KG_M3 * math.pi * d * d / 4.0
 
 
+# Crossties with 180-degree hooks (kept in the tie's shape slot of the
+# drawing): C bends both hooks to one side, S to opposite sides. A tie
+# without one of these takes the 135-degree stirrup hooks.
+TIE_C = u"GRAPA C"
+TIE_S = u"GRAPA S"
+TIE_STYLES = (TIE_C, TIE_S)
+
+
+def tie_hook_marks(a, b, style, radius):
+    """Plan preview of a crosstie's 180-degree hooks: at each end (a, b) a
+    half circle of `radius` turning back along the tie - both on one side
+    for TIE_C, on opposite sides for TIE_S. [[(x, y)...]] per hook."""
+    if style not in TIE_STYLES:
+        return []
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    tx, ty = dx / length, dy / length
+    nx, ny = -ty, tx
+    marks = []
+    for end, inward, side in ((a, 1.0, 1.0), (b, -1.0, 1.0 if style == TIE_C else -1.0)):
+        cx, cy = end[0] + nx * radius * side, end[1] + ny * radius * side
+        pts = []
+        for k in range(9):
+            ang = math.pi * k / 8.0
+            # from the end point round the outside back to the tie's side
+            ox = -nx * side * math.cos(ang) - tx * inward * math.sin(ang)
+            oy = -ny * side * math.cos(ang) - ty * inward * math.sin(ang)
+            pts.append((cx + ox * radius, cy + oy * radius))
+        last = pts[-1]
+        pts.append((last[0] + tx * inward * radius * 1.5, last[1] + ty * inward * radius * 1.5))
+        marks.append(pts)
+    return marks
+
+
 def e060_lap_cm(diameter_key, fc_mpa=21.0, fy_mpa=420.0, factor=1.3):
     """Suggested tension lap splice (cm) for a bar, per Norma E.060 cap. 12:
     `factor` x ld (1.3: class B), ld = fy / (2.1 sqrt(f'c)) db up to 3/4"

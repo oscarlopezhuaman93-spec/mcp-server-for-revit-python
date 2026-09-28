@@ -470,9 +470,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                         s = a + offset + side * lifts[(kind, index, True)]
                         (pa, pb) = line.polygon_at([ta, tb], s) if line.variable else (ta, tb)
                         curve = DB.Line.CreateBound(line.point(pa[0], pa[1], s), line.point(pb[0], pb[1], s))
-                        rebar = rc._create_stirrup(
-                            doc, shapes, shape_name, host, bar_type, hook, hooks, family.key,
-                            List[DB.Curve]([curve]), RebarHookOrientation.Left, RebarHookOrientation.Right, axis)
+                        rebar = rc._create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks,
+                                               family.key, curve, axis)
                         rc._set(rebar, count, spacing / FT)
                         rc._tag(rebar, host)
                         created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
