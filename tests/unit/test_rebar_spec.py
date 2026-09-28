@@ -196,6 +196,48 @@ class TestSplices:
         assert warnings and pieces[0] == (0.0, 9.0)
 
 
+class TestBeams:
+    def test_clear_spans_between_supports(self):
+        from revit_mcp.rebar_spec import clear_spans
+
+        # a beam 0 .. 5.0 resting on a beam before 0, a column at 4.0 .. 4.8
+        assert clear_spans((0.0, 5.0), [(-0.3, 0.0), (4.0, 4.8), (5.0, 6.0)]) == pytest.approx([(0.0, 4.0), (4.8, 5.0)])
+        assert clear_spans((0.0, 8.0), [(3.9, 4.1)]) == pytest.approx([(0.0, 3.9), (4.1, 8.0)])
+        assert clear_spans((0.0, 2.0), [(-1.0, 0.03)]) == pytest.approx([(0.03, 2.0)])
+
+    def test_lap_zones_top_centre_bottom_ends(self):
+        from revit_mcp.rebar_spec import beam_lap_zones, confinement_length
+
+        conf = confinement_length([(1, 0.05), (10, 0.10)])
+        assert conf == pytest.approx(1.05)
+        assert beam_lap_zones([(0.0, 6.0)], True, conf) == pytest.approx([(2.0, 4.0)])
+        assert beam_lap_zones([(0.0, 6.0)], False, conf) == pytest.approx([(1.05, 2.0), (4.0, 4.95)])
+        assert beam_lap_zones([(0.0, 3.0)], False, conf) == []  # the confinement takes the end thirds
+
+    def test_spliced_top_bar_laps_in_a_central_third(self):
+        from revit_mcp.rebar_spec import beam_lap_zones, lap_pieces
+
+        spans = [(0.0, 6.0), (6.5, 12.5)]
+        zones = beam_lap_zones(spans, True, 1.05)  # (2.0, 4.0) and (8.5, 10.5)
+        pieces, warnings = lap_pieces(-0.2, 12.7, zones, 0.75)
+        assert not warnings and len(pieces) == 3
+        assert all(e - s <= 9.0 + 1e-9 for s, e in pieces)
+        for (_, e), (s, _) in zip(pieces, pieces[1:]):
+            assert e - s == pytest.approx(0.75)
+            assert any(lo - 1e-9 <= s and e <= hi + 1e-9 for lo, hi in zones)  # each lap in a central third
+
+    def test_hooks_turn_towards_the_other_face(self):
+        from revit_mcp.rebar_spec import beam_bar_points
+
+        top = beam_bar_points(0.1, 0.24, 0.0159, -0.26, 5.3, 0.0, False, 0.20, 0.20)
+        expected = [(0.1, 0.04, -0.26), (0.1, 0.24, -0.26), (0.1, 0.24, 5.3), (0.1, 0.04, 5.3)]
+        assert len(top) == 4
+        for got, want in zip(top, expected):
+            assert got == pytest.approx(want)
+        bottom = beam_bar_points(0.1, -0.24, 0.0159, 0.0, 3.0, 0.0, False, 0.0, 0.15)
+        assert bottom[-1] == pytest.approx((0.1, -0.09, 3.0))
+
+
 def test_a_diameter_added_to_the_table_becomes_known(tmp_path, monkeypatch):
     import revit_mcp.rebar_spec as rs
 

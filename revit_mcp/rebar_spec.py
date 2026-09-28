@@ -99,16 +99,26 @@ def splice_pieces(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH):
     Returns ([(start, end)] pieces bottom up, each overlapping the next by
     `lap`; warnings) - a warning when no story fits a lap (then the cut
     goes at the maximum length)."""
+    zones = []  # central halves
+    for b, c in stories:
+        quarter = (c - b) / 4.0
+        zones.append((b + quarter, c - quarter))
+    return lap_pieces(bar_start, bar_end, zones, lap, max_length, u"un tramo central de piso")
+
+
+def lap_pieces(bar_start, bar_end, zones, lap, max_length=MAX_BAR_LENGTH, where=u"una zona permitida"):
+    """Cut a bar running bar_start .. bar_end (m) into bars of at most
+    `max_length` lapping `lap`, every lap inside one of the `zones` where
+    splices are allowed ([(lo, hi)]), as far along as the bar length
+    allows. Returns ([(start, end)] pieces, warnings); `where` names the
+    zones in the warning given when none fits a lap (the cut then goes at
+    the maximum length)."""
     eps = 1e-6
     pieces, warnings = [], []
     if lap >= max_length:
         return [(bar_start, bar_end)], [u"el empalme ({:.2f} m) no puede ser mayor que la barra ({:.2f} m)"
                                         .format(lap, max_length)]
-    zones = []  # central halves, highest first
-    for b, c in stories:
-        quarter = (c - b) / 4.0
-        zones.append((b + quarter, c - quarter))
-    zones.sort(key=lambda z: -z[1])
+    zones = sorted(zones, key=lambda z: -z[1])  # furthest first
     start = bar_start
     while bar_end - start > max_length + eps:
         limit = start + max_length
@@ -120,21 +130,81 @@ def splice_pieces(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH):
                 break
         if end is None:
             end = limit
-            warnings.append(u"no hay un tramo central de piso donde quepa un empalme de {:.2f} m; "
-                            u"se empalma a {:.2f} m".format(lap, end))
+            warnings.append(u"no hay {} donde quepa un empalme de {:.2f} m; "
+                            u"se empalma a {:.2f} m".format(where, lap, end))
         pieces.append((start, end))
         start = end - lap
     pieces.append((start, bar_end))
     return pieces, warnings
 
 
-def bar_piece_points(x, y, diameter, z_start, z_end, lap, cranked):
+def clear_spans(extent, supports, min_length=0.05):
+    """The clear spans of a beam: its extent (start, end, m along it) minus
+    the supports crossing it ([(s0, s1)]: columns, walls, the beams it
+    rests on), pieces shorter than `min_length` left out."""
+    a, b = extent
+    cuts = sorted((max(s0, a), min(s1, b)) for s0, s1 in supports if s1 > a and s0 < b)
+    spans, pos = [], a
+    for s0, s1 in cuts:
+        if s0 > pos + min_length:
+            spans.append((pos, s0))
+        pos = max(pos, s1)
+    if b > pos + min_length:
+        spans.append((pos, b))
+    return spans
+
+
+def confinement_length(zones):
+    """How far the end zones of a distribution reach from each end
+    ('1@.05, 10@.10' -> 1.05 m)."""
+    return sum(count * spacing for count, spacing in zones)
+
+
+def beam_lap_zones(spans, top, confinement):
+    """Where the bars of a beam may be spliced (the user's rule, E.060): top
+    bars in the central third of each clear span, bottom bars in its end
+    thirds outside the stirrup confinement zone. [(lo, hi)]."""
+    zones = []
+    for a, b in spans:
+        third = (b - a) / 3.0
+        if top:
+            zones.append((a + third, b - third))
+            continue
+        if confinement < third:
+            zones.append((a + confinement, a + third))
+            zones.append((b - third, b - confinement))
+    return zones
+
+
+def beam_bar_points(x, y, diameter, s_start, s_end, lap, cranked, leg_start=0.0, leg_end=0.0):
+    """Points (x, y, s) of one piece of a beam's longitudinal bar at section
+    position (x across, y up from the section center), along the beam from
+    s_start to s_end: cranked before a lap like `bar_piece_points`, with a
+    90-degree hook leg at either end (legs > 0) turned towards the other
+    face - down for a top bar, up for a bottom one."""
+    turn = -1.0 if y > 0 else 1.0
+    # cranked vertically (in the plane of its hooks: one flat bar)
+    points = bar_piece_points(x, y, diameter, s_start, s_end, lap, cranked, inward=(0.0, turn))
+    if leg_start > 0:
+        px, py, ps = points[0]
+        points.insert(0, (px, py + turn * leg_start, ps))
+    if leg_end > 0:
+        px, py, ps = points[-1]
+        points.append((px, py + turn * leg_end, ps))
+    return points
+
+
+def bar_piece_points(x, y, diameter, z_start, z_end, lap, cranked, inward=None):
     """Points (x, y, z) of one piece of a spliced longitudinal bar at plan
     position (x, y): straight, or - `cranked`, the lower bar of a lap -
-    bent 1:6 one bar diameter towards the section center just before the
-    lap, so it runs beside the upper bar there."""
+    bent 1:6 one bar diameter towards the section center (or `inward`, a
+    unit (x, y) direction) just before the lap, so it runs beside the
+    upper bar there."""
     r = math.hypot(x, y)
-    ux, uy = (-x / r, -y / r) if r > 1e-6 else (1.0, 0.0)
+    if inward is not None:
+        ux, uy = inward
+    else:
+        ux, uy = (-x / r, -y / r) if r > 1e-6 else (1.0, 0.0)
     crank_from = z_end - lap - CRANK_SLOPE * diameter
     if not cranked or crank_from <= z_start + 0.01:
         return [(x, y, z_start), (x, y, z_end)]
