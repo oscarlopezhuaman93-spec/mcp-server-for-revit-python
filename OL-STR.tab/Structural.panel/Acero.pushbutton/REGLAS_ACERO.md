@@ -72,8 +72,11 @@ se guardan en la configuración del usuario.
   sobre otra): al seleccionar columnas, solo por las seleccionadas, de la
   base de la más baja al tope de la más alta. No se corta una barra por piso.
 - Cada barra mide como máximo la **longitud máxima** (9 m por defecto). Al
-  superarla se corta con un **empalme** de la longitud indicada para su
-  diámetro (en cm).
+  superarla se corta con un **empalme**, **solo si su diámetro está marcado**
+  en la ventana. Las longitudes vienen precargadas según la **E.060** (empalme
+  en tracción clase B = 1.3 ld, f'c 210, fy 4200, redondeado a 5 cm, mínimo
+  30 cm) y se pueden editar. Un diámetro no marcado queda en una sola barra y
+  el resultado lo advierte.
 - El empalme va en la **mitad central de la luz libre de un piso** (fuera de
   las zonas de confinamiento), lo más arriba que permita la longitud máxima.
 - La barra inferior del empalme termina con una **bayoneta 1:6** que la mete

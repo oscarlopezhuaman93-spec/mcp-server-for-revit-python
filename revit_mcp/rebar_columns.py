@@ -734,11 +734,14 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     warnings = []
     for x, y, key in column_spec.design["bars"]:
         lap = splice["laps"].get(key)
-        if lap is None:
+        if lap is None:  # this diameter isn't spliced: one bar, whatever its length
             if total > splice["max"] + 1e-6:
-                raise spec.SpecError(u"falta la longitud de empalme de las barras de {}".format(key))
+                warnings.append(u"Barras de {}: {:.2f} m sin empalme (diametro no marcado para empalmar)"
+                                .format(key, total))
+            pieces, found = [(0.0, total)], []
             lap = 0.0
-        pieces, found = spec.splice_pieces(0.0, total, stories, lap, splice["max"])
+        else:
+            pieces, found = spec.splice_pieces(0.0, total, stories, lap, splice["max"])
         warnings += [u"Barras de {}: {}".format(key, w) for w in found]
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         r = math.hypot(x, y)
@@ -763,7 +766,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
                     created[element_id_value(column.Id)].append(
                         (rebar, key, LONGITUDINAL, inside / (z_end - z_start)))
                 bottom = top
-    return created, warnings
+    return created, [w for i, w in enumerate(warnings) if w not in warnings[:i]]  # once each
 
 
 def _counterclockwise(points):

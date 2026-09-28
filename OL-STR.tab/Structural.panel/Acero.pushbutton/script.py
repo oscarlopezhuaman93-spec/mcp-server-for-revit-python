@@ -84,18 +84,24 @@ def save_bar_slots(keys):
 
 
 def load_splice_settings():
-    """{"on": bool, "max": m, "laps": {diameter key: cm}} - the lap splice
-    settings of the window (pyRevit settings of this button)."""
-    settings = {"on": True, "max": rs.MAX_BAR_LENGTH, "laps": {}}
+    """{"on": bool, "max": m, "laps": {diameter key: cm}, "active": {keys}}:
+    the splice settings (shared pyRevit settings). Every diameter's lap is
+    prefilled from Norma E.060 (rs.e060_lap_cm, class B) until edited;
+    only the diameters in "active" are spliced."""
+    settings = {"on": True, "max": rs.MAX_BAR_LENGTH, "active": set(),
+                "laps": dict((k, float(rs.e060_lap_cm(k))) for k in rs.bar_diameter_keys())}
     try:
         config = script.get_config(CONFIG_SECTION)
-        # on unless turned off: stacked columns get continuous bars
+        # on unless turned off: stacked columns / whole beams get continuous bars
         settings["on"] = (config.get_option("splice_on", u"1") or u"1") == u"1"
         settings["max"] = float(config.get_option("splice_max", u"") or rs.MAX_BAR_LENGTH)
         for pair in (config.get_option("splice_laps", u"") or u"").split(u"|"):
             if u"=" in pair:
                 key, cm = pair.split(u"=", 1)
                 settings["laps"][rs.parse_diameter(key)] = float(cm)
+        for key in (config.get_option("splice_active", u"") or u"").split(u"|"):
+            if key.strip():
+                settings["active"].add(rs.parse_diameter(key))
     except Exception:
         pass
     return settings
@@ -108,17 +114,64 @@ def save_splice_settings(settings):
         config.splice_max = u"{}".format(settings["max"])
         config.splice_laps = u"|".join(u"{}={}".format(k.replace(u'"', u"pulg"), v)
                                        for k, v in sorted(settings["laps"].items()))
+        config.splice_active = u"|".join(k.replace(u'"', u"pulg") for k in sorted(settings["active"]))
         script.save_config()
     except Exception:
         pass
 
 
 def splice_for_generation(settings):
-    """What rc.generate_stack takes: None when splicing is off, else
-    {"max": m, "laps": {key: m}}."""
+    """What the generation takes: None when continuous bars are off, else
+    {"max": m, "laps": {key: m}} with only the diameters to splice (a bar
+    of another diameter past the maximum stays whole, with a warning)."""
     if not settings["on"]:
         return None
-    return {"max": settings["max"], "laps": dict((k, cm / 100.0) for k, cm in settings["laps"].items())}
+    return {"max": settings["max"],
+            "laps": dict((k, settings["laps"][k] / 100.0) for k in settings["active"] if k in settings["laps"])}
+
+
+def lap_rows(panel, settings, handler):
+    """One row per diameter in `panel`: a check "splice this diameter" and
+    its lap (cm). Returns ({key: box}, {key: check})."""
+    boxes, checks = {}, {}
+    panel.Children.Clear()
+    for key in rs.bar_diameter_keys():
+        cell = StackPanel()
+        cell.Orientation = Orientation.Horizontal
+        cell.Margin = Thickness(0, 0, 8, 4)
+        check = CheckBox()
+        check.Content = u"\u00d8{}".format(key)
+        check.Width = 62
+        check.VerticalAlignment = VerticalAlignment.Center
+        check.IsChecked = key in settings["active"]
+        check.ToolTip = u"Marcado: las barras de este diametro se empalman al superar la longitud maxima."
+        check.Click += handler
+        box = TextBox()
+        box.Width = 34
+        cm = settings["laps"].get(key)
+        box.Text = u"{:g}".format(cm) if cm else u""
+        box.ToolTip = u"Longitud de empalme (cm). Sugerido: E.060 clase B = {} cm (f'c 210, fy 4200).".format(
+            rs.e060_lap_cm(key))
+        box.TextChanged += handler
+        cell.Children.Add(check)
+        cell.Children.Add(box)
+        panel.Children.Add(cell)
+        boxes[key] = box
+        checks[key] = check
+    return boxes, checks
+
+
+def lap_form(boxes, checks):
+    """({key: cm} typed, {keys checked})."""
+    laps = {}
+    for key, box in boxes.items():
+        try:
+            cm = float((box.Text or u"").replace(u",", u"."))
+        except ValueError:
+            continue
+        if cm > 0:
+            laps[key] = cm
+    return laps, set(key for key, check in checks.items() if check.IsChecked)
 
 
 SNAP_PX = 12  # a click this close to a bar snaps to it
@@ -696,50 +749,25 @@ class AceroWindow(forms.WPFWindow):
 
     # -- lap splices of the longitudinal bars ---------------------------------
     def _fill_splice(self):
-        """"3. Empalme": the switch, the maximum bar length and one box per
-        diameter, as last saved."""
+        """"3. Empalme": the switch, the maximum bar length and, per
+        diameter, whether it is spliced and its lap (cm), as last saved."""
         self._filling_splice = True
         try:
             settings = load_splice_settings()
             self.chk_splice.IsChecked = settings["on"]
             self.txt_splice_max.Text = u"{:g}".format(settings["max"])
-            self.lap_boxes = {}
-            self.panel_laps.Children.Clear()
-            for key in rs.bar_diameter_keys():
-                cell = StackPanel()
-                cell.Orientation = Orientation.Horizontal
-                cell.Margin = Thickness(0, 0, 8, 4)
-                label = TextBlock()
-                label.Text = u"Ø{} ".format(key)
-                label.Width = 44
-                label.VerticalAlignment = VerticalAlignment.Center
-                box = TextBox()
-                box.Width = 38
-                cm = settings["laps"].get(key)
-                box.Text = u"{:g}".format(cm) if cm else u""
-                box.TextChanged += self.splice_changed
-                cell.Children.Add(label)
-                cell.Children.Add(box)
-                self.panel_laps.Children.Add(cell)
-                self.lap_boxes[key] = box
+            self.lap_boxes, self.lap_checks = lap_rows(self.panel_laps, settings, self.splice_changed)
         finally:
             self._filling_splice = False
 
     def _splice_from_form(self):
-        """The splice settings as typed ({"on", "max", "laps"}); boxes that
-        don't read as a number are left out."""
-        settings = {"on": bool(self.chk_splice.IsChecked), "max": rs.MAX_BAR_LENGTH, "laps": {}}
+        """The splice settings as typed ({"on", "max", "laps", "active"})."""
+        laps, active = lap_form(self.lap_boxes, self.lap_checks)
+        settings = {"on": bool(self.chk_splice.IsChecked), "max": rs.MAX_BAR_LENGTH, "laps": laps, "active": active}
         try:
             settings["max"] = float((self.txt_splice_max.Text or u"").replace(u",", u".")) or rs.MAX_BAR_LENGTH
         except ValueError:
             pass
-        for key, box in self.lap_boxes.items():
-            try:
-                cm = float((box.Text or u"").replace(u",", u"."))
-            except ValueError:
-                continue
-            if cm > 0:
-                settings["laps"][key] = cm
         return settings
 
     def splice_changed(self, sender, args):
@@ -1459,20 +1487,20 @@ class AceroWindow(forms.WPFWindow):
         splice = splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
         bar_paths, laps = None, []
         if splice and len(segments) > 1:
-            missing = sorted(set(k for _, _, k in bars if k not in splice["laps"]))
-            if missing and top > splice["max"] + 1e-6:
-                messages.append(u"Falta la longitud de empalme de " + u", ".join(missing))
-            else:
-                bar_paths = []
-                stories = [(s["z"], s["z"] + s["clear"]) for s in segments]
-                for x, y, key in bars:
-                    lap = splice["laps"].get(key, 0.0)
-                    pieces, _ = rs.splice_pieces(0.0, top, stories, lap, splice["max"])
-                    d = rs.BAR_DIAMETERS_MM[key] / 1000.0
-                    for i, (a, b) in enumerate(pieces):
-                        bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))
-                        if i < len(pieces) - 1:
-                            laps.append((round(b - lap, 3), round(b, 3), key))
+            unspliced = sorted(set(k for _, _, k in bars if k not in splice["laps"]))
+            if unspliced and top > splice["max"] + 1e-6:
+                messages.append(u"Sin empalme (diametro no marcado): barras de {} de {:.2f} m".format(
+                    u", ".join(unspliced), top))
+            bar_paths = []
+            stories = [(s["z"], s["z"] + s["clear"]) for s in segments]
+            for x, y, key in bars:
+                lap = splice["laps"].get(key, 0.0)
+                pieces = rs.splice_pieces(0.0, top, stories, lap, splice["max"])[0] if lap else [(0.0, top)]
+                d = rs.BAR_DIAMETERS_MM[key] / 1000.0
+                for i, (a, b) in enumerate(pieces):
+                    bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))
+                    if i < len(pieces) - 1:
+                        laps.append((round(b - lap, 3), round(b, 3), key))
         xs = [p[0] for p in base.polygon_m]
         elev = {
             "width": max(xs) - min(xs),
@@ -2009,18 +2037,6 @@ else:
     # picking -, from the base of the lowest to the top of the highest.
     stacks = rc.column_stacks(with_spec)
     with_spec = [c for s in stacks for c in s]
-    missing = set()
-    for s in stacks:
-        length = (rc.Section(s[-1]).z_top - rc.Section(s[0]).z_bottom) * rc.FT
-        if length > splice["max"] + 1e-6:
-            missing |= set(k for _, _, k in specs[id_of(s[0].GetTypeId())].design["bars"]
-                           if k not in splice["laps"])
-    if missing:
-        forms.alert(
-            u"Falta la longitud de empalme de: {}.\n\nEscribela en '3. Empalme de barras "
-            u"longitudinales' de la ventana Acero.".format(u", ".join(sorted(missing))),
-            title="Acero")
-        script.exit()
 
 mode = forms.CommandSwitchWindow.show(
     ["Vista previa (sin cambios en el modelo)", "Generar barras y metrado"],

@@ -86,6 +86,17 @@ def bar_weight_kg_per_m(diameter_key):
     return STEEL_DENSITY_KG_M3 * math.pi * d * d / 4.0
 
 
+def e060_lap_cm(diameter_key, fc_mpa=21.0, fy_mpa=420.0, factor=1.3):
+    """Suggested tension lap splice (cm) for a bar, per Norma E.060 cap. 12:
+    `factor` x ld (1.3: class B), ld = fy / (2.1 sqrt(f'c)) db up to 3/4"
+    (1.7 instead of 2.1 from 7/8"), normal concrete, uncoated bars;
+    rounded up to 5 cm, at least 30 cm. The project's own table rules."""
+    db = BAR_DIAMETERS_MM[diameter_key]
+    k = 2.1 if db <= 20.0 else 1.7
+    ld = fy_mpa / (k * math.sqrt(fc_mpa)) * db / 10.0  # cm
+    return max(30, int(math.ceil(factor * ld / 5.0 - 1e-9)) * 5)
+
+
 MAX_BAR_LENGTH = 9.0  # m, the commercial bar length
 CRANK_SLOPE = 6.0  # a lapping bar is cranked 1:6 (run per unit of offset)
 

@@ -494,8 +494,11 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         # the hook legs count in a bar's length (a 9 m bar holds them)
         if splice is not None and bar_end - bar_start + 2 * leg > splice["max"] + 1e-6:
             lap = splice["laps"].get(key)
-            if not lap:
-                raise spec.SpecError(u"falta la longitud de empalme de las barras de {}".format(key))
+            if not lap:  # this diameter isn't spliced: one bar, whatever its length
+                warnings.append(u"Barras {} de {}: {:.2f} m sin empalme (diametro no marcado para empalmar)"
+                                .format(u"superiores" if top else u"inferiores", key, bar_end - bar_start + 2 * leg))
+                lap = 0.0
+        if lap:
             zones = spec.beam_lap_zones(spans, top, confinement)
             where = u"un tercio central de tramo" if top else u"un tercio extremo de tramo (fuera del confinamiento)"
             pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap, splice["max"] - leg, where)
@@ -517,7 +520,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             )
             rc._tag(rebar, host)
             _share(line, created, rebar, key, rc.LONGITUDINAL, s0, s1)
-    return created, warnings
+    return created, [w for i, w in enumerate(warnings) if w not in warnings[:i]]  # once each
 
 
 def record_weight(element, created):

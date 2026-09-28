@@ -238,6 +238,15 @@ class TestBeams:
         assert bottom[-1] == pytest.approx((0.1, -0.09, 3.0))
 
 
+def test_e060_class_b_laps():
+    from revit_mcp.rebar_spec import e060_lap_cm
+
+    # 1.3 x ld rounded up to 5 cm (5/8": 90.1 -> 95)
+    expected = {'3/8"': 55, '1/2"': 75, '5/8"': 95, '3/4"': 110, '1"': 180, "6mm": 35}
+    for key, cm in expected.items():
+        assert e060_lap_cm(key) == cm, key
+
+
 class TestHaunch:
     # a 0.25 wide haunch: top at +0.425, bottom from -0.425 (0.85 deep,
     # the reference) at s = 2.5 up to -0.075 (0.50 deep) at s = 0

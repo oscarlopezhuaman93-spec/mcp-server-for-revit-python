@@ -90,7 +90,7 @@
                             <TextBox x:Name="txt_splice_max" Width="45" TextChanged="splice_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <TextBlock Text="Longitud de empalme por diametro (cm):" Margin="0,2,0,2"/>
+                        <TextBlock Text="Empalme por diametro: marca los que se empalman (cm; sugerido E.060 clase B):" TextWrapping="Wrap" Margin="0,2,0,2"/>
                         <WrapPanel x:Name="panel_laps" IsEnabled="{Binding IsChecked, ElementName=chk_splice}"/>
                         <TextBlock Text="Pata del gancho de 90 por diametro (cm):" Margin="0,6,0,2"
                                    ToolTip="Largo del tramo que baja (barras superiores) o sube (inferiores) en el apoyo extremo, cuando el anclaje es gancho de 90."/>
