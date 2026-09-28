@@ -467,11 +467,12 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                         created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
                     for index, (ta, tb, shape_name) in enumerate(ties):
                         s = a + offset + side * lifts[(kind, index, True)]
-                        ea, eb = rc.tie_ends(ta, tb, design["bars"], family.key, shape_name, bar_type)
+                        tie_type = rc.tie_bar_type(doc, bar_type, ta, tb, design["bars"], shape_name)
+                        ea, eb = rc.tie_ends(ta, tb, design["bars"], family.key, shape_name, tie_type)
                         (pa, pb) = line.polygon_at([ea, eb], s) if line.variable else (ea, eb)
                         curve = DB.Line.CreateBound(line.point(pa[0], pa[1], s), line.point(pb[0], pb[1], s))
                         angle = 180.0 if shape_name in spec.TIE_STYLES else 135.0
-                        rebar = rc._create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks,
+                        rebar = rc._create_tie(doc, shapes, shape_name, host, tie_type, hook, hooks,
                                                family.key, curve, axis, leg=rc.tie_leg_m(design, family.key, angle))
                         rc._set(rebar, count, spacing / FT)
                         rc._tag(rebar, host)

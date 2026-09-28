@@ -273,8 +273,8 @@ class BarTypes(object):
         d_mm = spec.BAR_DIAMETERS_MM[key]
         best = None
         for diameter, name, bt in self.types:
-            if abs(diameter - d_mm) > 0.4:
-                continue
+            if abs(diameter - d_mm) > 0.4 or u" GRAPA " in name:
+                continue  # a crosstie's own bend (tie_bar_type)
             score = 0
             if mark and mark in name:
                 score += 4
@@ -407,6 +407,38 @@ def tie_ends(a, b, bars, key, shape_name, bar_type):
         eb = radius + db / 2.0 * FT - inset(b)
         return (pa[0] - ux * ea, pa[1] - uy * ea), (pb[0] + ux * eb, pb[1] + uy * eb)
     return spec.tie_centerline(a, b, bars, key)
+
+
+_TIE_TYPES = {}
+
+
+def tie_bar_type(doc, bar_type, a, b, bars, shape_name):
+    """The bar type of a C/S crosstie hooked on the bars at a and b: a copy
+    of `bar_type` ("... GRAPA 1/2"") whose stirrup/tie bend diameter is the
+    larger bar's diameter, so each hook hugs its bar; made inside the running
+    Transaction when missing. Any other tie keeps `bar_type`."""
+    if shape_name not in spec.TIE_STYLES:
+        return bar_type
+    def key_at(p):
+        return min(bars, key=lambda q: (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2)[2]
+    key = max((key_at(a), key_at(b)), key=lambda k: spec.BAR_DIAMETERS_MM[k])
+    base = bar_type.get_Parameter(DB.BuiltInParameter.ALL_MODEL_TYPE_NAME).AsString()
+    name = u"{} GRAPA {}".format(base, key)
+    cache = (doc.PathName, doc.Title, name)
+    found = _TIE_TYPES.get(cache)
+    if found is None or not found.IsValidObject:
+        found = None
+        for t in DB.FilteredElementCollector(doc).OfClass(RebarBarType):
+            if t.get_Parameter(DB.BuiltInParameter.ALL_MODEL_TYPE_NAME).AsString() == name:
+                found = t
+                break
+        if found is None:
+            found = bar_type.Duplicate(name)
+        _TIE_TYPES[cache] = found
+    bend = spec.BAR_DIAMETERS_MM[key] / 304.8
+    if abs(found.StirrupTieBendDiameter - bend) > 1e-6:
+        found.StirrupTieBendDiameter = bend
+    return found
 
 
 def tie_leg_m(design, key, angle):
@@ -764,12 +796,13 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 created.append((rebar, family.key, kind))
             for index, (ta, tb, shape_name) in enumerate(ties):
                 z = z_set + side * lift_ft[(kind, index, True)]
-                a, b = tie_ends(ta, tb, design["bars"], family.key, shape_name, stirrup_type)
+                tie_type = tie_bar_type(doc, stirrup_type, ta, tb, design["bars"], shape_name)
+                a, b = tie_ends(ta, tb, design["bars"], family.key, shape_name, tie_type)
                 line = DB.Line.CreateBound(
                     section.point_m(a[0], a[1], z), section.point_m(b[0], b[1], z)
                 )
                 angle = 180.0 if shape_name in spec.TIE_STYLES else 135.0
-                rebar = _create_tie(doc, shapes, shape_name, column, stirrup_type, hook, hooks,
+                rebar = _create_tie(doc, shapes, shape_name, column, tie_type, hook, hooks,
                                     family.key, line, leg=tie_leg_m(design, family.key, angle))
                 _set(rebar, n, spacing)
                 _tag(rebar, column)
