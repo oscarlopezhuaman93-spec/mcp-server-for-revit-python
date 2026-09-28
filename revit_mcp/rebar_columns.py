@@ -395,9 +395,17 @@ def tie_ends(a, b, bars, key, shape_name, bar_type):
         # end (measured: 23.8 mm for 3/8"): lengthen the curve by that much
         dx, dy = pb[0] - pa[0], pb[1] - pa[1]
         length = math.hypot(dx, dy) or 1.0
-        ext = radius + db / 2.0 * FT
-        ux, uy = dx / length * ext, dy / length * ext
-        return (pa[0] - ux, pa[1] - uy), (pb[0] + ux, pb[1] + uy)
+        # ...and the hook's outer face goes no further out than the stirrup's
+        # (bar face + one stirrup diameter, the tie's), inside the cover:
+        # the bend then moves in along the tie, still around its bar
+        def inset(p):
+            bar = min(bars, key=lambda q: (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2)
+            dbl = spec.BAR_DIAMETERS_MM[bar[2]] / 1000.0
+            return max(0.0, radius + db / 2.0 * FT - (dbl / 2.0 + db * FT))
+        ux, uy = dx / length, dy / length
+        ea = radius + db / 2.0 * FT - inset(a)
+        eb = radius + db / 2.0 * FT - inset(b)
+        return (pa[0] - ux * ea, pa[1] - uy * ea), (pb[0] + ux * eb, pb[1] + uy * eb)
     return spec.tie_centerline(a, b, bars, key)
 
 
