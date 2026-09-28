@@ -349,17 +349,20 @@ def _hook_angle(shape, end):
 
 
 def _create_stirrup(doc, shapes, shape_name, column, bar_type, hook, hooks, key, curves,
-                    orient_start, orient_end):
+                    orient_start, orient_end, normal=None):
     """A stirrup or tie with the shape drawn for it (its hooks those the
     shape asks for); without one, or if Revit refuses the drawing for that
-    shape, the shape Revit matches to the curves (with `hook` at both ends)."""
+    shape, the shape Revit matches to the curves (with `hook` at both ends).
+    `normal`: the normal of its plane (up for a column's, the beam axis for
+    a beam's)."""
+    normal = normal or DB.XYZ.BasisZ
     shape = shapes.get(shape_name) if shapes is not None else None
     if shape is not None:
         ends = [hooks.get(key, _hook_angle(shape, e)) if _hook_angle(shape, e) else None
                 for e in (0, 1)]
         try:
             rebar = Rebar.CreateFromCurvesAndShape(
-                doc, shape, bar_type, ends[0], ends[1], column, DB.XYZ.BasisZ, curves,
+                doc, shape, bar_type, ends[0], ends[1], column, normal, curves,
                 orient_start, orient_end,
             )
         except Exception:
@@ -368,7 +371,7 @@ def _create_stirrup(doc, shapes, shape_name, column, bar_type, hook, hooks, key,
             return rebar
         shapes.mismatched.append((element_id_value(column.Id), shape_name))
     return Rebar.CreateFromCurves(
-        doc, RebarStyle.StirrupTie, bar_type, hook, hook, column, DB.XYZ.BasisZ,
+        doc, RebarStyle.StirrupTie, bar_type, hook, hook, column, normal,
         curves, orient_start, orient_end, True, True,
     )
 
