@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Genera el acero de refuerzo (barras 3D) y su metrado en kg para
-columnas de concreto. La configuracion (longitudinal, estribos, nucleo y
-el dibujo de la seccion con estribos, grapas y barras a mano) se guarda
-en cada tipo de columna."""
+vigas de concreto (armazon estructural). La configuracion (estribos,
+anclaje y el dibujo de la seccion con estribos, grapas y barras
+superiores e inferiores) se guarda en cada tipo de viga. Las barras
+corren por toda la viga (sus tramos del mismo tipo y eje); los estribos
+se distribuyen en cada luz libre desde la cara de cada apoyo."""
 
-__title__ = "Acero\nColumna"
+__title__ = "Acero\nViga"
 __author__ = "Revit MCP"
 
 import io
@@ -22,6 +24,7 @@ import formwork_spatial as fw_spatial
 import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
+import rebar_beams as rb
 import rebar_views as rv
 import utils as fw_utils
 
@@ -32,6 +35,7 @@ reload(fw_spatial)
 reload(fw_params)
 reload(rs)
 reload(rc)
+reload(rb)
 reload(rv)
 
 from pyrevit import revit, DB, forms, script
@@ -51,7 +55,7 @@ from System.Windows.Shapes import Ellipse, Line, Polygon, Polyline
 output = script.get_output()
 doc = revit.doc
 
-COLUMNS_BIC = DB.BuiltInCategory.OST_StructuralColumns
+FRAMING_BIC = DB.BuiltInCategory.OST_StructuralFraming
 STIRRUP_DIAMETERS = [u"6mm", u"8mm", u'1/4"', u'3/8"', u"12mm", u'1/2"']
 BAR_SLOT_DEFAULTS = [u'1/2"', u'5/8"', u'3/4"', u'1"']  # the four "Barras" options
 # pyRevit settings shared by the Acero buttons (column and beam): bar
@@ -113,11 +117,34 @@ def save_splice_settings(settings):
 
 
 def splice_for_generation(settings):
-    """What rc.generate_stack takes: None when splicing is off, else
+    """What rb.generate_line takes: None when splicing is off, else
     {"max": m, "laps": {key: m}}."""
     if not settings["on"]:
         return None
     return {"max": settings["max"], "laps": dict((k, cm / 100.0) for k, cm in settings["laps"].items())}
+
+
+def load_hook_legs():
+    """{diameter key: cm} - the leg of the 90-degree end hooks, per diameter
+    (shared pyRevit settings)."""
+    legs = {}
+    try:
+        for pair in (script.get_config(CONFIG_SECTION).get_option("hook_legs", u"") or u"").split(u"|"):
+            if u"=" in pair:
+                key, cm = pair.split(u"=", 1)
+                legs[rs.parse_diameter(key)] = float(cm)
+    except Exception:
+        pass
+    return legs
+
+
+def save_hook_legs(legs):
+    try:
+        config = script.get_config(CONFIG_SECTION)
+        config.hook_legs = u"|".join(u"{}={}".format(k.replace(u'"', u"pulg"), v) for k, v in sorted(legs.items()))
+        script.save_config()
+    except Exception:
+        pass
 
 
 SNAP_PX = 12  # a click this close to a bar snaps to it
@@ -144,28 +171,50 @@ def id_of(element_id):
     return fw_utils.element_id_value(element_id)
 
 
-class ColumnType(object):
-    """A column type in use in the model, with a representative column."""
+class BeamType(object):
+    """A beam type in use in the model: its elements (`columns`, the name
+    the window code shares with Acero Columna) and its beam lines."""
 
-    def __init__(self, type_id, columns):
+    def __init__(self, type_id, beams):
         self.id = type_id
         self.element = doc.GetElement(DB.ElementId(type_id))
         self.name = rc.element_name(self.element)
-        self.columns = columns
+        self.columns = beams
         self._section = None
+        self._lines = None
         self.section_error = None
 
     @property
     def section(self):
         if self._section is None and self.section_error is None:
-            try:
-                self._section = rc.Section(self.columns[0])
-            except Exception as e:
-                self.section_error = u"{}".format(e)
+            for beam in self.columns:
+                try:
+                    self._section = rb.BeamSection(beam)
+                    break
+                except Exception as e:
+                    self.section_error = u"{}".format(e)
+            if self._section is not None:
+                self.section_error = None
         return self._section
 
+    @property
+    def lines(self):
+        """The type's beam lines (one beam each, its elements in order)."""
+        if self._lines is None:
+            self._lines = rb.beam_lines(self.columns)
+        return self._lines
+
+    @property
+    def short_name(self):
+        """The end of a long family-style name, where the mark and size are
+        ('SFA_VIGA ... F'C=210Kg/cm²_VS1-18_0.50x0.60m' -> 'VS1-18_0.50x0.60m')."""
+        for sep in (u"cm²_", u"cm2_"):
+            if sep in self.name:
+                return self.name.split(sep)[-1]
+        return self.name
+
     def config(self):
-        return rc.read_type_config(self.element)
+        return rb.read_type_config(self.element)
 
     def configured(self):
         cfg = self.config()
@@ -173,7 +222,7 @@ class ColumnType(object):
 
 
 class State(object):
-    """What survives closing the window to pick columns in the model."""
+    """What survives closing the window to pick beams in the model."""
 
     def __init__(self):
         self.checked = set()
@@ -181,13 +230,13 @@ class State(object):
         self.active = None
         self.drafts = {}  # type id -> design being drawn (unsaved)
         self.form = None  # last form field values
-        self.scope = "model"  # "pick" when columns were picked in the model
+        self.scope = "model"  # "pick" when beams were picked in the model
 
 
-class _ColumnFilter(ISelectionFilter):
+class _BeamFilter(ISelectionFilter):
     def AllowElement(self, element):
         category = element.Category
-        return category is not None and id_of(category.Id) == int(COLUMNS_BIC)
+        return category is not None and id_of(category.Id) == int(FRAMING_BIC)
 
     def AllowReference(self, reference, point):
         return False
@@ -195,12 +244,12 @@ class _ColumnFilter(ISelectionFilter):
 
 def collect_types():
     by_type = {}
-    for c in (
-        DB.FilteredElementCollector(doc).OfCategory(COLUMNS_BIC).WhereElementIsNotElementType()
+    for b in (
+        DB.FilteredElementCollector(doc).OfCategory(FRAMING_BIC).WhereElementIsNotElementType()
     ):
-        by_type.setdefault(id_of(c.GetTypeId()), []).append(c)
+        by_type.setdefault(id_of(b.GetTypeId()), []).append(b)
     return sorted(
-        [ColumnType(t, cols) for t, cols in by_type.items()], key=lambda ct: ct.name
+        [BeamType(t, beams) for t, beams in by_type.items()], key=lambda bt: bt.name
     )
 
 
@@ -299,12 +348,14 @@ class AceroWindow(forms.WPFWindow):
         self.bar_tools = [(self.rb_bar_1, self.cbo_bar_1), (self.rb_bar_2, self.cbo_bar_2),
                           (self.rb_bar_3, self.cbo_bar_3), (self.rb_bar_4, self.cbo_bar_4)]
         self._filling_bars = True
-        for (rb, cbo), key in zip(self.bar_tools, load_bar_slots()):
+        for (radio, cbo), key in zip(self.bar_tools, load_bar_slots()):
             cbo.ItemsSource = List[str](rs.bar_diameter_keys())
             cbo.SelectedItem = key
         self._filling_bars = False
         self.bar_key = self.cbo_bar_2.SelectedItem
         self._fill_splice()
+        self.cbo_anchor.ItemsSource = List[str](list(rb.ANCHORS))
+        self.cbo_anchor.SelectedItem = rb.ANCHOR_HOOK
         self._updating_steel = False
         self.selected = None  # index of the stirrup whose measures are shown
         # Plan / elevation / 3D views: zoom-pan state and what they last showed.
@@ -315,10 +366,8 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_detail.SelectedItem = u"Medio"
         self._views_sig = None
         self._elev_data = None
-        self._clear_cache = {}
-        self._neighbor_cache = {}  # column id -> elements touching it
-        self._section_cache = {}  # column id -> rc.Section
-        self._view_columns = []  # the column(s), stacked, the 3D view and elevation show
+        self._support_cache = {}  # beam line key -> its supports (rb.line_supports)
+        self._view_line = None  # the beam line the 3D view and elevation show
         self._filling_columns = False
 
         self._refresh_steel()
@@ -347,19 +396,20 @@ class AceroWindow(forms.WPFWindow):
         box.Margin = Thickness(0, 0, 6, 0)
         self.checkboxes[t.id] = box
         label = TextBlock()
-        label.Text = u"{}{}  ({})".format(u"✓ " if t.configured() else u"", t.name, len(t.columns))
+        label.Text = u"{}{}  ({})".format(u"✓ " if t.configured() else u"", t.short_name, len(t.columns))
         panel.Children.Add(box)
         panel.Children.Add(label)
         item = ListBoxItem()
         item.Content = panel
         item.Tag = t.id
+        item.ToolTip = t.name
         return item
 
     def _refresh_type_labels(self):
         for item in self.list_types.Items:
             t = self.by_id[item.Tag]
             item.Content.Children[1].Text = u"{}{}  ({})".format(
-                u"✓ " if t.configured() else u"", t.name, len(t.columns))
+                u"✓ " if t.configured() else u"", t.short_name, len(t.columns))
 
     def checked_ids(self):
         return [t for t, box in self.checkboxes.items() if box.IsChecked]
@@ -388,8 +438,8 @@ class AceroWindow(forms.WPFWindow):
             "conf_dist": cfg["EA_Estribo_Conf_Distribucion"],
             "edge": cfg["EA_Estribo_Borde_Diametro"] or u'3/8"',
             "edge_dist": cfg["EA_Estribo_Borde_Distribucion"],
-            "cover": cfg["EA_Recubrimiento_cm"] or str(rc.default_cover_cm(t.name)),
-            "nucleo": cfg["EA_Nucleo_cm"],
+            "cover": cfg["EA_Recubrimiento_cm"] or str(rb.DEFAULT_COVER_CM),
+            "anchor": rb.anchor_of(cfg),
         })
         if type_id in self.state.drafts:
             self.design = self.state.drafts[type_id]
@@ -403,10 +453,10 @@ class AceroWindow(forms.WPFWindow):
         self.undo_stack = []
         self.draft = []
         self.selected = None
-        self._fill_view_columns(t)
+        self._fill_view_lines(t)
         self.plan_nav.reset()
         self.elev_nav.reset()
-        self.scene._extent = None  # refit the 3D camera to the new column
+        self.scene._extent = None  # refit the 3D camera to the new beam
         self._update_measures()
         section = t.section
         if section is None:
@@ -428,8 +478,7 @@ class AceroWindow(forms.WPFWindow):
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
-        self.chk_nucleo.IsChecked = bool(f.get("nucleo"))
-        self.txt_nucleo.Text = f.get("nucleo") or u"10"
+        self.cbo_anchor.SelectedItem = f.get("anchor") if f.get("anchor") in rb.ANCHORS else rb.ANCHOR_HOOK
 
     def _get_form(self):
         return {
@@ -438,7 +487,7 @@ class AceroWindow(forms.WPFWindow):
             "edge": self.cbo_edge.SelectedItem or u'3/8"',
             "edge_dist": (self.txt_edge_dist.Text or u"").strip(),
             "cover": (self.txt_cover.Text or u"").strip(),
-            "nucleo": (self.txt_nucleo.Text or u"").strip() if self.chk_nucleo.IsChecked else u"",
+            "anchor": self.cbo_anchor.SelectedItem or rb.ANCHOR_HOOK,
         }
 
     def _config_from_form(self, with_drawing):
@@ -449,7 +498,7 @@ class AceroWindow(forms.WPFWindow):
             "EA_Estribo_Borde_Diametro": f["edge"],
             "EA_Estribo_Borde_Distribucion": f["edge_dist"],
             "EA_Recubrimiento_cm": f["cover"],
-            "EA_Nucleo_cm": f["nucleo"],
+            rb.ANCHOR_PARAM: f["anchor"],
         }
         if with_drawing:
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
@@ -494,10 +543,10 @@ class AceroWindow(forms.WPFWindow):
         except rs.SpecError as e:
             forms.alert(u"Revisa la configuracion: {}".format(e), title="Acero")
             return False
-        with revit.Transaction("Acero - configuracion de columnas"):
-            rc.ensure_parameters(doc)
+        with revit.Transaction("Acero - configuracion de vigas"):
+            rb.ensure_parameters(doc)
             for type_id in targets:
-                rc.write_type_config(
+                rb.write_type_config(
                     self.by_id[type_id].element,
                     self._config_from_form(type_id in same_section),
                 )
@@ -560,7 +609,7 @@ class AceroWindow(forms.WPFWindow):
             if not forms.alert(
                 u"El archivo es de {} ({:.0f} x {:.0f} cm) y este tipo es de {:.0f} x {:.0f} cm: "
                 u"su dibujo no encaja en esta seccion.\n\nCargar solo los estribos "
-                u"(diametros, distribucion, recubrimiento y nucleo)?".format(name, b, h, tb, th),
+                u"(diametros, distribucion, recubrimiento y anclaje)?".format(name, b, h, tb, th),
                 title="Acero", yes=True, no=True):
                 return
             design = None
@@ -591,7 +640,7 @@ class AceroWindow(forms.WPFWindow):
         # The columns picked in the model, or else every column of the
         # checked types.
         if not self.state.picked_ids and not self.checked_ids():
-            forms.alert(u"Selecciona columnas en el modelo o marca los tipos a generar.", title="Acero")
+            forms.alert(u"Selecciona vigas en el modelo o marca los tipos a generar.", title="Acero")
             return
         self._leave("run")
 
@@ -606,8 +655,8 @@ class AceroWindow(forms.WPFWindow):
     def _refresh_picked(self):
         n = len(self.state.picked_ids)
         self.txt_picked.Text = (
-            u"{} columna(s) seleccionada(s) en el modelo.".format(n) if n
-            else u"No hay columnas seleccionadas en el modelo."
+            u"{} viga(s) seleccionada(s) en el modelo.".format(n) if n
+            else u"No hay vigas seleccionadas en el modelo."
         )
 
     def window_key(self, sender, args):
@@ -642,7 +691,7 @@ class AceroWindow(forms.WPFWindow):
             return "rect"
         if self.rb_tie.IsChecked:
             return "tie"
-        if any(rb.IsChecked for rb, _ in self.bar_tools):
+        if any(radio.IsChecked for radio, _ in self.bar_tools):
             return "bar"
         if self.rb_edit.IsChecked:
             return "edit"
@@ -685,67 +734,85 @@ class AceroWindow(forms.WPFWindow):
             return  # fired while the XAML loads
         self.draft = []
         self._status()  # the previous tool's hint ("...para la grapa") no longer applies
-        for rb, cbo in self.bar_tools:
-            if rb.IsChecked and cbo.SelectedItem:
+        for radio, cbo in self.bar_tools:
+            if radio.IsChecked and cbo.SelectedItem:
                 self.bar_key = cbo.SelectedItem
         if self._tool() not in ("edit",):
             self.selected = None if self._tool() == "erase" else self.selected
         self._refresh_steel()
         self.redraw()
 
-    # -- lap splices of the longitudinal bars ---------------------------------
+    # -- lap splices and hook legs of the longitudinal bars -------------------
+    def _diameter_boxes(self, panel, values):
+        """One "Ø key [cm]" box per known diameter in `panel`: {key: box}."""
+        boxes = {}
+        panel.Children.Clear()
+        for key in rs.bar_diameter_keys():
+            cell = StackPanel()
+            cell.Orientation = Orientation.Horizontal
+            cell.Margin = Thickness(0, 0, 8, 4)
+            label = TextBlock()
+            label.Text = u"Ø{} ".format(key)
+            label.Width = 44
+            label.VerticalAlignment = VerticalAlignment.Center
+            box = TextBox()
+            box.Width = 38
+            cm = values.get(key)
+            box.Text = u"{:g}".format(cm) if cm else u""
+            box.TextChanged += self.splice_changed
+            cell.Children.Add(label)
+            cell.Children.Add(box)
+            panel.Children.Add(cell)
+            boxes[key] = box
+        return boxes
+
+    @staticmethod
+    def _cm_values(boxes):
+        """{key: cm} of the boxes that read as a positive number."""
+        values = {}
+        for key, box in boxes.items():
+            try:
+                cm = float((box.Text or u"").replace(u",", u"."))
+            except ValueError:
+                continue
+            if cm > 0:
+                values[key] = cm
+        return values
+
     def _fill_splice(self):
-        """"3. Empalme": the switch, the maximum bar length and one box per
-        diameter, as last saved."""
+        """"3. Empalme y gancho": the switch, the maximum bar length and one
+        box per diameter for the laps and for the hook legs, as last saved."""
         self._filling_splice = True
         try:
             settings = load_splice_settings()
             self.chk_splice.IsChecked = settings["on"]
             self.txt_splice_max.Text = u"{:g}".format(settings["max"])
-            self.lap_boxes = {}
-            self.panel_laps.Children.Clear()
-            for key in rs.bar_diameter_keys():
-                cell = StackPanel()
-                cell.Orientation = Orientation.Horizontal
-                cell.Margin = Thickness(0, 0, 8, 4)
-                label = TextBlock()
-                label.Text = u"Ø{} ".format(key)
-                label.Width = 44
-                label.VerticalAlignment = VerticalAlignment.Center
-                box = TextBox()
-                box.Width = 38
-                cm = settings["laps"].get(key)
-                box.Text = u"{:g}".format(cm) if cm else u""
-                box.TextChanged += self.splice_changed
-                cell.Children.Add(label)
-                cell.Children.Add(box)
-                self.panel_laps.Children.Add(cell)
-                self.lap_boxes[key] = box
+            self.lap_boxes = self._diameter_boxes(self.panel_laps, settings["laps"])
+            self.leg_boxes = self._diameter_boxes(self.panel_legs, load_hook_legs())
         finally:
             self._filling_splice = False
 
     def _splice_from_form(self):
         """The splice settings as typed ({"on", "max", "laps"}); boxes that
         don't read as a number are left out."""
-        settings = {"on": bool(self.chk_splice.IsChecked), "max": rs.MAX_BAR_LENGTH, "laps": {}}
+        settings = {"on": bool(self.chk_splice.IsChecked), "max": rs.MAX_BAR_LENGTH,
+                    "laps": self._cm_values(self.lap_boxes)}
         try:
             settings["max"] = float((self.txt_splice_max.Text or u"").replace(u",", u".")) or rs.MAX_BAR_LENGTH
         except ValueError:
             pass
-        for key, box in self.lap_boxes.items():
-            try:
-                cm = float((box.Text or u"").replace(u",", u"."))
-            except ValueError:
-                continue
-            if cm > 0:
-                settings["laps"][key] = cm
         return settings
+
+    def _legs_from_form(self):
+        """{key: m} hook legs as typed."""
+        return dict((k, cm / 100.0) for k, cm in self._cm_values(self.leg_boxes).items())
 
     def splice_changed(self, sender, args):
         if getattr(self, "_filling_splice", True):
             return
         save_splice_settings(self._splice_from_form())
-        self.redraw()  # the stacked views show the laps
+        save_hook_legs(self._cm_values(self.leg_boxes))
+        self.redraw()  # the views show the laps and hooks
 
     def bar_slot_changed(self, sender, args):
         """A diameter chosen in one of the four "Barras" options: it is
@@ -753,14 +820,14 @@ class AceroWindow(forms.WPFWindow):
         if getattr(self, "_filling_bars", True):
             return
         save_bar_slots([cbo.SelectedItem for _, cbo in self.bar_tools])
-        for rb, cbo in self.bar_tools:
+        for radio, cbo in self.bar_tools:
             if cbo is not sender or not cbo.SelectedItem:
                 continue
-            if rb.IsChecked:
+            if radio.IsChecked:
                 self.bar_key = cbo.SelectedItem
                 self._refresh_steel()
             else:
-                rb.IsChecked = True  # tool_changed takes its diameter
+                radio.IsChecked = True  # tool_changed takes its diameter
 
     def steel_changed(self, sender, args):
         if getattr(self, "_updating_steel", True) or self.cbo_steel.SelectedIndex < 0:
@@ -978,8 +1045,10 @@ class AceroWindow(forms.WPFWindow):
             self._dot(frame, self.cursor_m[0], self.cursor_m[1], 4 if refused else 3,
                       C_REFUSED if refused else C_CURSOR)
         splice_now = self._splice_from_form() if hasattr(self, "lap_boxes") else None
-        signature = (self.state.active, tuple(id_of(c.Id) for c in self._view_columns),
+        legs_now = self._legs_from_form() if hasattr(self, "leg_boxes") else None
+        signature = (self.state.active, self._line_key(self._view_line),
                      repr(sorted(splice_now.items())) if splice_now else None,
+                     repr(sorted(legs_now.items())) if legs_now else None,
                      rs.design_to_text(self.design),
                      tuple(sorted(self._get_form().items())))
         if signature != self._views_sig:
@@ -1288,72 +1357,45 @@ class AceroWindow(forms.WPFWindow):
         self.redraw()
 
     # -- elevation and 3D views ----------------------------------------------
-    def _column_info(self, column, fallback):
-        """(section, clear height m, neighbors) of one column, cached."""
-        key = id_of(column.Id)
-        if key not in self._section_cache:
-            try:
-                self._section_cache[key] = rc.Section(column)
-            except Exception:
-                self._section_cache[key] = fallback
-        section = self._section_cache[key]
-        if key not in self._clear_cache:
-            try:
-                top = rc.clear_top(doc, column, section)
-            except Exception:
-                top = section.z_top
-            self._clear_cache[key] = (top - section.z_bottom) * rc.FT
-        if key not in self._neighbor_cache:
-            try:
-                self._neighbor_cache[key] = rc.column_neighbors(doc, column, section)
-            except Exception:
-                self._neighbor_cache[key] = []
-        return section, self._clear_cache[key], self._neighbor_cache[key]
+    @staticmethod
+    def _line_key(line):
+        return tuple(id_of(e.Id) for e in line.elements) if line is not None else None
 
-    def _fill_view_columns(self, t):
-        """List the type's columns for the 3D view / elevation, each with
-        what it touches; with two or more of them picked in the model, first
-        an entry showing those stacked. First choice: the picked ones (all
-        of them), else the first one a beam frames into, else the first."""
+    def _supports(self, line):
+        """rb.line_supports of a beam line, cached."""
+        key = self._line_key(line)
+        if key not in self._support_cache:
+            try:
+                self._support_cache[key] = rb.line_supports(doc, line)
+            except Exception:
+                self._support_cache[key] = []
+        return self._support_cache[key]
+
+    def _line_label(self, line):
+        first = line.elements[0]
+        level_param = first.get_Parameter(DB.BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM)
+        level = doc.GetElement(level_param.AsElementId()) if level_param is not None else None
+        return u"{} - {} tramo(s), {:.2f} m{}".format(
+            id_of(first.Id), len(line.elements), line.length, u" - " + level.Name if level else u"")
+
+    def _fill_view_lines(self, t):
+        """List the type's beams (beam lines) for the 3D view / elevation.
+        First choice: the one holding a beam picked in the model, else the
+        longest."""
         self._filling_columns = True
         try:
-            labels, options = [], []
-            beam_at = None
+            lines = t.lines if t.section is not None else []
             picked = set(self.state.picked_ids)
-            stack = sorted([c for c in t.columns if id_of(c.Id) in picked],
-                           key=lambda c: self._column_info(c, t.section)[0].z_bottom
-                           if t.section is not None else 0)
-            if len(stack) > 1:
-                labels.append(u"Las {} seleccionadas, apiladas ({})".format(
-                    len(stack), u", ".join(self._level_name(c) for c in stack)))
-                options.append(stack)
-            for column in t.columns:
-                kinds = []
-                if t.section is not None:
-                    for n in self._column_info(column, t.section)[2]:
-                        name = n["label"].lower()
-                        if name not in kinds:
-                            kinds.append(name)
-                labels.append(u"{} - {}{}".format(
-                    id_of(column.Id), self._level_name(column),
-                    u"  ({})".format(u", ".join(kinds)) if kinds else u""))
-                options.append([column])
-                if beam_at is None and u"viga" in kinds:
-                    beam_at = len(options) - 1
-            if stack:
-                default = 0 if len(stack) > 1 else options.index([stack[0]])
-            else:
-                default = beam_at or 0
-            self._view_options = options
-            self.cbo_view_column.ItemsSource = List[str](labels)
-            self.cbo_view_column.SelectedIndex = default
-            self._view_columns = options[default]
+            default = next((i for i, line in enumerate(lines)
+                            if any(id_of(e.Id) in picked for e in line.elements)), None)
+            if default is None and lines:
+                default = max(range(len(lines)), key=lambda i: lines[i].length)
+            self._view_options = lines
+            self.cbo_view_column.ItemsSource = List[str]([self._line_label(line) for line in lines])
+            self.cbo_view_column.SelectedIndex = default if default is not None else -1
+            self._view_line = lines[default] if lines else None
         finally:
             self._filling_columns = False
-
-    def _level_name(self, column):
-        level = doc.GetElement(column.LevelId)
-        return level.Name if level else u"sin nivel"
 
     def view_column_changed(self, sender, args):
         if getattr(self, "_filling_columns", True):
@@ -1362,19 +1404,19 @@ class AceroWindow(forms.WPFWindow):
         options = getattr(self, "_view_options", [])
         if index < 0 or index >= len(options):
             return
-        self._view_columns = options[index]
+        self._view_line = options[index]
         self.elev_nav.reset()
         self.scene._extent = None
-        self._views_sig = None  # force the views to redraw for this column
+        self._views_sig = None  # force the views to redraw for this beam
         self.redraw()
 
     def config_changed(self, sender, args):
         if hasattr(self, "_views_sig"):  # also fired while the XAML loads
             self.redraw()
 
-    def _family_view(self, key_text, dist_text, clear):
-        """{"key", "zones", "rest", "tagged"} of a stirrup family for the
-        views, or None (message) when its settings don't read."""
+    def _family_view(self, key_text, dist_text):
+        """{"key", "zones", "rest"} of a stirrup family, or None (message)
+        when its settings don't read."""
         if not (dist_text or u"").strip():
             return None, None
         try:
@@ -1382,116 +1424,115 @@ class AceroWindow(forms.WPFWindow):
             zones, rest = rs.parse_distribution(dist_text)
         except rs.SpecError as e:
             return None, u"{}".format(e)
-        return {"key": key, "zones": zones, "rest": rest,
-                "tagged": rs.stirrup_zone_positions(clear, zones, rest)}, None
+        return {"key": key, "zones": zones, "rest": rest}, None
 
     def _views_data(self):
-        """(elevation data, 3D data) of the active type as configured and
-        drawn right now (unsaved changes included)."""
+        """(elevation data, 3D data) of the beam chosen in "Viga:" with the
+        active type as configured and drawn right now (unsaved changes
+        included) - what rb.generate_line would build."""
         t = self.by_id.get(self.state.active)
-        if t is None or t.section is None:
+        line = self._view_line
+        if t is None or t.section is None or line is None:
             return None, None
-        # The column(s) chosen in "Columna:" (each has its own height and
-        # its own beams, slab and footing); several are drawn stacked, in
-        # the frame of the lowest one.
-        columns = [c for c in self._view_columns if c in t.columns] or t.columns[:1]
         f = self._get_form()
         bars = self.design["bars"]
-        base = self._column_info(columns[0], t.section)[0]
-        to_base = base.transform.Inverse
-        segments, neighbors, loops = [], [], []
+        supports = self._supports(line)
+        spans, start_face, end_face = rb.spans_and_ends(line, supports)
         messages = []
-        for index, column in enumerate(columns):
-            section, clear, touching = self._column_info(column, t.section)
-            height = (section.z_top - section.z_bottom) * rc.FT
-            origin = to_base.OfPoint(section.point_m(0.0, 0.0, section.z_bottom))
-            dx = (origin.X - base.center[0]) * rc.FT
-            dy = (origin.Y - base.center[1]) * rc.FT
-            dz = (section.z_bottom - base.z_bottom) * rc.FT
-            edge, edge_msg = self._family_view(f["edge"], f["edge_dist"], clear)
-            conf, conf_msg = self._family_view(f["conf"], f["conf_dist"], clear)
-            joint = []
-            if f["nucleo"] and height - clear > 0.1:
-                try:
-                    joint = rs.joint_positions(height - clear, float(f["nucleo"].replace(u",", u".")) / 100.0)
-                except ValueError:
-                    pass
-            messages += [m for m in (edge_msg and u"Borde: " + edge_msg,
-                                     conf_msg and u"Confinamiento: " + conf_msg) if m]
-            if edge is None and not edge_msg:
-                messages.append(u"Falta la distribucion del estribo de borde")
-            segments.append({"x": dx, "y": dy, "z": dz, "height": height, "clear": clear,
-                             "edge": edge, "conf": conf, "joint": joint})
-            for n in touching:
-                x0, y0, z0, x1, y1, z1 = n["box"]
-                neighbors.append({
-                    "label": n["label"], "seg": index,
-                    "box": (x0 + dx, y0 + dy, z0 + dz, x1 + dx, y1 + dy, z1 + dz),
-                    "triangles": [tuple((p[0] + dx, p[1] + dy, p[2] + dz) for p in tri)
-                                  for tri in n["triangles"]],
-                })
-            families = {rs.KIND_EDGE: edge, rs.KIND_CONFINEMENT: conf}
-            drawn = [(kind, poly, wrap, is_open) for kind, poly, wrap, is_open in self.design["stirrups"]]
-            drawn += [(kind, [a, b], None, None) for kind, a, b in self.design["ties"]]
-            drawn = [item for item in drawn if families.get(item[0]) is not None]
-            # stacked like they are generated (see rc.generate_column)
-            lifts = rs.stack_lifts([(kind, rs.BAR_DIAMETERS_MM[families[kind]["key"]] / 1000.0, is_open is None)
-                                    for kind, _, _, is_open in drawn])
-            for (kind, poly, wrap, is_open), lift in zip(drawn, lifts):
-                family = families[kind]
-                try:
-                    if is_open is None:  # a tie
-                        line, closed = list(rs.tie_centerline(poly[0], poly[1], bars, family["key"])), False
-                    else:
-                        line = rs.stirrup_centerline(poly, bars, family["key"], wrap, is_open)
-                        closed = not is_open
-                except rs.SpecError:
-                    continue
-                # stacked towards the middle, like rc._runs (down in the top half)
-                zs = ([dz + z + (-lift if z > clear / 2.0 + 1e-6 else lift) for z, _ in family["tagged"]]
-                      + [dz + lift + clear + j for j in joint])
-                loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
-                              rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
-        top = max(s["z"] + s["height"] for s in segments)
-        # Stacked columns with continuous bars: the pieces and laps the
-        # generation will make (rc.generate_stack).
+        edge, edge_msg = self._family_view(f["edge"], f["edge_dist"])
+        conf, conf_msg = self._family_view(f["conf"], f["conf_dist"])
+        messages += [m for m in (edge_msg and u"Borde: " + edge_msg, conf_msg and u"Confinamiento: " + conf_msg) if m]
+        if edge is None and not edge_msg:
+            messages.append(u"Falta la distribucion del estribo de borde")
+        if not spans:
+            messages.append(u"La viga no tiene luz libre entre apoyos")
+        span_data = []
+        for a, b in spans:
+            item = {"a": a, "b": b}
+            for name, family in (("edge", edge), ("conf", conf)):
+                if family:
+                    item[name] = dict(family, tagged=rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]))
+            span_data.append(item)
+        # stirrups and ties for the 3D view, stacked like they are generated
+        families = {rs.KIND_EDGE: edge, rs.KIND_CONFINEMENT: conf}
+        drawn = [(kind, poly, wrap, is_open) for kind, poly, wrap, is_open in self.design["stirrups"]]
+        drawn += [(kind, [a, b], None, None) for kind, a, b in self.design["ties"]]
+        drawn = [item for item in drawn if families.get(item[0]) is not None]
+        lifts = rs.stack_lifts([(kind, rs.BAR_DIAMETERS_MM[families[kind]["key"]] / 1000.0, is_open is None)
+                                for kind, _, _, is_open in drawn])
+        loops = []
+        for (kind, poly, wrap, is_open), lift in zip(drawn, lifts):
+            family = families[kind]
+            try:
+                if is_open is None:  # a tie
+                    pts, closed = list(rs.tie_centerline(poly[0], poly[1], bars, family["key"])), False
+                else:
+                    pts = rs.stirrup_centerline(poly, bars, family["key"], wrap, is_open)
+                    closed = not is_open
+            except rs.SpecError:
+                continue
+            ss = []
+            for a, b in spans:
+                for z, _ in rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]):
+                    ss.append(a + z + (-lift if z > (b - a) / 2.0 + 1e-6 else lift))
+            loops.append((kind, pts, closed, ss, rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
+        # longitudinal bars along the whole beam
+        try:
+            cover = float(f["cover"].replace(u",", u".")) / 100.0
+        except ValueError:
+            cover = rb.DEFAULT_COVER_CM / 100.0
+        bar_start, bar_end = start_face + cover, end_face - cover
         splice = splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
-        bar_paths, laps = None, []
-        if splice and len(segments) > 1:
-            missing = sorted(set(k for _, _, k in bars if k not in splice["laps"]))
-            if missing and top > splice["max"] + 1e-6:
-                messages.append(u"Falta la longitud de empalme de " + u", ".join(missing))
-            else:
-                bar_paths = []
-                stories = [(s["z"], s["z"] + s["clear"]) for s in segments]
-                for x, y, key in bars:
-                    lap = splice["laps"].get(key, 0.0)
-                    pieces, _ = rs.splice_pieces(0.0, top, stories, lap, splice["max"])
-                    d = rs.BAR_DIAMETERS_MM[key] / 1000.0
-                    for i, (a, b) in enumerate(pieces):
-                        bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))
-                        if i < len(pieces) - 1:
-                            laps.append((round(b - lap, 3), round(b, 3), key))
-        xs = [p[0] for p in base.polygon_m]
+        legs = self._legs_from_form() if hasattr(self, "leg_boxes") else {}
+        confinement = rs.confinement_length(edge["zones"]) if edge else 0.0
+        bar_paths, laps = [], []
+        missing_legs, missing_laps = set(), set()
+        for x, y, key in bars:
+            d = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            top = y > 0
+            leg = 0.0
+            if f["anchor"] == rb.ANCHOR_HOOK:
+                leg = legs.get(key, 0.0)
+                if not leg:
+                    missing_legs.add(key)
+            lap, pieces = 0.0, [(bar_start, bar_end)]
+            if splice is not None and bar_end - bar_start + 2 * leg > splice["max"] + 1e-6:
+                lap = splice["laps"].get(key, 0.0)
+                if not lap:
+                    missing_laps.add(key)
+                else:
+                    pieces, _ = rs.lap_pieces(bar_start, bar_end, rs.beam_lap_zones(spans, top, confinement),
+                                              lap, splice["max"] - leg)
+            for i, (s0, s1) in enumerate(pieces):
+                last = i == len(pieces) - 1
+                bar_paths.append((rs.beam_bar_points(x, y, d, s0, s1, lap, not last,
+                                                     leg if i == 0 else 0.0, leg if last else 0.0), d / 2.0))
+                if not last:
+                    laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
+        if missing_legs:
+            messages.append(u"Falta la pata del gancho de 90 de " + u", ".join(sorted(missing_legs)))
+        if missing_laps:
+            messages.append(u"Falta la longitud de empalme de " + u", ".join(sorted(missing_laps)))
+        polygon = line.section.polygon_m
+        supports_view = [{"label": s["label"], "s0": s["s0"], "s1": s["s1"]} for s in supports]
         elev = {
-            "width": max(xs) - min(xs),
-            "height": top,
-            "bars_x": sorted(set(round(x, 3) for x, _, _ in bars)),
-            "message": messages[0] if messages else None,
-            "neighbors": neighbors,
-            "segments": segments,
-            "laps": sorted(set(laps)),
-        }
-        if len(segments) == 1:  # the single-column keys too
-            elev.update(dict((k, segments[0][k]) for k in ("clear", "edge", "conf", "joint")))
-        scene = {
-            "polygon": base.polygon_m,
-            "height": top,
-            "bars": [(x, y, rs.BAR_DIAMETERS_MM[k] / 2000.0) for x, y, k in bars],
-            "loops": loops,
-            "neighbors": neighbors,
-            "segments": segments,
+            "polygon": polygon,
+            "length": line.length,
+            "ranges": line.ranges,
+            "supports": supports_view,
+            "spans": span_data,
             "bar_paths": bar_paths,
+            "laps": sorted(set(laps)),
+            "cover": cover,
+            "message": messages[0] if messages else None,
+        }
+        scene = {
+            "polygon": polygon,
+            "length": line.length,
+            "ranges": line.ranges,
+            "bar_paths": bar_paths,
+            "loops": loops,
+            "supports_mesh": [tri for s in supports for tri in s["triangles"]],
         }
         return elev, scene
 
@@ -1510,7 +1551,7 @@ class AceroWindow(forms.WPFWindow):
         width, height = self.canvas_elev.ActualWidth, self.canvas_elev.ActualHeight
         if self._elev_data is None or width < 50 or height < 50:
             return None
-        return rv.fit_frame(width, height, *rv.elevation_extent(self._elev_data),
+        return rv.fit_frame(width, height, *rv.beam_elevation_extent(self._elev_data),
                             margins=(20, 16, 20, 16))
 
     def _draw_elevation(self):
@@ -1518,10 +1559,10 @@ class AceroWindow(forms.WPFWindow):
         if fitted is None:
             self.canvas_elev.Children.Clear()
             return
-        rv.draw_elevation(self.canvas_elev, self._elev_data, self.elev_nav.resolve(fitted))
+        rv.draw_beam_elevation(self.canvas_elev, self._elev_data, self.elev_nav.resolve(fitted))
 
     def _build_3d(self):
-        self.scene.build(getattr(self, "_scene_data", None), self.cbo_detail.SelectedItem or u"Medio")
+        rv.build_beam(self.scene, getattr(self, "_scene_data", None), self.cbo_detail.SelectedItem or u"Medio")
 
     def elev_resized(self, sender, args):
         if hasattr(self, "_views_sig"):
@@ -1916,36 +1957,36 @@ class AceroWindow(forms.WPFWindow):
         self._select(None)
         self.redraw()
 
-def pick_columns(state):
+def pick_beams(state):
     uidoc = revit.uidoc
     try:
         refs = uidoc.Selection.PickObjects(
-            ObjectType.Element, _ColumnFilter(),
-            "Selecciona las columnas y pulsa Finalizar",
+            ObjectType.Element, _BeamFilter(),
+            "Selecciona las vigas y pulsa Finalizar",
         )
     except OperationCanceledException:
         return
     picked = [doc.GetElement(r.ElementId) for r in refs]
-    state.picked_ids = [id_of(c.Id) for c in picked if c is not None]
-    state.checked |= set(id_of(c.GetTypeId()) for c in picked if c is not None)
+    state.picked_ids = [id_of(b.Id) for b in picked if b is not None]
+    state.checked |= set(id_of(b.GetTypeId()) for b in picked if b is not None)
     if state.picked_ids:
         state.scope = "pick"
-        # show the type (and, in the views, the column) just picked
+        # show the type (and, in the views, the beam) just picked
         state.active = id_of(doc.GetElement(DB.ElementId(state.picked_ids[0])).GetTypeId())
 
 
 # --- main -------------------------------------------------------------------
 types = collect_types()
 if not types:
-    forms.alert("El modelo no tiene columnas estructurales.", title="Acero")
+    forms.alert("El modelo no tiene vigas (armazon estructural).", title="Acero")
     script.exit()
 
 state = State()
 preselected = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
-preselected = [e for e in preselected if e is not None and _ColumnFilter().AllowElement(e)]
+preselected = [e for e in preselected if e is not None and _BeamFilter().AllowElement(e)]
 if preselected:
-    state.picked_ids = [id_of(c.Id) for c in preselected]
-    state.checked = set(id_of(c.GetTypeId()) for c in preselected)
+    state.picked_ids = [id_of(b.Id) for b in preselected]
+    state.checked = set(id_of(b.GetTypeId()) for b in preselected)
     state.scope = "pick"
     state.active = id_of(preselected[0].GetTypeId())
 
@@ -1954,80 +1995,75 @@ while True:
     window = AceroWindow(xaml, types, state)
     window.ShowDialog()
     if window.action == "pick":
-        pick_columns(state)
+        pick_beams(state)
         continue
     if window.action != "run":
         script.exit()
     break
 
 by_id = dict((t.id, t) for t in types)
+# The bars run whole beams (beam lines): picking one element of a beam
+# builds the whole beam.
 if state.scope == "pick":
-    targets = [doc.GetElement(DB.ElementId(i)) for i in state.picked_ids]
-    targets = [c for c in targets if c is not None]
-    scope_label = "columnas seleccionadas"
-    # The type's configuration fits all its columns: offer them all, on
-    # every level, not just the ones picked.
-    picked_types = sorted(set(id_of(c.GetTypeId()) for c in targets))
-    same_type = [c for t in picked_types for c in by_id[t].columns]
-    if len(same_type) > len(targets):
-        only_picked = u"Solo las columnas seleccionadas ({})".format(len(targets))
-        all_levels = u"Todas las columnas de {} en todos los niveles ({})".format(
-            u", ".join(by_id[t].name for t in picked_types), len(same_type))
+    picked = set(state.picked_ids)
+    picked_types = sorted(set(id_of(doc.GetElement(DB.ElementId(i)).GetTypeId()) for i in picked
+                              if doc.GetElement(DB.ElementId(i)) is not None))
+    lines = [line for type_id in picked_types for line in by_id[type_id].lines
+             if any(id_of(e.Id) in picked for e in line.elements)]
+    scope_label = u"vigas seleccionadas"
+    all_lines = [line for type_id in picked_types for line in by_id[type_id].lines]
+    if len(all_lines) > len(lines):
+        only_picked = u"Solo las vigas seleccionadas ({})".format(len(lines))
+        all_of_type = u"Todas las vigas de {} ({})".format(
+            u", ".join(by_id[t].name for t in picked_types), len(all_lines))
         choice = forms.CommandSwitchWindow.show(
-            [only_picked, all_levels], message=u"Columnas donde generar el acero:")
+            [only_picked, all_of_type], message=u"Vigas donde generar el acero:")
         if not choice:
             script.exit()
-        if choice == all_levels:
-            targets = same_type
-            scope_label = u"todas las columnas de su tipo, en todos los niveles"
+        if choice == all_of_type:
+            lines = all_lines
+            scope_label = u"todas las vigas de su tipo"
 else:
-    targets = [c for t in state.checked for c in by_id[t].columns]
-    scope_label = "tipos marcados, todo el modelo"
+    lines = [line for type_id in state.checked for line in by_id[type_id].lines]
+    scope_label = u"tipos marcados, todo el modelo"
 
 specs = {}
 spec_errors = {}
-for t in set(id_of(c.GetTypeId()) for c in targets):
+for type_id in set(id_of(line.type_id) for line in lines):
     try:
-        specs[t] = rc.ColumnSpec(by_id[t].config())
+        specs[type_id] = rc.ColumnSpec(by_id[type_id].config())
     except rs.SpecError as e:
-        spec_errors[t] = u"{}".format(e)
-with_spec = [c for c in targets if id_of(c.GetTypeId()) in specs]
+        spec_errors[type_id] = u"{}".format(e)
+with_spec = [line for line in lines if id_of(line.type_id) in specs]
 if not with_spec:
     forms.alert(
-        u"Ninguna de las {} columnas del alcance tiene su tipo configurado.".format(len(targets)),
+        u"Ninguna de las {} vigas del alcance tiene su tipo configurado.".format(len(lines)),
         title="Acero",
     )
     script.exit()
 
 splice = splice_for_generation(load_splice_settings())
-if splice is None:
-    stacks = [[c] for c in with_spec]
-else:
-    # Continuous bars run a whole stack (same type and axis, all levels):
-    # every column of a stack holding one of the targets is built with it.
-    wanted = set(id_of(c.Id) for c in with_spec)
-    stacks = [s for s in rc.column_stacks([c for type_id in specs for c in by_id[type_id].columns])
-              if any(id_of(c.Id) in wanted for c in s)]
-    added = sum(len(s) for s in stacks) - len(with_spec)
-    with_spec = [c for s in stacks for c in s]
-    if added:
-        scope_label += u" (+{} de sus pilas: barras continuas)".format(added)
-    missing = set()
-    for s in stacks:
-        length = (rc.Section(s[-1]).z_top - rc.Section(s[0]).z_bottom) * rc.FT
-        if length > splice["max"] + 1e-6:
-            missing |= set(k for _, _, k in specs[id_of(s[0].GetTypeId())].design["bars"]
-                           if k not in splice["laps"])
-    if missing:
-        forms.alert(
-            u"Falta la longitud de empalme de: {}.\n\nEscribela en '3. Empalme de barras "
-            u"longitudinales' de la ventana Acero.".format(u", ".join(sorted(missing))),
-            title="Acero")
-        script.exit()
+legs = dict((k, cm / 100.0) for k, cm in load_hook_legs().items())
+missing_legs, missing_laps = set(), set()
+for line in with_spec:
+    type_id = id_of(line.type_id)
+    keys = set(k for _, _, k in specs[type_id].design["bars"])
+    if rb.anchor_of(by_id[type_id].config()) == rb.ANCHOR_HOOK:
+        missing_legs |= set(k for k in keys if k not in legs)
+    if splice is not None and line.length > splice["max"] - 1.0:  # anchorage and hooks included
+        missing_laps |= set(k for k in keys if k not in splice["laps"])
+if missing_legs or missing_laps:
+    forms.alert(
+        u"Faltan datos en '3. Empalme y gancho' de la ventana Acero Viga:\n"
+        + (u"\n- Pata del gancho de 90 de: {}".format(u", ".join(sorted(missing_legs))) if missing_legs else u"")
+        + (u"\n- Longitud de empalme de: {}".format(u", ".join(sorted(missing_laps))) if missing_laps else u""),
+        title="Acero")
+    script.exit()
 
+elements = sum(len(line.elements) for line in with_spec)
 mode = forms.CommandSwitchWindow.show(
     ["Vista previa (sin cambios en el modelo)", "Generar barras y metrado"],
-    message=u"Modo de ejecucion ({} columnas, {}):".format(len(with_spec), scope_label),
+    message=u"Modo de ejecucion ({} vigas, {} tramos, {}):".format(len(with_spec), elements, scope_label),
 )
 if not mode:
     script.exit()
@@ -2037,47 +2073,42 @@ bar_types = rc.BarTypes(doc)
 hooks = rc.StirrupHooks(doc)
 rebar_shapes = rc.RebarShapes(doc)
 warnings = [u"{}: sin generar - {}".format(by_id[t].name, e) for t, e in spec_errors.items()]
-stick_out = {}  # type name -> columns where a stirrup/tie hook leaves the section
 KINDS = (rc.LONGITUDINAL, rc.EDGE, rc.CONFINEMENT)
-by_type = {}  # type name -> {"n": columns, kind: kg}
+by_type = {}  # type name -> {"n": beams, "e": elements, kind: kg}
 total_bars = 0
 
-t = DB.Transaction(doc, "Acero")
+t = DB.Transaction(doc, "Acero Viga")
 t.Start()
 try:
-    rc.ensure_parameters(doc)
+    rb.ensure_parameters(doc)
     done = []
-    with forms.ProgressBar(title="Acero: {value} de {max_value} columnas") as pb:
-        count = 0
-        for stack in stacks:
-            ct = by_id[id_of(stack[0].GetTypeId())]
+    with forms.ProgressBar(title="Acero: {value} de {max_value} vigas") as pb:
+        for i, line in enumerate(with_spec):
+            bt = by_id[id_of(line.type_id)]
             sub = DB.SubTransaction(doc)
             sub.Start()
             try:
-                created, found = rc.generate_stack(
-                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
-                )
+                created, found = rb.generate_line(
+                    doc, line, specs[bt.id], rb.anchor_of(bt.config()), bar_types, hooks,
+                    rebar_shapes, splice, legs)
                 sub.Commit()
-                done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
-                warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)
-                             for w in found]
+                done.append((line, bt.name, created))
+                warnings += [u"{} (viga {}): {}".format(bt.name, id_of(line.elements[0].Id), w) for w in found]
             except Exception as e:
                 sub.RollBack()
-                warnings.append(u"Columna(s) {} ({}): {}".format(
-                    u", ".join(str(id_of(c.Id)) for c in stack), ct.name, e))
-            count += len(stack)
-            pb.update_progress(count, len(with_spec))
+                warnings.append(u"Viga {} ({}): {}".format(id_of(line.elements[0].Id), bt.name, e))
+            pb.update_progress(i + 1, len(with_spec))
 
     doc.Regenerate()  # bar lengths are only known after a regeneration
-    for column, type_name, created in done:
-        kg, bars, sticks = rc.record_weight(column, created)
-        if sticks:
-            stick_out[type_name] = stick_out.get(type_name, 0) + 1
-        agg = by_type.setdefault(type_name, dict([("n", 0)] + [(k, 0.0) for k in KINDS]))
+    for line, type_name, created in done:
+        agg = by_type.setdefault(type_name, dict([("n", 0), ("e", 0)] + [(k, 0.0) for k in KINDS]))
         agg["n"] += 1
-        for kind in KINDS:
-            agg[kind] += kg[kind]
-        total_bars += bars
+        for element in line.elements:
+            kg, bars = rb.record_weight(element, created[id_of(element.Id)])
+            agg["e"] += 1
+            for kind in KINDS:
+                agg[kind] += kg[kind]
+            total_bars += bars
 
     if dry_run:
         t.RollBack()
@@ -2088,51 +2119,46 @@ except Exception:
         t.RollBack()
     raise
 
-output.print_md("# Resultado Acero - Columnas {}".format("(vista previa)" if dry_run else ""))
+output.print_md("# Resultado Acero - Vigas {}".format("(vista previa)" if dry_run else ""))
 output.print_md(u"**Alcance:** {}".format(scope_label))
-output.print_md("**Columnas armadas:** {}".format(sum(v["n"] for v in by_type.values())))
+output.print_md("**Vigas armadas:** {}".format(sum(v["n"] for v in by_type.values())))
 if not dry_run:
     output.print_md("**Barras creadas:** {}".format(total_bars))
-skipped = len(targets) - len(with_spec)
+skipped = len(lines) - len(with_spec)
 if skipped:
-    output.print_md("**Columnas sin configuracion (omitidas):** {}".format(skipped))
+    output.print_md("**Vigas sin configuracion (omitidas):** {}".format(skipped))
 
 output.print_md(
-    u"\n| Tipo | Columnas | Longitudinal (kg) | Estribo de borde (kg) "
+    u"\n| Tipo | Vigas | Tramos | Longitudinal (kg) | Estribo de borde (kg) "
     u"| Confinamiento y grapas (kg) | Total (kg) |"
 )
-output.print_md("|---|---|---|---|---|---|")
+output.print_md("|---|---|---|---|---|---|---|")
 grand = dict((k, 0.0) for k in KINDS)
 for type_name in sorted(by_type):
     agg = by_type[type_name]
     for kind in KINDS:
         grand[kind] += agg[kind]
-    output.print_md(u"| {} | {} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(
-        type_name, agg["n"], agg[rc.LONGITUDINAL], agg[rc.EDGE], agg[rc.CONFINEMENT],
+    output.print_md(u"| {} | {} | {} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(
+        type_name, agg["n"], agg["e"], agg[rc.LONGITUDINAL], agg[rc.EDGE], agg[rc.CONFINEMENT],
         sum(agg[k] for k in KINDS)))
-output.print_md("| **Total** | | **{:.2f}** | **{:.2f}** | **{:.2f}** | **{:.2f}** |".format(
+output.print_md("| **Total** | | | **{:.2f}** | **{:.2f}** | **{:.2f}** | **{:.2f}** |".format(
     grand[rc.LONGITUDINAL], grand[rc.EDGE], grand[rc.CONFINEMENT], sum(grand.values())))
 
 output.print_md(
-    (u"\n*Longitudinales continuas en cada pila de columnas, en barras de hasta {:g} m con "
-     u"empalme en la mitad central de un piso (la barra inferior con bayoneta 1:6); el peso "
-     u"de cada barra se reparte entre las columnas que recorre. ".format(splice["max"])
-     if splice else u"\n*Longitudinales rectas de piso a piso (sin empalmes ni anclajes). ")
-    + u"Estribos en la luz libre, distribuidos desde cada extremo: desde la base hasta el "
-    "fondo de la viga de mayor peralte (o la cara inferior de la losa si no hay viga); "
-    "en el nucleo si se configuro.*"
+    u"\n*Barras superiores e inferiores continuas por toda la viga (sus tramos del mismo tipo y "
+    u"eje), ancladas en la cara lejana del apoyo extremo menos el recubrimiento ({})".format(
+        u"gancho 90 o recto segun el tipo")
+    + (u", en barras de hasta {:g} m con empalme: superiores en el tercio central de un tramo, "
+       u"inferiores en un tercio extremo fuera del confinamiento".format(splice["max"]) if splice else u"")
+    + u". Estribos en cada luz libre, distribuidos desde la cara de cada apoyo. El peso de cada "
+    u"barra se reparte entre los tramos que recorre.*"
 )
-for type_name in sorted(stick_out):
-    warnings.append(
-        u"{}: en {} columna(s) el gancho de algun estribo o grapa sobresale de la seccion; "
-        u"conviene un gancho mas corto para ese diametro.".format(type_name, stick_out[type_name])
-    )
-mismatched = {}  # shape name -> columns where Revit refused it
-for column_id, shape_name in rebar_shapes.mismatched:
-    mismatched.setdefault(shape_name, set()).add(column_id)
+mismatched = {}  # shape name -> elements where Revit refused it
+for element_id, shape_name in rebar_shapes.mismatched:
+    mismatched.setdefault(shape_name, set()).add(element_id)
 for shape_name in sorted(mismatched):
     warnings.append(
-        u"Forma {}: el estribo dibujado no coincide con ella en {} columna(s); "
+        u"Forma {}: el estribo dibujado no coincide con ella en {} tramo(s); "
         u"Revit uso la forma que corresponde al dibujo.".format(shape_name, len(mismatched[shape_name]))
     )
 if warnings:

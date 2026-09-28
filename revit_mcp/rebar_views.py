@@ -528,6 +528,17 @@ class Scene3D(object):
     def fit(self):
         if self._extent is None:
             return
+        if len(self._extent) == 3:  # a beam: (length, depth, "beam") along X
+            length, depth, _ = self._extent
+            self.target = (length / 2.0, 0.0, 0.0)
+            w = self.viewport.ActualWidth or 1.0
+            h = self.viewport.ActualHeight or 1.0
+            tan_h = math.tan(math.radians(self.camera.FieldOfView / 2.0))
+            tan_v = tan_h * h / w
+            self.distance = max(length * 0.62 / tan_h, depth * 1.2 / tan_v) + depth
+            self.azimuth, self.elevation = -65.0, 20.0  # from the side, a little above
+            self._update_camera()
+            return
         width, height = self._extent
         self.target = (0.0, 0.0, height / 2.0)
         # WPF's FieldOfView is horizontal: the vertical one follows the
@@ -644,3 +655,185 @@ class Scene3D(object):
         if self._extent is None or self._extent != extent:
             self._extent = extent
             self.fit()
+
+
+# --- Beams ("Acero Viga") ------------------------------------------------------
+# Beam data is in the beam line's local frame: x across, y up (from the
+# section center), s along the axis (m). The 3D scene puts s on X, x on Y
+# and y on Z; the elevation draws s across and y up.
+
+def _add_beam_prism(mesh, polygon, s0, s1):
+    """The section polygon swept along the beam from s0 to s1."""
+    n = len(polygon)
+    base = mesh.Positions.Count
+    cx = sum(p[0] for p in polygon) / n
+    cy = sum(p[1] for p in polygon) / n
+    for s in (s0, s1):
+        mesh.Positions.Add(Point3D(s, cx, cy))
+        for x, y in polygon:
+            mesh.Positions.Add(Point3D(s, x, y))
+    top = base + n + 1
+    for k in range(n):
+        a, b = 1 + k, 1 + (k + 1) % n
+        for idx in (base, base + a, base + b, top, top + b, top + a):
+            mesh.TriangleIndices.Add(idx)
+        for idx in (base + a, top + b, base + b, base + a, top + a, top + b):
+            mesh.TriangleIndices.Add(idx)
+
+
+def build_beam(scene, data, detail):
+    """Fill a Scene3D with a beam line: `data` polygon, ranges [(s0, s1)]
+    of its elements, length, bar_paths [(points (x, y, s), radius)], loops
+    [(kind, [(x, y)], closed, [s...], radius)], supports [triangles in
+    (x, y, s)]."""
+    group = Model3DGroup()
+    group.Children.Add(AmbientLight(_color(90, 90, 90)))
+    group.Children.Add(DirectionalLight(Colors.White, Vector3D(-0.6, -0.8, -1.0)))
+    group.Children.Add(DirectionalLight(_color(120, 120, 120), Vector3D(0.7, 0.5, 0.3)))
+    if data is None:
+        scene.visual.Content = group
+        return
+    solid = detail == u"Alto"
+    thin = max(0.004, data["length"] / 450.0)
+    sides = 10 if solid else 5
+    colors = {"longitudinal": _color(60, 60, 60), "borde": _color(214, 120, 60),
+              "confinamiento": _color(40, 150, 90)}
+    if detail == u"Bajo":
+        colors = dict((k, _color(50, 50, 50)) for k in colors)
+    meshes = dict((k, MeshGeometry3D()) for k in colors)
+    for points, radius in data.get("bar_paths") or []:
+        for a, b in zip(points, points[1:]):
+            _add_tube(meshes["longitudinal"], (a[2], a[0], a[1]), (b[2], b[0], b[1]),
+                      radius if solid else thin, sides)
+    for kind, pts, closed, ss, radius in data.get("loops") or []:
+        r = radius if solid else thin * 0.8
+        count = len(pts) if closed else len(pts) - 1
+        for s in ss:
+            for k in range(count):
+                a, b = pts[k], pts[(k + 1) % len(pts)]
+                _add_tube(meshes[kind], (s, a[0], a[1]), (s, b[0], b[1]), r, sides)
+    for kind, mesh in meshes.items():
+        if mesh.Positions.Count:
+            group.Children.Add(GeometryModel3D(mesh, _material(colors[kind], solid)))
+    triangles = data.get("supports_mesh") or []
+    if triangles:
+        mesh = MeshGeometry3D()
+        for tri in triangles:
+            base = mesh.Positions.Count
+            for x, y, s in tri:
+                mesh.Positions.Add(Point3D(s, x, y))
+            for idx in (base, base + 1, base + 2):
+                mesh.TriangleIndices.Add(idx)
+        gray = DiffuseMaterial(SolidColorBrush(_color(150, 155, 165, 110)))
+        model = GeometryModel3D(mesh, gray)
+        model.BackMaterial = gray
+        group.Children.Add(model)
+    if detail != u"Bajo":
+        concrete = MeshGeometry3D()
+        for s0, s1 in data["ranges"]:
+            _add_beam_prism(concrete, data["polygon"], s0, s1)
+        glass = DiffuseMaterial(SolidColorBrush(_color(170, 180, 195, 70)))
+        model = GeometryModel3D(concrete, glass)
+        model.BackMaterial = glass
+        group.Children.Add(model)
+    scene.visual.Content = group
+    ys = [p[1] for p in data["polygon"]]
+    extent = (data["length"], max(ys) - min(ys), "beam")
+    if scene._extent is None or scene._extent != extent:
+        scene._extent = extent
+        scene.fit()
+
+
+def _beam_unit(data):
+    return max(data["length"], 1.0) / 45.0
+
+
+def _beam_deepen(data):
+    """Vertical exaggeration of the beam elevation: a long beam at true
+    scale is a thin strip, so its depth is drawn up to 4 times deeper."""
+    ys = [p[1] for p in data["polygon"]]
+    depth = max(max(ys) - min(ys), 0.05)
+    return max(1.0, min(4.0, data["length"] / (depth * 12.0)))
+
+
+def beam_elevation_extent(data):
+    """(s0, y0, s1, y1) of the beam elevation drawing."""
+    u = _beam_unit(data)
+    k = _beam_deepen(data)
+    ys = [p[1] * k for p in data["polygon"]]
+    ss = [0.0, data["length"]] + [f["s0"] for f in data["supports"]] + [f["s1"] for f in data["supports"]]
+    ss += [p[2] for pts, _ in data["bar_paths"] for p in pts]
+    return min(ss) - 2 * u, min(ys) - 9 * u, max(ss) + 2 * u, max(ys) + 6 * u
+
+
+def draw_beam_elevation(canvas, data, frame):
+    """Beam line elevation: its supports (columns and walls reaching past
+    it, crossing beams), the concrete of its elements, the stirrups of
+    every clear span at their places with the zones as colored bands
+    (Z1, Z2...) under the beam, the longitudinal bars with their hooks and
+    laps, and the clear spans dimensioned under everything.
+
+    `data`: polygon, length, ranges, supports [{"label", "s0", "s1"}],
+    spans [{"a", "b", "edge", "conf"}] (families as in draw_elevation,
+    "tagged" measured from a), bar_paths [(points (x, y, s), radius)],
+    laps [(s0, s1, key, top)], cover, message."""
+    canvas.Children.Clear()
+    if data is None:
+        return
+    u = _beam_unit(data)
+    k = _beam_deepen(data)  # heights drawn k times (lengths true)
+    ys = [p[1] * k for p in data["polygon"]]
+    y0, y1 = min(ys), max(ys)
+    # supports behind: columns and walls run on past the beam; names at
+    # alternating heights so neighbours don't write over each other
+    for index, f in enumerate(sorted(data["supports"], key=lambda f: f["s0"])):
+        reach = 0.0 if f["label"] == u"VIGA" else 2.5 * u
+        _rect(canvas, frame, f["s0"], y0 - reach, f["s1"], y1 + reach, C_NEIGHBOR, C_NEIGHBOR_EDGE)
+        _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + (index % 2) * 1.2 * u, f["label"],
+              brush=C_NEIGHBOR_TEXT, size=9, bold=True)
+    for s0, s1 in data["ranges"]:
+        _rect(canvas, frame, s0, y0, s1, y1, C_CONCRETE, C_BAR)
+    cover = (data.get("cover") or 0.04) * k
+    band0, band1 = y0 - 1.6 * u, y0 - 0.6 * u
+    for span in data["spans"]:
+        a, b = span["a"], span["b"]
+        edge = span.get("edge")
+        if edge:
+            runs = _zone_runs(edge["tagged"])
+            for i, (zone, first, last, count) in enumerate(runs):
+                lo = 0.0 if i == 0 else (runs[i - 1][2] + first) / 2.0
+                hi = (b - a) if i == len(runs) - 1 else (last + runs[i + 1][1]) / 2.0
+                _rect(canvas, frame, a + lo, band0, a + hi, band1, ZONE_BRUSHES[zone % len(ZONE_BRUSHES)])
+                if hi - lo > 1.5 * u:
+                    _text(canvas, frame, a + (lo + hi) / 2.0, (band0 + band1) / 2.0,
+                          u"Z{}".format(zone + 1), size=9, bold=True)
+            for offset, _ in edge["tagged"]:
+                _line(canvas, frame, (a + offset, y0 + cover * 0.5), (a + offset, y1 - cover * 0.5), C_EDGE, 1.5)
+        conf = span.get("conf")
+        if conf:
+            for offset, _ in conf["tagged"]:
+                _line(canvas, frame, (a + offset, y0 + cover), (a + offset, y1 - cover), C_CONF, 1, dash=True)
+    # longitudinal bars (seen from the side: hooks and cranks show)
+    for points, radius in data["bar_paths"]:
+        for p, q in zip(points, points[1:]):
+            _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), C_BAR, 1.6)
+    # laps, one label each
+    for s0, s1, key, top in data["laps"]:
+        yb = y1 - cover - 0.6 * u if top else y0 + cover
+        _rect(canvas, frame, s0, yb, s1, yb + 0.6 * u, C_LAP)
+        _text(canvas, frame, (s0 + s1) / 2.0, (yb + 1.5 * u) if top else (yb - 0.9 * u),
+              u"Emp. Ø{} {:.2f}".format(key, s1 - s0), brush=C_LAP_TEXT, size=9)
+    # clear spans dimensioned under everything
+    ydim = y0 - 3.2 * u
+    for span in data["spans"]:
+        a, b = span["a"], span["b"]
+        for s in (a, b):
+            _line(canvas, frame, (s, y0 - 0.3 * u), (s, ydim - 0.3 * u), C_DIM, 0.8)
+            _line(canvas, frame, (s - 0.25 * u, ydim - 0.25 * u), (s + 0.25 * u, ydim + 0.25 * u), C_DIM, 1.2)
+        _line(canvas, frame, (a, ydim), (b, ydim), C_DIM, 1)
+        _text(canvas, frame, (a + b) / 2.0, ydim - 0.8 * u, u"{:.2f}".format(b - a), brush=C_DIM, size=10)
+    _text(canvas, frame, data["length"] / 2.0, ydim - 2.6 * u,
+          u"Luces libres entre caras de apoyo (m)", brush=C_DIM, size=10)
+    if data.get("message"):
+        _text(canvas, frame, data["length"] / 2.0, ydim - 4.2 * u, data["message"],
+              brush=_brush(192, 57, 43), size=10)

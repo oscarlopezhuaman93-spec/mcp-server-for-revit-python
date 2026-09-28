@@ -436,13 +436,14 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                 raise spec.SpecError(u"falta la longitud del gancho de 90 de las barras de {}".format(key))
         lap = 0.0
         pieces = [(bar_start, bar_end)]
-        if splice is not None and bar_end - bar_start > splice["max"] + 1e-6:
+        # the hook legs count in a bar's length (a 9 m bar holds them)
+        if splice is not None and bar_end - bar_start + 2 * leg > splice["max"] + 1e-6:
             lap = splice["laps"].get(key)
             if not lap:
                 raise spec.SpecError(u"falta la longitud de empalme de las barras de {}".format(key))
             zones = spec.beam_lap_zones(spans, top, confinement)
             where = u"un tercio central de tramo" if top else u"un tercio extremo de tramo (fuera del confinamiento)"
-            pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap, splice["max"], where)
+            pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap, splice["max"] - leg, where)
             warnings += [u"Barras {} de {}: {}".format(u"superiores" if top else u"inferiores", key, w)
                          for w in found]
         for index, (s0, s1) in enumerate(pieces):

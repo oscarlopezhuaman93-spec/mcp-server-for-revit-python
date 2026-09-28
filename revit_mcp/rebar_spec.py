@@ -559,7 +559,7 @@ def design_from_text(text):
 # --- configuration files (Acero "Guardar en archivo" / "Abrir archivo") -------
 
 CONFIG_FILE_VERSION = 1
-CONFIG_FORM_KEYS = ("conf", "conf_dist", "edge", "edge_dist", "cover", "nucleo")
+CONFIG_FORM_KEYS = ("conf", "conf_dist", "edge", "edge_dist", "cover", "nucleo", "anchor")
 
 
 def config_file_text(type_name, size_cm, form, design):
