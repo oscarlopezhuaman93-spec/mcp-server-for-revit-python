@@ -50,6 +50,16 @@ Código: `revit_mcp/rebar_spec.py` → `stirrup_sets`.
 
 Código: `revit_mcp/rebar_spec.py` → `stack_lifts`; `rebar_columns.py` → `_runs`.
 
+## 3b. Grapas
+
+- Tipos (fila "Grapa" de la ventana): **135°** (ganchos de estribo), **C 180°**
+  (los dos ganchos hacia el mismo lado) y **S 180°** (hacia lados opuestos).
+- La grapa es recta entre las dos barras enfrentadas, abrazandolas, dentro del
+  recubrimiento. Los ganchos de 180° son ganchos de Revit de estilo
+  Estribo/Tirante: el doblez sale del diametro de cada tipo de barra, asi la
+  forma no se deforma. Si el proyecto no tiene uno, se crea
+  "Grapa 180 (OL-STR)" con extension 4 db (E.060).
+
 ## 4. Barras longitudinales
 
 - Se amarran siempre al estribo: con la herramienta **Barras**, un clic a

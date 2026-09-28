@@ -330,23 +330,30 @@ class StirrupHooks(object):
         none, one is made (inside the running Transaction): stirrup/tie
         style, straight extension 4 db (E.060 standard 180-degree hook).
         The bend follows each bar type's own diameter."""
-        hook = self.get(diameter_key, 180.0)
-        if hook is None:
-            hook = RebarHookType.Create(self.doc, math.pi, 4.0)
-            hook.Style = RebarStyle.StirrupTie
-            try:
-                hook.Name = u"Grapa 180 (OL-STR)"
-            except Exception:
-                pass
-            self.cache = dict((k, v) for k, v in self.cache.items() if k[1] != 180)
-            self.cache[(diameter_key, 180)] = hook
-        return hook
+        key = ("tie", 180)
+        if self.cache.get(key) is None:
+            # a tie takes stirrup/tie style hooks only (Revit refuses a
+            # "Standard - 180 deg." one on it)
+            found = [h for h in DB.FilteredElementCollector(self.doc).OfClass(RebarHookType)
+                     if abs(h.HookAngle * 57.29578 - 180.0) < 1.0 and h.Style == RebarStyle.StirrupTie]
+            hook = sorted(found, key=lambda h: element_name(h) != u"Grapa 180 (OL-STR)")[0] if found else None
+            if hook is None:
+                hook = RebarHookType.Create(self.doc, math.pi, 4.0)
+                hook.Style = RebarStyle.StirrupTie
+                try:
+                    hook.Name = u"Grapa 180 (OL-STR)"
+                except Exception:
+                    pass
+            self.cache[key] = hook
+        return self.cache[key]
 
 
-# Hook orientations (start, end) of the C/S crossties along their line.
+# Hook orientations (start, end) of the C/S crossties along their line
+# (checked in Revit: the same orientation at both ends bends the hooks to
+# one side, as seen from each end).
 TIE_ORIENTATIONS = {
-    spec.TIE_C: (RebarHookOrientation.Left, RebarHookOrientation.Right),
-    spec.TIE_S: (RebarHookOrientation.Left, RebarHookOrientation.Left),
+    spec.TIE_C: (RebarHookOrientation.Left, RebarHookOrientation.Left),
+    spec.TIE_S: (RebarHookOrientation.Left, RebarHookOrientation.Right),
 }
 
 
