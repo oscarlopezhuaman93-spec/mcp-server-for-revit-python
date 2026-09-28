@@ -51,7 +51,8 @@ Código: `rebar_beams.py` → `line_supports`, `spans_and_ends`;
 - Si una barra (con sus ganchos) supera la **longitud máxima** (9 m) y su
   diámetro está **marcado** en "3. Empalme y gancho", se corta con su
   **empalme** (cm, precargado según la E.060 clase B, editable); si no está
-  marcado queda en una sola barra, con advertencia:
+  marcado queda en una sola barra, con advertencia.
+- Dónde va el empalme:
   - **superiores:** en el **tercio central** de una luz libre;
   - **inferiores:** en un **tercio extremo**, fuera de la zona de
     confinamiento de estribos.
