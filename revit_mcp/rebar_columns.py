@@ -390,7 +390,14 @@ def tie_ends(a, b, bars, key, shape_name, bar_type):
     if shape_name in spec.TIE_STYLES:
         db = getattr(bar_type, "BarNominalDiameter", None) or bar_type.BarDiameter
         radius = (bar_type.StirrupTieBendDiameter + db) / 2.0 * FT
-        return spec.hooked_tie_line(a, b, radius, shape_name)
+        pa, pb = spec.hooked_tie_line(a, b, radius, shape_name)
+        # Revit sets each 180-degree bend radius + db/2 inside the curve's
+        # end (measured: 23.8 mm for 3/8"): lengthen the curve by that much
+        dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+        length = math.hypot(dx, dy) or 1.0
+        ext = radius + db / 2.0 * FT
+        ux, uy = dx / length * ext, dy / length * ext
+        return (pa[0] - ux, pa[1] - uy), (pb[0] + ux, pb[1] + uy)
     return spec.tie_centerline(a, b, bars, key)
 
 
