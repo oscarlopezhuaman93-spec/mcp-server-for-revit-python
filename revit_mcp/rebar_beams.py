@@ -430,8 +430,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     for (drawn_kind, a, b), shape_name in zip(design["ties"], spec.design_shapes(design, "ties")):
         kind, family = beam_spec.family_of(drawn_kind)
         entry = groups.setdefault(kind, (family, [], []))
-        a2, b2 = spec.tie_centerline(a, b, design["bars"], family.key)
-        entry[2].append((a2, b2, shape_name))
+        entry[2].append((a, b, shape_name))  # its line with the bar type (rc.tie_ends)
     flat = [(kind, i, is_tie) for kind, (family, loops, ties) in groups.items()
             for is_tie, items in ((False, loops), (True, ties)) for i in range(len(items))]
     lifts = dict(zip(flat, spec.stack_lifts([
@@ -468,10 +467,12 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                         created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
                     for index, (ta, tb, shape_name) in enumerate(ties):
                         s = a + offset + side * lifts[(kind, index, True)]
-                        (pa, pb) = line.polygon_at([ta, tb], s) if line.variable else (ta, tb)
+                        ea, eb = rc.tie_ends(ta, tb, design["bars"], family.key, shape_name, bar_type)
+                        (pa, pb) = line.polygon_at([ea, eb], s) if line.variable else (ea, eb)
                         curve = DB.Line.CreateBound(line.point(pa[0], pa[1], s), line.point(pb[0], pb[1], s))
+                        angle = 180.0 if shape_name in spec.TIE_STYLES else 135.0
                         rebar = rc._create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks,
-                                               family.key, curve, axis)
+                                               family.key, curve, axis, leg=rc.tie_leg_m(design, family.key, angle))
                         rc._set(rebar, count, spacing / FT)
                         rc._tag(rebar, host)
                         created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))

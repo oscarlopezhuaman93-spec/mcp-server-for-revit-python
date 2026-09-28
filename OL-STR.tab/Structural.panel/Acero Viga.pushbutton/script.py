@@ -1031,6 +1031,11 @@ class AceroWindow(forms.WPFWindow):
 
     def redraw(self):
         self.canvas.Children.Clear()
+        if not self.tb_tie_leg.IsKeyboardFocused:
+            leg = self.design.get("tie_leg")
+            text = u"{:g}".format(leg) if leg else u""
+            if self.tb_tie_leg.Text != text:
+                self.tb_tie_leg.Text = text
         frame = self._frame()
         if frame is None:
             return
@@ -1882,6 +1887,22 @@ class AceroWindow(forms.WPFWindow):
         if self.rb_tie_s.IsChecked:
             return rs.TIE_S
         return None
+
+    def tie_leg_changed(self, sender, args):
+        """The "Pata (cm)" box: the crosstie hook leg of the drawing (blank =
+        the E.060 minimum)."""
+        if not hasattr(self, "design"):
+            return  # fired while the XAML loads
+        text = (self.tb_tie_leg.Text or "").strip().replace(",", ".")
+        try:
+            leg = float(text) if text else None
+        except ValueError:
+            return
+        if leg is not None and leg <= 0:
+            leg = None
+        if self.design.get("tie_leg") != leg:
+            self.design["tie_leg"] = leg
+            self.redraw()
 
     def tie_style_changed(self, sender, args):
         """Choosing a crosstie type takes the Grapa tool."""

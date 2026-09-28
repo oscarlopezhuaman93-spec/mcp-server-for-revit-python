@@ -156,6 +156,10 @@
                     <RadioButton x:Name="rb_tie_s" GroupName="tiestyle" Content="S 180&#176;" Margin="0,0,14,0"
                                  VerticalAlignment="Center" Checked="tie_style_changed"
                                  ToolTip="Ganchos de 180&#176; hacia lados opuestos (grapa en S)."/>
+                    <TextBlock Text="Pata (cm): " VerticalAlignment="Center"/>
+                    <TextBox x:Name="tb_tie_leg" Width="40" Margin="0,0,14,0" VerticalAlignment="Center"
+                             TextChanged="tie_leg_changed"
+                             ToolTip="Largo recto del gancho de las grapas (cm). Vac&#237;o = m&#237;nimo E.060 (180&#176;: 4db y 6.5 cm; 135&#176;: 6db y 7.5 cm)."/>
                     <TextBlock Text="Forma: " VerticalAlignment="Center"/>
                     <TextBlock x:Name="txt_active_shape" Text="la que elija Revit" FontWeight="Bold" Margin="0,0,20,0"
                                VerticalAlignment="Center"

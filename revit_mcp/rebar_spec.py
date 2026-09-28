@@ -94,6 +94,33 @@ TIE_S = u"GRAPA S"
 TIE_STYLES = (TIE_C, TIE_S)
 
 
+def hooked_tie_line(a, b, radius, style):
+    """Straight part of a C/S crosstie between the bar centers a and b whose
+    180-degree hooks (bent at `radius`, to the bar's centerline) wrap those
+    bars, each bend centered on its bar. Seen along a->b the hooks turn
+    left - both for TIE_C, so the line passes by their right sides; for
+    TIE_S the end hook turns right, so the line crosses diagonally from the
+    right of a to the left of b."""
+    turn_end = 1.0 if style == TIE_C else -1.0
+    pa, pb = a, b
+    for _ in range(6):  # the offsets tilt the line: settle it
+        dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length  # left of a->b
+        pa = (a[0] - nx * radius, a[1] - ny * radius)
+        pb = (b[0] - turn_end * nx * radius, b[1] - turn_end * ny * radius)
+    return pa, pb
+
+
+def tie_leg_cm(diameter_key, angle):
+    """Norma E.060 minimum straight leg (cm) of a crosstie hook: 180 deg ->
+    4 db and at least 6.5 cm; 135 deg -> 6 db and at least 7.5 cm; rounded
+    up to 0.5 cm."""
+    db = BAR_DIAMETERS_MM[diameter_key] / 10.0
+    leg = max(4 * db, 6.5) if angle >= 170 else max(6 * db, 7.5)
+    return math.ceil(leg * 2.0 - 1e-9) / 2.0
+
+
 def tie_hook_marks(a, b, style, radius):
     """Plan preview of a crosstie's 180-degree hooks: at each end (a, b) a
     half circle of `radius` turning back along the tie - both on one side
@@ -603,6 +630,8 @@ def design_to_text(design):
             for i, (kind, a, b) in enumerate(design.get("ties", []))
         ],
     }
+    if design.get("tie_leg"):
+        data["tl"] = r(design["tie_leg"])  # crosstie hook leg, cm
     if not (data["bars"] or data["stirrups"] or data["ties"]):
         return u""
     return json.dumps(data, separators=(",", ":"))
@@ -628,6 +657,8 @@ def design_from_text(text):
     try:
         data = json.loads(text)
         design = empty_design()
+        if data.get("tl"):
+            design["tie_leg"] = float(data["tl"])
         for x, y, key in data.get("bars", []):
             if key not in BAR_DIAMETERS_MM:
                 raise SpecError(u"Diametro desconocido en el dibujo: {}".format(key))

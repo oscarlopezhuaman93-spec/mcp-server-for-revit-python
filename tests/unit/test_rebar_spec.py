@@ -253,6 +253,25 @@ def test_tie_hook_marks_c_and_s():
     assert tie_hook_marks(a, b, None, 0.01) == []
 
 
+def test_hooked_tie_lines_wrap_both_bars():
+    import math
+    from revit_mcp.rebar_spec import TIE_C, TIE_S, hooked_tie_line, tie_leg_cm
+
+    a, b, r = (0.0, 0.0), (0.2, 0.0), 0.019
+    pa, pb = hooked_tie_line(a, b, r, TIE_C)
+    assert pa == pytest.approx((0.0, -r)) and pb == pytest.approx((0.2, -r))  # both on one side
+    pa, pb = hooked_tie_line(a, b, r, TIE_S)
+    assert pa[1] < 0 < pb[1]  # crosses diagonally
+    # each end sits one bend radius from its bar, square to the line
+    dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+    length = math.hypot(dx, dy)
+    for end, bar in ((pa, a), (pb, b)):
+        assert math.hypot(end[0] - bar[0], end[1] - bar[1]) == pytest.approx(r, abs=1e-6)
+        assert abs((bar[0] - end[0]) * dx + (bar[1] - end[1]) * dy) / length < 1e-6
+    assert tie_leg_cm('3/8"', 180) == 6.5 and tie_leg_cm('5/8"', 180) == 6.5
+    assert tie_leg_cm('3/4"', 180) == 8.0 and tie_leg_cm('3/8"', 135) == 7.5
+
+
 def test_e060_class_b_laps():
     from revit_mcp.rebar_spec import e060_lap_cm
 

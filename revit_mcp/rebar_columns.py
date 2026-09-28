@@ -325,6 +325,31 @@ class StirrupHooks(object):
             self.cache[key] = stirrup_hook(self.doc, diameter_key, angle_deg)
         return self.cache[key]
 
+    def tie_hook(self, diameter_key, angle, leg_m):
+        """The stirrup/tie hook of `angle` degrees whose straight leg is
+        leg_m for this diameter (a hook type's leg is a multiple of the bar
+        diameter); made inside the running Transaction when the project
+        has none: "Grapa 180 - 6.5 cm (3/8")"."""
+        db = spec.BAR_DIAMETERS_MM[diameter_key] / 1000.0
+        mult = round(leg_m / db, 3)
+        key = ("tie", round(angle), mult)
+        if self.cache.get(key) is None:
+            hook = None
+            for h in DB.FilteredElementCollector(self.doc).OfClass(RebarHookType):
+                if (abs(h.HookAngle * 57.29578 - angle) < 1.0 and h.Style == RebarStyle.StirrupTie
+                        and abs(h.StraightLineMultiplier - mult) < 0.01):
+                    hook = h
+                    break
+            if hook is None:
+                hook = RebarHookType.Create(self.doc, math.radians(angle), mult)
+                hook.Style = RebarStyle.StirrupTie
+                try:
+                    hook.Name = u"Grapa {:.0f} - {:g} cm ({})".format(angle, round(leg_m * 100, 1), diameter_key)
+                except Exception:
+                    pass
+            self.cache[key] = hook
+        return self.cache[key]
+
     def tie_180(self, diameter_key):
         """The 180-degree hook of the C/S crossties; when the project has
         none, one is made (inside the running Transaction): stirrup/tie
@@ -357,16 +382,37 @@ TIE_ORIENTATIONS = {
 }
 
 
-def _create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks, key, curve, normal=None):
+def tie_ends(a, b, bars, key, shape_name, bar_type):
+    """Local ends of a crosstie drawn from bar center a to bar center b: a C
+    or S one runs so each 180-degree hook's bend (the bar type's stirrup/tie
+    bend) is centered on its bar, wrapping it; any other runs through the
+    bars to their far sides (spec.tie_centerline)."""
+    if shape_name in spec.TIE_STYLES:
+        db = getattr(bar_type, "BarNominalDiameter", None) or bar_type.BarDiameter
+        radius = (bar_type.StirrupTieBendDiameter + db) / 2.0 * FT
+        return spec.hooked_tie_line(a, b, radius, shape_name)
+    return spec.tie_centerline(a, b, bars, key)
+
+
+def tie_leg_m(design, key, angle):
+    """The crosstie hook leg of the drawing ("Pata", cm) or the E.060
+    minimum for that diameter and angle; m."""
+    leg = design.get("tie_leg")
+    return (leg if leg else spec.tie_leg_cm(key, angle)) / 100.0
+
+
+def _create_tie(doc, shapes, shape_name, host, bar_type, hook, hooks, key, curve, normal=None, leg=None):
     """A crosstie: a C or S one (shape_name in spec.TIE_STYLES) with
-    180-degree hooks, else as `_create_stirrup` (135-degree hooks or the
-    shape chosen for it)."""
+    180-degree hooks, a plain one with 135-degree hooks - both with a leg
+    of `leg` m when given -, or the Revit shape chosen for it."""
     if shape_name in spec.TIE_STYLES:
         start, end = TIE_ORIENTATIONS[shape_name]
-        h180 = hooks.tie_180(key)
+        h180 = hooks.tie_hook(key, 180.0, leg) if leg else hooks.tie_180(key)
         return Rebar.CreateFromCurves(
             doc, RebarStyle.StirrupTie, bar_type, h180, h180, host, normal or DB.XYZ.BasisZ,
             List[DB.Curve]([curve]), start, end, True, True)
+    if shape_name is None and leg:
+        hook = hooks.tie_hook(key, 135.0, leg)
     return _create_stirrup(doc, shapes, shape_name, host, bar_type, hook, hooks, key,
                            List[DB.Curve]([curve]), RebarHookOrientation.Left, RebarHookOrientation.Right,
                            normal)
@@ -660,8 +706,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     for (drawn_kind, a, b), shape_name in zip(design["ties"], spec.design_shapes(design, "ties")):
         kind, family = column_spec.family_of(drawn_kind)
         entry = groups.setdefault(kind, (family, [], []))
-        a2, b2 = spec.tie_centerline(a, b, design["bars"], family.key)
-        entry[2].append((a2, b2, shape_name))
+        entry[2].append((a, b, shape_name))  # its line with the bar type (tie_ends)
 
     # Stirrups and ties set at the same height lie stacked, one bar
     # diameter apart, like on site: side by side, never through each other.
@@ -702,13 +747,15 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 _set(rebar, n, spacing)
                 _tag(rebar, column)
                 created.append((rebar, family.key, kind))
-            for index, (a, b, shape_name) in enumerate(ties):
+            for index, (ta, tb, shape_name) in enumerate(ties):
                 z = z_set + side * lift_ft[(kind, index, True)]
+                a, b = tie_ends(ta, tb, design["bars"], family.key, shape_name, stirrup_type)
                 line = DB.Line.CreateBound(
                     section.point_m(a[0], a[1], z), section.point_m(b[0], b[1], z)
                 )
+                angle = 180.0 if shape_name in spec.TIE_STYLES else 135.0
                 rebar = _create_tie(doc, shapes, shape_name, column, stirrup_type, hook, hooks,
-                                    family.key, line)
+                                    family.key, line, leg=tie_leg_m(design, family.key, angle))
                 _set(rebar, n, spacing)
                 _tag(rebar, column)
                 created.append((rebar, family.key, kind))
