@@ -258,7 +258,7 @@ def _segments(data):
     return data.get("segments") or [{
         "x": 0.0, "y": 0.0, "z": 0.0, "height": data["height"],
         "clear": data.get("clear", data["height"]), "edge": data.get("edge"),
-        "conf": data.get("conf"), "joint": data.get("joint", []),
+        "conf": data.get("conf"), "joint": data.get("joint", []), "joint_conf": data.get("joint_conf", []),
     }]
 
 
@@ -421,6 +421,9 @@ def draw_elevation(canvas, data, frame):
         for offset in s.get("joint", []):
             _line(canvas, frame, (cx - half + 0.01, clear + offset), (cx + half - 0.01, clear + offset),
                   C_EDGE, 2)
+        for offset in s.get("joint_conf", []):
+            _line(canvas, frame, (cx - half * 0.55, clear + offset), (cx + half * 0.55, clear + offset),
+                  C_CONF, 1.5, dash=True)
 
     # lap splices of the continuous bars: a band over the column, and one
     # label per cut (the diameters lapping there, each with its length)

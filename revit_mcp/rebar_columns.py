@@ -827,7 +827,12 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     for kind, (family, loops, ties) in groups.items():
         stirrup_type = named_bar_type(doc, family.type_name, family.key) or bar_type_for(family.key)
         hook = hooks.get(family.key)
-        for z_set, n, spacing, side in _runs(family, column_spec.joint_spacing_m, section, z_clear_top):
+        # In the joint the edge stirrups take EA_Nucleo_cm; the confinement
+        # stirrups and ties keep their own rest spacing ("rto") there too.
+        joint_m = column_spec.joint_spacing_m
+        if joint_m and kind == CONFINEMENT:
+            joint_m = family.rest
+        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]
                 if is_open:

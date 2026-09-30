@@ -1570,8 +1570,10 @@ class AceroWindow(forms.WPFWindow):
                                      conf_msg and u"Confinamiento: " + conf_msg) if m]
             if edge is None and not edge_msg:
                 messages.append(u"Falta la distribucion del estribo de borde")
+            # confinement stirrups/ties keep their "rto" in the joint (rc.generate_column)
+            joint_conf = rs.joint_positions(height - clear, conf["rest"]) if joint and conf else []
             segments.append({"x": dx, "y": dy, "z": dz, "height": height, "clear": clear,
-                             "edge": edge, "conf": conf, "joint": joint})
+                             "edge": edge, "conf": conf, "joint": joint, "joint_conf": joint_conf})
             for n in touching:
                 x0, y0, z0, x1, y1, z1 = n["box"]
                 neighbors.append({
@@ -1599,7 +1601,7 @@ class AceroWindow(forms.WPFWindow):
                     continue
                 # stacked towards the middle, like rc._runs (down in the top half)
                 zs = ([dz + z + (-lift if z > clear / 2.0 + 1e-6 else lift) for z, _ in family["tagged"]]
-                      + [dz + lift + clear + j for j in joint])
+                      + [dz + lift + clear + j for j in (joint_conf if kind == rs.KIND_CONFINEMENT else joint)])
                 loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
                               rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
         top = max(s["z"] + s["height"] for s in segments)
@@ -1633,7 +1635,7 @@ class AceroWindow(forms.WPFWindow):
             "laps": sorted(set(laps)),
         }
         if len(segments) == 1:  # the single-column keys too
-            elev.update(dict((k, segments[0][k]) for k in ("clear", "edge", "conf", "joint")))
+            elev.update(dict((k, segments[0][k]) for k in ("clear", "edge", "conf", "joint", "joint_conf")))
         scene = {
             "polygon": base.polygon_m,
             "height": top,
