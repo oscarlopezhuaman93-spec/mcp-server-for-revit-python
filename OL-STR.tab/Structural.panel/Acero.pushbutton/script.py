@@ -406,7 +406,8 @@ class AceroWindow(forms.WPFWindow):
         right under "Seleccionar todo", its own height, and the settings
         follow it (no blank box)."""
         panel = self.list_types.Parent
-        items = [self.list_types, self._splice_box(), self._stirrup_box()]
+        bottom = [c for c in panel.Children if DockPanel.GetDock(c) == Dock.Bottom]
+        items = [self.list_types] + bottom[::-1]  # bottom-docked: first is lowest
         for child in items:
             panel.Children.Remove(child)
         at = panel.Children.IndexOf(self.chk_all) + 1
@@ -415,12 +416,6 @@ class AceroWindow(forms.WPFWindow):
             DockPanel.SetDock(child, Dock.Top)
         panel.LastChildFill = False
         self.list_types.MaxHeight = 26 * self.list_types.Items.Count + 8
-
-    def _splice_box(self):
-        return [c for c in self.list_types.Parent.Children if isinstance(c, Expander)][0]
-
-    def _stirrup_box(self):
-        return [c for c in self.list_types.Parent.Children if isinstance(c, GroupBox)][0]
 
     def shapes_toggle_click(self, sender, args):
         """Show / hide the rebar shape browser."""
@@ -497,7 +492,6 @@ class AceroWindow(forms.WPFWindow):
         self.undo_stack = []
         self.draft = []
         self.selected = None
-        self._fill_bars_diameters()  # the drawing's diameters first
         self._fill_view_columns(t)
         self.plan_nav.reset()
         self.elev_nav.reset()
@@ -522,7 +516,7 @@ class AceroWindow(forms.WPFWindow):
             combo.SelectedItem = f.get(key) if f.get(key) in STIRRUP_DIAMETERS else u'3/8"'
         self._fill_bar_types(f.get("conf_type") or u"", f.get("edge_type") or u"")
         self.bars_types = rc.read_bar_type_names(f.get("bars_type"))
-        self._fill_bars_diameters()
+        self._fill_slot_types()
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
@@ -829,6 +823,7 @@ class AceroWindow(forms.WPFWindow):
         if getattr(self, "_filling_bars", True):
             return
         save_bar_slots([cbo.SelectedItem for _, cbo in self.bar_tools])
+        self._fill_slot_types()
         for rb, cbo in self.bar_tools:
             if cbo is not sender or not cbo.SelectedItem:
                 continue
@@ -852,54 +847,68 @@ class AceroWindow(forms.WPFWindow):
         elif self._steel_slot(tool):
             self.kind_for[self._steel_slot(tool)] = kind
 
+    def _type_names(self):
+        """[AUTO_TYPE] + every bar type of the project (not the crosstie
+        copies); self.type_keys: name -> its diameter key."""
+        if not hasattr(self, "type_keys"):
+            self.type_keys = rc.bar_type_keys(doc)
+        return [AUTO_TYPE] + sorted(self.type_keys)
+
     def _fill_bar_types(self, conf_type=None, edge_type=None):
-        """The "Tipo" lists: the project's bar types of the diameter chosen
-        beside them, first "(automatico)"; keeps (or sets) the choice."""
-        for combo, diameter, wanted in ((self.cbo_conf_type, self.cbo_conf, conf_type),
-                                        (self.cbo_edge_type, self.cbo_edge, edge_type)):
+        """The stirrup "Tipo" lists: every bar type of the project, first
+        "(automatico)"; keeps (or sets) the choice."""
+        names = self._type_names()
+        self._filling_types = True
+        for combo, wanted in ((self.cbo_conf_type, conf_type), (self.cbo_edge_type, edge_type)):
             if wanted is None:
                 wanted = self._chosen_type(combo)
-            names = [AUTO_TYPE] + rc.bar_type_names(doc, diameter.SelectedItem or u'3/8"')
-            combo.ItemsSource = List[str](names)
+            if combo.ItemsSource is None:
+                combo.ItemsSource = List[str](names)
             combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        self._filling_types = False
 
-    def _fill_bars_diameters(self):
-        """"Barras Ø": the diameters of the drawing first, then the rest."""
-        drawn = []
-        for _, _, key in self.design["bars"] if hasattr(self, "design") else []:
-            if key not in drawn:
-                drawn.append(key)
-        keys = drawn + [k for k in rs.bar_diameter_keys() if k not in drawn]
-        current = self.cbo_bars_d.SelectedItem
-        self._filling_bars_d = True
-        self.cbo_bars_d.ItemsSource = List[str](keys)
-        self._filling_bars_d = False
-        self.cbo_bars_d.SelectedItem = current if current in drawn else (keys[0] if keys else None)
+    def stirrup_type_changed(self, sender, args):
+        """A stirrup type chosen: its diameter goes beside it."""
+        if getattr(self, "_filling_types", True):
+            return
+        key = self.type_keys.get(self._chosen_type(sender))
+        diameter = self.cbo_conf if sender is self.cbo_conf_type else self.cbo_edge
+        if key and key in STIRRUP_DIAMETERS and diameter.SelectedItem != key:
+            diameter.SelectedItem = key
+        self.config_changed(sender, args)
 
-    def bars_diameter_changed(self, sender, args):
-        if getattr(self, "_filling_bars_d", False) or not hasattr(self, "bars_types"):
-            return
-        key = self.cbo_bars_d.SelectedItem
-        if not key:
-            return
-        names = [AUTO_TYPE] + rc.bar_type_names(doc, key)
-        wanted = self.bars_types.get(key)
-        self._filling_bars_d = True
-        self.cbo_bars_type.ItemsSource = List[str](names)
-        self.cbo_bars_type.SelectedItem = wanted if wanted in names else AUTO_TYPE
-        self._filling_bars_d = False
+    def _slot_type_combos(self):
+        return [self.cbo_bar_type_1, self.cbo_bar_type_2, self.cbo_bar_type_3, self.cbo_bar_type_4]
 
-    def bars_type_changed(self, sender, args):
-        if getattr(self, "_filling_bars_d", False) or not hasattr(self, "bars_types"):
+    def _fill_slot_types(self):
+        """Each vertical bar option's "Tipo": the type chosen for its
+        diameter (self.bars_types), else "(automatico)"."""
+        names = self._type_names()
+        self._filling_types = True
+        for (_, cbo), combo in zip(self.bar_tools, self._slot_type_combos()):
+            if combo.ItemsSource is None:
+                combo.ItemsSource = List[str](names)
+            wanted = getattr(self, "bars_types", {}).get(cbo.SelectedItem)
+            combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        self._filling_types = False
+
+    def bar_type_changed(self, sender, args):
+        """A vertical bar option's type chosen: kept for its diameter; a type
+        of another diameter moves the option to that diameter."""
+        if getattr(self, "_filling_types", True) or not hasattr(self, "bars_types"):
             return
-        key = self.cbo_bars_d.SelectedItem
-        name = self._chosen_type(self.cbo_bars_type)
-        if not key:
+        cbo = self.bar_tools[self._slot_type_combos().index(sender)][1]
+        name = self._chosen_type(sender)
+        key = self.type_keys.get(name) if name else None
+        if key and key != cbo.SelectedItem and key in list(cbo.ItemsSource):
+            self.bars_types[key] = name
+            cbo.SelectedItem = key  # bar_slot_changed refreshes the types
             return
         if name:
-            self.bars_types[key] = name
+            self.bars_types[cbo.SelectedItem] = name
         else:
-            self.bars_types.pop(key, None)
+            self.bars_types.pop(cbo.SelectedItem, None)
+        self._fill_slot_types()  # options sharing the diameter show it too
 
     @staticmethod
     def _chosen_type(combo):

@@ -739,6 +739,18 @@ def named_bar_type(doc, name, key):
     return None
 
 
+def bar_type_keys(doc):
+    """{name: diameter key} of every bar type of the project with a known
+    diameter (not the crosstie copies): the window's "Tipo" lists."""
+    keys = {}
+    for bt in DB.FilteredElementCollector(doc).OfClass(RebarBarType):
+        name = element_name(bt)
+        key = bar_type_diameter(bt)
+        if key and u" GRAPA " not in name:
+            keys[name] = key
+    return keys
+
+
 def bar_type_names(doc, key):
     """Names of the project's bar types of diameter `key` (not the crosstie
     copies), sorted: the "Tipo" list of the window."""
