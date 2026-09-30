@@ -8,6 +8,7 @@ __title__ = "Acero\nColumna"
 __author__ = "Revit MCP"
 
 import io
+import json
 import os
 import re
 import sys
@@ -474,6 +475,7 @@ class AceroWindow(forms.WPFWindow):
                 self.list_types.ScrollIntoView(item)
         cfg = t.config()
         self._set_form({
+            "bars_type": cfg["EA_Barras_Tipo"],
             "conf_type": cfg["EA_Estribo_Conf_Tipo"],
             "edge_type": cfg["EA_Estribo_Borde_Tipo"],
             "conf": cfg["EA_Estribo_Conf_Diametro"] or u'3/8"',
@@ -495,6 +497,7 @@ class AceroWindow(forms.WPFWindow):
         self.undo_stack = []
         self.draft = []
         self.selected = None
+        self._fill_bars_diameters()  # the drawing's diameters first
         self._fill_view_columns(t)
         self.plan_nav.reset()
         self.elev_nav.reset()
@@ -518,6 +521,8 @@ class AceroWindow(forms.WPFWindow):
         for combo, key in ((self.cbo_conf, "conf"), (self.cbo_edge, "edge")):
             combo.SelectedItem = f.get(key) if f.get(key) in STIRRUP_DIAMETERS else u'3/8"'
         self._fill_bar_types(f.get("conf_type") or u"", f.get("edge_type") or u"")
+        self.bars_types = rc.read_bar_type_names(f.get("bars_type"))
+        self._fill_bars_diameters()
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
@@ -527,6 +532,7 @@ class AceroWindow(forms.WPFWindow):
     def _get_form(self):
         return {
             "conf": self.cbo_conf.SelectedItem or u'3/8"',
+            "bars_type": json.dumps(getattr(self, "bars_types", {}), ensure_ascii=False) if getattr(self, "bars_types", None) else u"",
             "conf_type": self._chosen_type(self.cbo_conf_type),
             "edge_type": self._chosen_type(self.cbo_edge_type),
             "conf_dist": (self.txt_conf_dist.Text or u"").strip(),
@@ -542,6 +548,7 @@ class AceroWindow(forms.WPFWindow):
             "EA_Estribo_Conf_Diametro": f["conf"],
             "EA_Estribo_Conf_Distribucion": f["conf_dist"],
             "EA_Estribo_Conf_Tipo": f["conf_type"],
+            "EA_Barras_Tipo": f["bars_type"],
             "EA_Estribo_Borde_Tipo": f["edge_type"],
             "EA_Estribo_Borde_Diametro": f["edge"],
             "EA_Estribo_Borde_Distribucion": f["edge_dist"],
@@ -855,6 +862,44 @@ class AceroWindow(forms.WPFWindow):
             names = [AUTO_TYPE] + rc.bar_type_names(doc, diameter.SelectedItem or u'3/8"')
             combo.ItemsSource = List[str](names)
             combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+
+    def _fill_bars_diameters(self):
+        """"Barras Ø": the diameters of the drawing first, then the rest."""
+        drawn = []
+        for _, _, key in self.design["bars"] if hasattr(self, "design") else []:
+            if key not in drawn:
+                drawn.append(key)
+        keys = drawn + [k for k in rs.bar_diameter_keys() if k not in drawn]
+        current = self.cbo_bars_d.SelectedItem
+        self._filling_bars_d = True
+        self.cbo_bars_d.ItemsSource = List[str](keys)
+        self._filling_bars_d = False
+        self.cbo_bars_d.SelectedItem = current if current in drawn else (keys[0] if keys else None)
+
+    def bars_diameter_changed(self, sender, args):
+        if getattr(self, "_filling_bars_d", False) or not hasattr(self, "bars_types"):
+            return
+        key = self.cbo_bars_d.SelectedItem
+        if not key:
+            return
+        names = [AUTO_TYPE] + rc.bar_type_names(doc, key)
+        wanted = self.bars_types.get(key)
+        self._filling_bars_d = True
+        self.cbo_bars_type.ItemsSource = List[str](names)
+        self.cbo_bars_type.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        self._filling_bars_d = False
+
+    def bars_type_changed(self, sender, args):
+        if getattr(self, "_filling_bars_d", False) or not hasattr(self, "bars_types"):
+            return
+        key = self.cbo_bars_d.SelectedItem
+        name = self._chosen_type(self.cbo_bars_type)
+        if not key:
+            return
+        if name:
+            self.bars_types[key] = name
+        else:
+            self.bars_types.pop(key, None)
 
     @staticmethod
     def _chosen_type(combo):

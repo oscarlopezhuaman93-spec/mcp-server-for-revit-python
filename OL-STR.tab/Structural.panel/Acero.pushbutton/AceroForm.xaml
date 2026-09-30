@@ -45,43 +45,52 @@
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
+                            <RowDefinition Height="30"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="Confinamiento &#216; / Tipo:" VerticalAlignment="Center"
-                                   ToolTip="Estribos interiores (los que no abrazan todas las barras) y grapas."/>
+                        <TextBlock Grid.Row="0" Text="Barras &#216; / Tipo:" VerticalAlignment="Center"
+                                   ToolTip="Tipo de barra de armadura de Revit de las barras verticales, por di&#225;metro."/>
                         <DockPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Center">
+                            <ComboBox DockPanel.Dock="Left" x:Name="cbo_bars_d" Width="62" SelectionChanged="bars_diameter_changed"
+                                      ToolTip="Di&#225;metro de las barras verticales cuyo tipo eliges (primero los del dibujo)."/>
+                            <ComboBox x:Name="cbo_bars_type" Margin="4,0,0,0" SelectionChanged="bars_type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit para las barras verticales de ese di&#225;metro. Autom&#225;tico: el del tipo de columna."/>
+                        </DockPanel>
+                        <TextBlock Grid.Row="1" Text="Confinamiento &#216; / Tipo:" VerticalAlignment="Center"
+                                   ToolTip="Estribos interiores (los que no abrazan todas las barras) y grapas."/>
+                        <DockPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Center">
                             <ComboBox DockPanel.Dock="Left" x:Name="cbo_conf" Width="62" SelectionChanged="stirrup_diameter_changed"/>
                             <ComboBox x:Name="cbo_conf_type" Margin="4,0,0,0" SelectionChanged="config_changed"
                                       ToolTip="Tipo de barra de armadura de Revit para estos estribos y grapas (del di&#225;metro elegido). Autom&#225;tico: el del tipo de columna."/>
                         </DockPanel>
-                        <TextBlock Grid.Row="1" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
-                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="txt_conf_dist" TextChanged="config_changed" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="2" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="txt_conf_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25. Vacio si no hay estribos interiores ni grapas."/>
-                        <TextBlock Grid.Row="2" Text="Borde &#216; / Tipo:" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="3" Text="Borde &#216; / Tipo:" VerticalAlignment="Center"
                                    ToolTip="Estribo perimetral (el que abraza todas las barras)."/>
-                        <DockPanel Grid.Row="2" Grid.Column="1" VerticalAlignment="Center">
+                        <DockPanel Grid.Row="3" Grid.Column="1" VerticalAlignment="Center">
                             <ComboBox DockPanel.Dock="Left" x:Name="cbo_edge" Width="62" SelectionChanged="stirrup_diameter_changed"/>
                             <ComboBox x:Name="cbo_edge_type" Margin="4,0,0,0" SelectionChanged="config_changed"
                                       ToolTip="Tipo de barra de armadura de Revit para el estribo de borde (del di&#225;metro elegido). Autom&#225;tico: el del tipo de columna."/>
                         </DockPanel>
-                        <TextBlock Grid.Row="3" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
-                        <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_edge_dist" TextChanged="config_changed" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="4" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_edge_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25  o  1@.05, 10@.10, rto@.20"/>
-                        <TextBlock Grid.Row="4" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
-                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
-                        <CheckBox Grid.Row="5" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="5" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="5" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
+                        <CheckBox Grid.Row="6" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
                                   ToolTip="Estribos tambien dentro del nudo viga-columna (desde el fondo de la viga hasta el tope)."/>
-                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                        <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_nucleo}">
                             <TextBlock Text="@ " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="50"/>
                             <TextBlock Text=" cm" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <Button Grid.Row="6" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
+                        <Button Grid.Row="7" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus columnas, en todos los niveles."/>
-                        <UniformGrid Grid.Row="7" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
+                        <UniformGrid Grid.Row="8" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
                             <Button Content="Guardar en archivo..." Height="28" Margin="0,0,3,0" Click="file_save_click"
                                     ToolTip="Guarda estos estribos y el dibujo de la seccion en un archivo, para usarlos en otro tipo o proyecto."/>
                             <Button Content="Abrir archivo..." Height="28" Margin="3,0,0,0" Click="file_open_click"

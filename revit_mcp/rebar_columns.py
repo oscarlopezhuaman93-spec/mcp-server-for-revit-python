@@ -29,6 +29,7 @@ bar carries its column's id in EA_Origen_Id so a new run replaces it.
 
 Runs inside Revit's IronPython engine - no f-strings.
 """
+import json
 import math
 import re
 
@@ -61,6 +62,7 @@ TYPE_PARAMS = (
     "EA_Seccion_Armado",
     "EA_Estribo_Borde_Tipo",  # Revit bar type name; blank = the usual pick
     "EA_Estribo_Conf_Tipo",
+    "EA_Barras_Tipo",  # JSON {diameter: Revit bar type name} of the vertical bars
 )
 # Parameters of the first version: their values move to the new ones
 # (None = dropped: longitudinal bars are now only drawn), then they are
@@ -209,6 +211,16 @@ def _float_cm(text, label, lo, hi):
     return value / 100.0
 
 
+def read_bar_type_names(text):
+    """{diameter key: bar type name} stored in EA_Barras_Tipo; {} if blank
+    or unreadable."""
+    try:
+        names = json.loads(text) if (text or u"").strip() else {}
+    except ValueError:
+        return {}
+    return dict((k, v) for k, v in names.items() if v) if isinstance(names, dict) else {}
+
+
 class StirrupFamily(object):
     """Diameter and distribution of one kind of stirrup."""
 
@@ -243,6 +255,7 @@ class ColumnSpec(object):
         nucleus = (config.get("EA_Nucleo_cm") or u"").strip()
         self.joint_spacing_m = _float_cm(nucleus, u"Espaciamiento en nucleo", 3, 30) if nucleus else None
         self.design = spec.design_from_text(config.get("EA_Seccion_Armado"))
+        self.bar_type_names = read_bar_type_names(config.get("EA_Barras_Tipo"))
         if not require_design:
             return
         if not (self.design and self.design["bars"]):
@@ -254,6 +267,12 @@ class ColumnSpec(object):
             raise spec.SpecError(
                 u"el dibujo tiene estribos o grapas de confinamiento: falta su diametro y distribucion"
             )
+
+    def bar_type(self, doc, bar_types, key, mark):
+        """The vertical bars' type for a diameter: the one chosen in the
+        window ("Barras Ø / Tipo"), else the usual pick."""
+        return (named_bar_type(doc, self.bar_type_names.get(key), key)
+                or _bar_type(bar_types, key, mark))
 
     def family_of(self, kind):
         """(kind, StirrupFamily) of a drawn stirrup or tie."""
@@ -764,7 +783,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
             section.point_m(x, y, section.z_bottom), section.point_m(x, y, section.z_top)
         )
         rebar = Rebar.CreateFromCurves(
-            doc, RebarStyle.Standard, bar_type_for(key), None, None, column, normal,
+            doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, column, normal,
             List[DB.Curve]([line]),
             RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
         )
@@ -923,7 +942,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
             middle = (z_start + z_end) / 2.0
             host = stack[next((k for k, top in enumerate(tops) if middle <= top + 1e-6), len(stack) - 1)]
             rebar = Rebar.CreateFromCurves(
-                doc, RebarStyle.Standard, _bar_type(bar_types, key, mark), None, None, host, normal,
+                doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, host, normal,
                 List[DB.Curve]([DB.Line.CreateBound(points[k], points[k + 1]) for k in range(len(points) - 1)]),
                 RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
             )
