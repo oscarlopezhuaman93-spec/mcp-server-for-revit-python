@@ -356,6 +356,9 @@ def test_stack_lifts_puts_stirrups_side_by_side():
              ("confinamiento", 0.008, False)]
     assert stack_lifts(items) == pytest.approx([2 * d + 0.008, 0.0, d, 2 * d])
     assert stack_lifts([("borde", d, False)]) == [0.0]
+    # three ties of one kind: one layer on the stirrup, not stacked
+    ties = [("borde", d, False)] + [("confinamiento", d, True)] * 3
+    assert stack_lifts(ties) == pytest.approx([0.0, d, d, d])
     assert stack_lifts([]) == []
 
 
