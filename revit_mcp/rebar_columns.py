@@ -749,6 +749,7 @@ def column_above(doc, column, section):
     return False
 
 
+REVIT_MAX_BAR_M = 10.95  # Revit's longest bar (36 ft), anchorage and legs included
 FOUNDATION_COVER_M = 0.075  # on the ground: the bar stops over the bottom mesh
 
 
@@ -769,11 +770,11 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
         if anchor is None:
             anchor = depth - FOUNDATION_COVER_M - 2 * d  # resting on the bottom mesh
         ends["anchor"] = max(0.0, min(anchor, depth - FOUNDATION_COVER_M))
-        leg = column_spec.leg_bottom_cm.get(key, 0.0) / 100.0
+        leg = spec.leg_m(column_spec.leg_bottom_cm.get(key))
         if leg:
             ends["leg_bottom"] = leg
             ends["dir_bottom"] = spec.leg_vector(x, y, half_b, half_h, column_spec.dir_bottom)
-    leg = column_spec.leg_top_cm.get(key, 0.0) / 100.0
+    leg = spec.leg_m(column_spec.leg_top_cm.get(key))
     if leg and not column_above(doc, top_column, Section(top_column)):
         ends["top_drop"] = column_spec.cover_m + d
         ends["leg_top"] = leg
@@ -1065,8 +1066,18 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     tops = [(s.z_top - z0_ft) * FT for s in sections]
     warnings = []
     for x, y, key in column_spec.design["bars"]:
+        d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+        ends = bar_ends(doc, column_spec, key, x, y, base, stack[0], stack[-1])
+        developed = total + ends.get("anchor", 0.0) + ends.get("leg_bottom", 0.0) + ends.get("leg_top", 0.0)
         lap = splice["laps"].get(key)
-        if lap is None:  # this diameter isn't spliced: one bar, whatever its length
+        if lap is None and developed > REVIT_MAX_BAR_M:
+            # Revit won't take a bar this long ("totalmente fuera de su
+            # anfitrion"): spliced anyway, with the E.060 lap
+            lap = spec.e060_lap_cm(key) / 100.0
+            warnings.append(u"Barras de {}: {:.2f} m supera el maximo de Revit ({:.2f} m); se empalmaron con "
+                            u"{:.2f} m (E.060). Marca el diametro en '4. Empalme' para elegir el empalme."
+                            .format(key, developed, REVIT_MAX_BAR_M, lap))
+        if lap is None:  # this diameter isn't spliced: one bar
             if total > splice["max"] + 1e-6:
                 warnings.append(u"Barras de {}: {:.2f} m sin empalme (diametro no marcado para empalmar)"
                                 .format(key, total))
@@ -1075,8 +1086,6 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         else:
             pieces, found = spec.splice_pieces(0.0, total, stories, lap, splice["max"])
         warnings += [u"Barras de {}: {}".format(key, w) for w in found]
-        d = spec.BAR_DIAMETERS_MM[key] / 1000.0
-        ends = bar_ends(doc, column_spec, key, x, y, base, stack[0], stack[-1])
         # with legs, the crank goes square to the same face (one plane per bar)
         leg_dir = ends.get("dir_bottom") or ends.get("dir_top")
         inward = None

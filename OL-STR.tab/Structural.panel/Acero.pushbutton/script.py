@@ -942,7 +942,7 @@ class AceroWindow(forms.WPFWindow):
                 (self.txt_leg_bot_3, self.txt_leg_top_3), (self.txt_leg_bot_4, self.txt_leg_top_4)]
 
     def leg_changed(self, sender, args):
-        """A leg (cm) typed for one bar option: kept for its diameter."""
+        """A leg (m) typed for one bar option: kept for its diameter."""
         if getattr(self, "_filling_types", True) or not hasattr(self, "legs_bot"):
             return
         for (_, cbo), (bot, top) in zip(self.bar_tools, self._leg_boxes()):
@@ -1673,10 +1673,10 @@ class AceroWindow(forms.WPFWindow):
                 anchor = ends.get("anchor")
                 extra["anchor"] = (float(anchor) if anchor not in (None, u"") else
                                    depth - rc.FOUNDATION_COVER_M - 0.03)
-                extra["leg_bot"] = max([float(v) for v in (ends.get("bot") or {}).values()] or [0.0]) / 100.0
+                extra["leg_bot"] = max([rs.leg_m(v) for v in (ends.get("bot") or {}).values()] or [0.0])
                 extra["dir_bot"] = ends.get("dir_bot") or rs.LEG_OUT
             if index == len(columns) - 1 and not rc.column_above(doc, column, section):
-                extra["leg_top"] = max([float(v) for v in (ends.get("top") or {}).values()] or [0.0]) / 100.0
+                extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
             joint = []
             if f["nucleo"] and height - clear > 0.1:
@@ -1765,11 +1765,11 @@ class AceroWindow(forms.WPFWindow):
                 kw = {}
                 if points[0][2] < 1e-6 and first.get("anchor") is not None:
                     kw["anchor"] = first["anchor"]
-                    leg = float((ends.get("bot") or {}).get(key) or 0) / 100.0
+                    leg = rs.leg_m((ends.get("bot") or {}).get(key))
                     if leg:
                         kw["leg_bottom"] = leg
                         kw["dir_bottom"] = rs.leg_vector(x, y, half[0], half[1], first.get("dir_bot"))
-                leg = float((ends.get("top") or {}).get(key) or 0) / 100.0
+                leg = rs.leg_m((ends.get("top") or {}).get(key))
                 if points[-1][2] > top - 1e-6 and last.get("leg_top") is not None and leg:
                     kw["top_drop"] = 0.05
                     kw["leg_top"] = leg

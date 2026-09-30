@@ -545,6 +545,21 @@ def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=
     return pts
 
 
+MIN_LEG_M = 0.05  # a shorter leg can't be bent (Revit: "no se puede resolver forma")
+
+
+def leg_m(value):
+    """A bar end leg typed in the window, in meters: 0.25 (m) or, as
+    first saved, 25 (cm) - a value of 2 or more is taken as cm. 0 when
+    blank or too short to bend (MIN_LEG_M)."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    v = v / 100.0 if v >= 2.0 else v
+    return v if v >= MIN_LEG_M - 1e-9 else 0.0
+
+
 def read_json_setting(text):
     """{...} stored in a text parameter; {} if blank or unreadable."""
     try:

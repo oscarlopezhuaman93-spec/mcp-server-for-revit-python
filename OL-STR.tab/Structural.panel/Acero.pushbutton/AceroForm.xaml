@@ -56,8 +56,8 @@
                             <ColumnDefinition Width="34"/>
                             <ColumnDefinition Width="70"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="44"/>
-                            <ColumnDefinition Width="44"/>
+                            <ColumnDefinition Width="50"/>
+                            <ColumnDefinition Width="50"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="20"/>
@@ -97,10 +97,10 @@
                         <ComboBox Grid.Row="4" Grid.Column="2" x:Name="cbo_bar_type_4" Margin="4,0,0,0" VerticalAlignment="Center"
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de columna."/>
-                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Pata inf." FontSize="10" HorizontalAlignment="Center"
-                                   ToolTip="Pata (doblez) al pie de la barra, dentro de la cimentaci&#243;n (cm). Vac&#237;o: sin pata."/>
-                        <TextBlock Grid.Row="0" Grid.Column="4" Text="Pata sup." FontSize="10" HorizontalAlignment="Center"
-                                   ToolTip="Pata (doblez) donde termina la barra, en el &#250;ltimo piso (cm). Vac&#237;o: sin pata."/>
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Pata inf. (m)" FontSize="9" HorizontalAlignment="Center"
+                                   ToolTip="Pata (doblez) al pie de la barra, dentro de la cimentaci&#243;n, en metros (ej. 0.25). Vac&#237;o: sin pata."/>
+                        <TextBlock Grid.Row="0" Grid.Column="4" Text="Pata sup. (m)" FontSize="9" HorizontalAlignment="Center"
+                                   ToolTip="Pata (doblez) donde termina la barra, en el &#250;ltimo piso, en metros (ej. 0.20). Vac&#237;o: sin pata."/>
                         <TextBox Grid.Row="1" Grid.Column="3" x:Name="txt_leg_bot_1" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
                         <TextBox Grid.Row="1" Grid.Column="4" x:Name="txt_leg_top_1" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
                         <TextBox Grid.Row="2" Grid.Column="3" x:Name="txt_leg_bot_2" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
