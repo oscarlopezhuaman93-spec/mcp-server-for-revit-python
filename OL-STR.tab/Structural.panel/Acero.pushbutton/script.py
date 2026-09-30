@@ -382,8 +382,15 @@ class AceroWindow(forms.WPFWindow):
         self._filling_shapes = False
         self.rebar_shapes = read_rebar_shapes()
         self._fill_shapes()
+        picked_types = set(id_of(c.GetTypeId()) for c in
+                           (doc.GetElement(DB.ElementId(i)) for i in state.picked_ids) if c is not None)
         for t in types:
+            if picked_types and t.id not in picked_types:
+                continue  # with columns picked, only their types are listed
             self.list_types.Items.Add(self._type_item(t))
+        if picked_types:  # the box shrinks to the picked columns' types
+            self.list_types.VerticalAlignment = VerticalAlignment.Top
+            self.list_types.MaxHeight = 26 * self.list_types.Items.Count + 8
         self._refresh_picked()
         if state.form:
             self._set_form(state.form)
@@ -438,6 +445,8 @@ class AceroWindow(forms.WPFWindow):
                 self.list_types.ScrollIntoView(item)
         cfg = t.config()
         self._set_form({
+            "conf_type": cfg["EA_Estribo_Conf_Tipo"],
+            "edge_type": cfg["EA_Estribo_Borde_Tipo"],
             "conf": cfg["EA_Estribo_Conf_Diametro"] or u'3/8"',
             "conf_dist": cfg["EA_Estribo_Conf_Distribucion"],
             "edge": cfg["EA_Estribo_Borde_Diametro"] or u'3/8"',
@@ -479,6 +488,7 @@ class AceroWindow(forms.WPFWindow):
     def _set_form(self, f):
         for combo, key in ((self.cbo_conf, "conf"), (self.cbo_edge, "edge")):
             combo.SelectedItem = f.get(key) if f.get(key) in STIRRUP_DIAMETERS else u'3/8"'
+        self._fill_bar_types(f.get("conf_type") or u"", f.get("edge_type") or u"")
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
@@ -488,6 +498,8 @@ class AceroWindow(forms.WPFWindow):
     def _get_form(self):
         return {
             "conf": self.cbo_conf.SelectedItem or u'3/8"',
+            "conf_type": self._chosen_type(self.cbo_conf_type),
+            "edge_type": self._chosen_type(self.cbo_edge_type),
             "conf_dist": (self.txt_conf_dist.Text or u"").strip(),
             "edge": self.cbo_edge.SelectedItem or u'3/8"',
             "edge_dist": (self.txt_edge_dist.Text or u"").strip(),
@@ -500,6 +512,8 @@ class AceroWindow(forms.WPFWindow):
         config = {
             "EA_Estribo_Conf_Diametro": f["conf"],
             "EA_Estribo_Conf_Distribucion": f["conf_dist"],
+            "EA_Estribo_Conf_Tipo": f["conf_type"],
+            "EA_Estribo_Borde_Tipo": f["edge_type"],
             "EA_Estribo_Borde_Diametro": f["edge"],
             "EA_Estribo_Borde_Distribucion": f["edge_dist"],
             "EA_Recubrimiento_cm": f["cover"],
@@ -805,9 +819,26 @@ class AceroWindow(forms.WPFWindow):
         elif self._steel_slot(tool):
             self.kind_for[self._steel_slot(tool)] = kind
 
+    def _fill_bar_types(self, conf_type=None, edge_type=None):
+        """The "Tipo" lists: the project's bar types of the diameter chosen
+        beside them, first "(automatico)"; keeps (or sets) the choice."""
+        for combo, diameter, wanted in ((self.cbo_conf_type, self.cbo_conf, conf_type),
+                                        (self.cbo_edge_type, self.cbo_edge, edge_type)):
+            if wanted is None:
+                wanted = self._chosen_type(combo)
+            names = [AUTO_TYPE] + rc.bar_type_names(doc, diameter.SelectedItem or u'3/8"')
+            combo.ItemsSource = List[str](names)
+            combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+
+    @staticmethod
+    def _chosen_type(combo):
+        item = combo.SelectedItem
+        return u"" if not item or item == AUTO_TYPE else item
+
     def stirrup_diameter_changed(self, sender, args):
         if not hasattr(self, "kind_for"):
             return
+        self._fill_bar_types()
         self._refresh_steel()
         self._update_measures()  # outer measures depend on the diameter
         self.redraw()
@@ -2003,6 +2034,9 @@ def pick_columns(state):
         state.scope = "pick"
         # show the type (and, in the views, the column) just picked
         state.active = id_of(doc.GetElement(DB.ElementId(state.picked_ids[0])).GetTypeId())
+
+
+AUTO_TYPE = u"(automatico)"
 
 
 # --- main -------------------------------------------------------------------

@@ -48,15 +48,23 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="Estribo de confinamiento &#216;:" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="0" Text="Confinamiento &#216; / Tipo:" VerticalAlignment="Center"
                                    ToolTip="Estribos interiores (los que no abrazan todas las barras) y grapas."/>
-                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="cbo_conf" VerticalAlignment="Center" SelectionChanged="stirrup_diameter_changed"/>
+                        <DockPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Center">
+                            <ComboBox DockPanel.Dock="Left" x:Name="cbo_conf" Width="62" SelectionChanged="stirrup_diameter_changed"/>
+                            <ComboBox x:Name="cbo_conf_type" Margin="4,0,0,0" SelectionChanged="config_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit para estos estribos y grapas (del di&#225;metro elegido). Autom&#225;tico: el del tipo de columna."/>
+                        </DockPanel>
                         <TextBlock Grid.Row="1" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="1" Grid.Column="1" x:Name="txt_conf_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25. Vacio si no hay estribos interiores ni grapas."/>
-                        <TextBlock Grid.Row="2" Text="Estribo de borde &#216;:" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="2" Text="Borde &#216; / Tipo:" VerticalAlignment="Center"
                                    ToolTip="Estribo perimetral (el que abraza todas las barras)."/>
-                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cbo_edge" VerticalAlignment="Center" SelectionChanged="stirrup_diameter_changed"/>
+                        <DockPanel Grid.Row="2" Grid.Column="1" VerticalAlignment="Center">
+                            <ComboBox DockPanel.Dock="Left" x:Name="cbo_edge" Width="62" SelectionChanged="stirrup_diameter_changed"/>
+                            <ComboBox x:Name="cbo_edge_type" Margin="4,0,0,0" SelectionChanged="config_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit para el estribo de borde (del di&#225;metro elegido). Autom&#225;tico: el del tipo de columna."/>
+                        </DockPanel>
                         <TextBlock Grid.Row="3" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_edge_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25  o  1@.05, 10@.10, rto@.20"/>

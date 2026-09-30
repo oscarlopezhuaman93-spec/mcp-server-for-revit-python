@@ -59,6 +59,8 @@ TYPE_PARAMS = (
     "EA_Recubrimiento_cm",
     "EA_Nucleo_cm",
     "EA_Seccion_Armado",
+    "EA_Estribo_Borde_Tipo",  # Revit bar type name; blank = the usual pick
+    "EA_Estribo_Conf_Tipo",
 )
 # Parameters of the first version: their values move to the new ones
 # (None = dropped: longitudinal bars are now only drawn), then they are
@@ -210,7 +212,8 @@ def _float_cm(text, label, lo, hi):
 class StirrupFamily(object):
     """Diameter and distribution of one kind of stirrup."""
 
-    def __init__(self, diameter_text, distribution_text, label):
+    def __init__(self, diameter_text, distribution_text, label, type_name=None):
+        self.type_name = (type_name or u"").strip() or None  # a Revit bar type chosen
         try:
             self.key = spec.parse_diameter(diameter_text)
             self.zones, self.rest = spec.parse_distribution(distribution_text)
@@ -228,11 +231,12 @@ class ColumnSpec(object):
             config.get("EA_Estribo_Borde_Diametro"),
             config.get("EA_Estribo_Borde_Distribucion"),
             u"Estribo de borde",
+            config.get("EA_Estribo_Borde_Tipo"),
         )
         conf_d = (config.get("EA_Estribo_Conf_Diametro") or u"").strip()
         conf_dist = (config.get("EA_Estribo_Conf_Distribucion") or u"").strip()
         self.confinement = (
-            StirrupFamily(conf_d, conf_dist, u"Estribo de confinamiento")
+            StirrupFamily(conf_d, conf_dist, u"Estribo de confinamiento", config.get("EA_Estribo_Conf_Tipo"))
             if conf_dist else None
         )
         self.cover_m = _float_cm(config.get("EA_Recubrimiento_cm") or u"", u"Recubrimiento", 1, 10)
@@ -703,6 +707,32 @@ def _set(rebar, n, spacing_ft):
         )
 
 
+def named_bar_type(doc, name, key):
+    """The project's bar type called `name` when it has the diameter `key`
+    (the "Tipo" chosen in the window), else None."""
+    if not name:
+        return None
+    d_mm = spec.BAR_DIAMETERS_MM[key]
+    for bt in DB.FilteredElementCollector(doc).OfClass(RebarBarType):
+        if element_name(bt) == name:
+            d = getattr(bt, "BarNominalDiameter", None) or bt.BarDiameter
+            return bt if abs(d * FT * 1000.0 - d_mm) <= 0.4 else None
+    return None
+
+
+def bar_type_names(doc, key):
+    """Names of the project's bar types of diameter `key` (not the crosstie
+    copies), sorted: the "Tipo" list of the window."""
+    d_mm = spec.BAR_DIAMETERS_MM[key]
+    names = []
+    for bt in DB.FilteredElementCollector(doc).OfClass(RebarBarType):
+        d = getattr(bt, "BarNominalDiameter", None) or bt.BarDiameter
+        name = element_name(bt)
+        if abs(d * FT * 1000.0 - d_mm) <= 0.4 and u" GRAPA " not in name:
+            names.append(name)
+    return sorted(names)
+
+
 def _bar_type(bar_types, key, mark):
     bar_type = bar_types.pick(key, mark)
     if bar_type is None:
@@ -764,7 +794,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     lift_ft = dict(((kind, i, is_tie), lift / FT) for (kind, i, is_tie), lift in zip(flat, lifts))
 
     for kind, (family, loops, ties) in groups.items():
-        stirrup_type = bar_type_for(family.key)
+        stirrup_type = named_bar_type(doc, family.type_name, family.key) or bar_type_for(family.key)
         hook = hooks.get(family.key)
         for z_set, n, spacing, side in _runs(family, column_spec.joint_spacing_m, section, z_clear_top):
             for index, (line, is_open, shape_name) in enumerate(loops):

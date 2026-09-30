@@ -486,7 +486,7 @@ class TestDrawing:
         name, size, form2, design2 = read_config_file(text)
         assert name == u"C-3_0.25x0.80m"
         assert size == (25.0, 80.0)
-        assert form2 == dict(form, anchor="")  # a column's form has no anchorage
+        assert form2 == dict(form, anchor="", conf_type="", edge_type="")  # blanks: automatic
         assert design2["bars"] == design["bars"]
         assert design_shapes(design2, "stirrups") == ["M_T1"]
         # a form without drawing reads with design None
