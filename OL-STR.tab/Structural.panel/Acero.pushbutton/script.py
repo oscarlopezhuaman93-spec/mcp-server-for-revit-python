@@ -35,6 +35,8 @@ reload(rc)
 reload(rv)
 
 from pyrevit import revit, DB, forms, script
+from System.Windows import GridLength, Visibility
+from System.Windows.Controls import Dock, DockPanel, Expander, GroupBox
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
 from System.Collections.Generic import List
@@ -388,9 +390,8 @@ class AceroWindow(forms.WPFWindow):
             if picked_types and t.id not in picked_types:
                 continue  # with columns picked, only their types are listed
             self.list_types.Items.Add(self._type_item(t))
-        if picked_types:  # the box shrinks to the picked columns' types
-            self.list_types.VerticalAlignment = VerticalAlignment.Top
-            self.list_types.MaxHeight = 26 * self.list_types.Items.Count + 8
+        if picked_types:
+            self._compact_list()
         self._refresh_picked()
         if state.form:
             self._set_form(state.form)
@@ -399,6 +400,34 @@ class AceroWindow(forms.WPFWindow):
             self._select_type(active)
 
     # -- type list ---------------------------------------------------------
+    def _compact_list(self):
+        """With columns picked, the type box holds just their types: it sits
+        right under "Seleccionar todo", its own height, and the settings
+        follow it (no blank box)."""
+        panel = self.list_types.Parent
+        items = [self.list_types, self._splice_box(), self._stirrup_box()]
+        for child in items:
+            panel.Children.Remove(child)
+        at = panel.Children.IndexOf(self.chk_all) + 1
+        for offset, child in enumerate(items):
+            panel.Children.Insert(at + offset, child)
+            DockPanel.SetDock(child, Dock.Top)
+        panel.LastChildFill = False
+        self.list_types.MaxHeight = 26 * self.list_types.Items.Count + 8
+
+    def _splice_box(self):
+        return [c for c in self.list_types.Parent.Children if isinstance(c, Expander)][0]
+
+    def _stirrup_box(self):
+        return [c for c in self.list_types.Parent.Children if isinstance(c, GroupBox)][0]
+
+    def shapes_toggle_click(self, sender, args):
+        """Show / hide the rebar shape browser."""
+        show = self.box_shapes.Visibility != Visibility.Visible
+        self.box_shapes.Visibility = Visibility.Visible if show else Visibility.Collapsed
+        self.col_shapes.Width = GridLength(250) if show else GridLength(0)
+        self.button_shapes.Content = u"Ocultar formas" if show else u"Mostrar formas"
+
     def _type_item(self, t):
         panel = StackPanel()
         panel.Orientation = Orientation.Horizontal
@@ -649,13 +678,10 @@ class AceroWindow(forms.WPFWindow):
         self._leave("pick")
 
     def run_click(self, sender, args):
-        if self.dirty:
-            if forms.alert(
-                u"El dibujo de la seccion tiene cambios sin guardar. "
-                u"Guardarlos en los tipos marcados antes de generar?",
-                title="Acero", yes=True, no=True,
-            ) and not self.save():
-                return
+        # No "Guardar configuracion" button: generating saves the form and
+        # the drawing into the types first (the generation reads them there).
+        if not self.save():
+            return
         # The columns picked in the model, or else every column of the
         # checked types.
         if not self.state.picked_ids and not self.checked_ids():

@@ -18,7 +18,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="370"/>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="250"/>
+                <ColumnDefinition x:Name="col_shapes" Width="0"/>
             </Grid.ColumnDefinitions>
 
             <!-- Left: types + configuration -->
@@ -78,7 +78,7 @@
                             <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="50"/>
                             <TextBlock Text=" cm" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <Button Grid.Row="6" Grid.ColumnSpan="2" x:Name="button_save" Margin="0,8,0,0" Height="30"
+                        <Button Grid.Row="6" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus columnas, en todos los niveles."/>
                         <UniformGrid Grid.Row="7" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
@@ -168,6 +168,9 @@
                     <TextBox x:Name="tb_tie_leg" Width="40" Margin="0,0,14,0" VerticalAlignment="Center"
                              TextChanged="tie_leg_changed"
                              ToolTip="Largo recto del gancho de las grapas (cm). Vac&#237;o = m&#237;nimo E.060 (180&#176;: 4db y 6.5 cm; 135&#176;: 6db y 7.5 cm)."/>
+                    <Button x:Name="button_shapes" Content="Mostrar formas" Padding="6,0" Margin="0,0,6,0"
+                            VerticalAlignment="Center" Click="shapes_toggle_click"
+                            ToolTip="Muestra u oculta el panel Formas de armadura."/>
                     <TextBlock Text="Forma: " VerticalAlignment="Center"/>
                     <TextBlock x:Name="txt_active_shape" Text="la que elija Revit" FontWeight="Bold" Margin="0,0,20,0"
                                VerticalAlignment="Center"
@@ -282,7 +285,7 @@
             </DockPanel>
 
             <!-- Right: rebar shape browser, always shown -->
-            <GroupBox Grid.Column="2" Header="Formas de armadura" Margin="10,0,0,0" Padding="4">
+            <GroupBox Grid.Column="2" x:Name="box_shapes" Visibility="Collapsed" Header="Formas de armadura" Margin="10,0,0,0" Padding="4">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                         <TextBlock Text="Buscar: " VerticalAlignment="Center"/>
