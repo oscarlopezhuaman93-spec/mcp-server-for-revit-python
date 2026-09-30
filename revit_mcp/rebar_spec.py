@@ -454,7 +454,7 @@ def parse_longitudinal(text):
 _REST_WORDS = (u"r", u"rto", u"resto", u"rest", u"rt")
 
 
-def parse_distribution(text):
+def parse_distribution(text, need_rest=True):
     """'1@.05, 10@.10, rto@.20' (meters, or cm when >= 1: '1@5, 10@10,
     R@20') -> ([(count, spacing_m), ...], rest_spacing_m). Read from each
     end of the element towards its middle."""
@@ -486,9 +486,71 @@ def parse_distribution(text):
             rest = spacing
         else:
             raise SpecError(u'No se entiende "{}"'.format(token))
-    if rest is None:
+    if rest is None and need_rest:
         raise SpecError(u"Falta el resto, por ejemplo: rto@.20")
     return zones, rest
+
+
+# --- Izaje stirrups and bar ends in the foundation ---------------------------
+LEG_OUT = u"Afuera"
+LEG_IN = u"Adentro"
+LEG_DIRS = (LEG_OUT, LEG_IN)
+
+
+def izaje_positions(height, text, min_offset=0.0):
+    """Offsets (m, over the column base) of the izaje stirrups: from the
+    izaje height (the cota) down towards the footing, like any
+    distribution from its end ('9@.15': the first 0.15 under the cota;
+    a final 'rto@..' fills down to the footing face, the lowest on it)."""
+    zones, rest = parse_distribution(text, need_rest=False)
+    positions, z = [], height
+    for count, spacing in zones:
+        for _ in range(count):
+            z -= spacing
+            if z < min_offset - 1e-9:
+                return sorted(positions)
+            positions.append(round(z, 4))
+    while rest and z - rest >= min_offset - 1e-9:
+        z -= rest
+        positions.append(round(z, 4))
+    return sorted(positions)
+
+
+def leg_vector(x, y, half_b, half_h, direction):
+    """Unit (x, y) of a bar end leg at plan position (x, y) of a b x h
+    section: square to its nearest face, outwards (LEG_OUT) or inwards."""
+    if half_b - abs(x) <= half_h - abs(y):
+        v = (1.0 if x >= 0 else -1.0, 0.0)
+    else:
+        v = (0.0, 1.0 if y >= 0 else -1.0)
+    return v if direction != LEG_IN else (-v[0], -v[1])
+
+
+def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=0.0,
+                  leg_top=0.0, dir_top=None):
+    """A vertical bar's points (x, y, z) from bottom to top, run `anchor` m
+    further down (into the foundation) and ended `top_drop` m lower at the
+    top, with a horizontal leg of `leg_bottom` / `leg_top` m along the
+    unit (x, y) `dir_bottom` / `dir_top` (none when 0), like on site."""
+    pts = [tuple(p) for p in points]
+    x, y, z = pts[0]
+    pts[0] = (x, y, z - anchor)
+    if leg_bottom > 1e-6 and dir_bottom:
+        pts.insert(0, (x + dir_bottom[0] * leg_bottom, y + dir_bottom[1] * leg_bottom, z - anchor))
+    x, y, z = pts[-1]
+    pts[-1] = (x, y, z - top_drop)
+    if leg_top > 1e-6 and dir_top:
+        pts.append((x + dir_top[0] * leg_top, y + dir_top[1] * leg_top, z - top_drop))
+    return pts
+
+
+def read_json_setting(text):
+    """{...} stored in a text parameter; {} if blank or unreadable."""
+    try:
+        value = json.loads(text) if (text or u"").strip() else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def stirrup_positions(length, zones, rest):

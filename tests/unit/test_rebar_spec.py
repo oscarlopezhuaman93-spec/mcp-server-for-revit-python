@@ -808,3 +808,31 @@ class TestCustomBars:
         corner = bar_seat((-0.09, -0.34), outline, '3/8"', '5/8"')
         assert corner == (pytest.approx(-0.0925375), pytest.approx(-0.3425375))
         assert bar_seat((0.0, 0.0), outline, '3/8"', '5/8"') is None  # far from it
+
+
+class TestIzajeAndBarEnds:
+    def test_izaje_from_the_cota_down(self):
+        from revit_mcp.rebar_spec import izaje_positions
+
+        # 9@0.15 under a 1.35 m cota: 1.20, 1.05 ... every 0.15 down to the footing
+        pos = izaje_positions(1.35, "9@0.15")
+        assert pos[-1] == pytest.approx(1.20)
+        assert len(pos) == 9 and pos[0] == pytest.approx(0.0)  # the lowest on the footing
+        assert all(abs((b - a) - 0.15) < 1e-6 for a, b in zip(pos, pos[1:]))
+        # a rest fills down to the footing
+        assert izaje_positions(1.0, "1@0.05, rto@0.30") == pytest.approx([0.05, 0.35, 0.65, 0.95])
+
+    def test_leg_vector_square_to_the_nearest_face(self):
+        from revit_mcp.rebar_spec import leg_vector, LEG_IN, LEG_OUT
+
+        assert leg_vector(0.09, 0.0, 0.125, 0.40, LEG_OUT) == (1.0, 0.0)
+        assert leg_vector(0.0, -0.35, 0.125, 0.40, LEG_OUT) == (0.0, -1.0)
+        assert leg_vector(0.09, 0.0, 0.125, 0.40, LEG_IN) == (-1.0, 0.0)
+
+    def test_bar_with_ends(self):
+        from revit_mcp.rebar_spec import bar_with_ends
+
+        pts = bar_with_ends([(0.1, 0.0, 0.0), (0.1, 0.0, 3.0)], anchor=0.5, leg_bottom=0.25,
+                            dir_bottom=(1.0, 0.0), top_drop=0.05, leg_top=0.2, dir_top=(-1.0, 0.0))
+        assert pts == pytest.approx([(0.35, 0.0, -0.5), (0.1, 0.0, -0.5), (0.1, 0.0, 2.95), (-0.1, 0.0, 2.95)])
+        assert bar_with_ends([(0, 0, 0), (0, 0, 3)]) == [(0, 0, 0), (0, 0, 3)]

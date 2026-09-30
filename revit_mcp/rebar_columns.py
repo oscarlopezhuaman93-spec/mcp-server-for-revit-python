@@ -63,6 +63,8 @@ TYPE_PARAMS = (
     "EA_Estribo_Borde_Tipo",  # Revit bar type name; blank = the usual pick
     "EA_Estribo_Conf_Tipo",
     "EA_Barras_Tipo",  # JSON {diameter: Revit bar type name} of the vertical bars
+    "EA_Izaje",  # JSON {"d", "dist", "h" (m), "type"}: izaje stirrups over the footing
+    "EA_Barra_Extremos",  # JSON {"anchor" (m, "" = auto), "bot"/"top" {diameter: cm}, "dir_bot"/"dir_top"}
 )
 # Parameters of the first version: their values move to the new ones
 # (None = dropped: longitudinal bars are now only drawn), then they are
@@ -256,6 +258,20 @@ class ColumnSpec(object):
         self.joint_spacing_m = _float_cm(nucleus, u"Espaciamiento en nucleo", 3, 30) if nucleus else None
         self.design = spec.design_from_text(config.get("EA_Seccion_Armado"))
         self.bar_type_names = read_bar_type_names(config.get("EA_Barras_Tipo"))
+        izaje = spec.read_json_setting(config.get("EA_Izaje"))
+        self.izaje, self.izaje_h = None, 0.0
+        if (izaje.get("dist") or u"").strip() and float(izaje.get("h") or 0) > 0:
+            self.izaje = StirrupFamily(izaje.get("d") or u'3/8"', izaje["dist"] + u", rto@1",
+                                       u"Estribo de izaje", izaje.get("type"))
+            self.izaje_dist = izaje["dist"]
+            self.izaje_h = float(izaje["h"])
+        ends = spec.read_json_setting(config.get("EA_Barra_Extremos"))
+        anchor = u"{}".format(ends.get("anchor") or u"").strip()
+        self.anchor_m = float(anchor) if anchor else None  # None: to the footing's bottom
+        self.leg_bottom_cm = dict((k, float(v)) for k, v in (ends.get("bot") or {}).items() if v)
+        self.leg_top_cm = dict((k, float(v)) for k, v in (ends.get("top") or {}).items() if v)
+        self.dir_bottom = ends.get("dir_bot") or spec.LEG_OUT
+        self.dir_top = ends.get("dir_top") or spec.LEG_IN
         if not require_design:
             return
         if not (self.design and self.design["bars"]):
@@ -699,7 +715,96 @@ def _tag(rebar, column):
         p.Set(str(element_id_value(column.Id)))
 
 
-def _runs(family, joint_spacing_m, section, z_clear_top):
+def foundation_below(doc, column, section):
+    """Depth (m) of the foundation (zapata, cimiento, losa de cimentacion)
+    the column stands on - from the column base down to its bottom -, or
+    None when it stands on something else."""
+    cx, cy = section.center
+    probe = section.point_m(0.0, 0.0, section.z_bottom - 0.05 / FT)
+    outline = DB.Outline(DB.XYZ(probe.X - 0.05, probe.Y - 0.05, probe.Z - 0.05),
+                         DB.XYZ(probe.X + 0.05, probe.Y + 0.05, probe.Z + 0.05))
+    deepest = None
+    for element in (DB.FilteredElementCollector(doc)
+                    .OfCategory(DB.BuiltInCategory.OST_StructuralFoundation)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        bb = element.get_BoundingBox(None)
+        if bb is not None and bb.Max.Z >= section.z_bottom - 0.1 / FT:
+            depth = (section.z_bottom - bb.Min.Z) * FT
+            deepest = depth if deepest is None else max(deepest, depth)
+    return deepest
+
+
+def column_above(doc, column, section):
+    """True when another column stands on this one (its bars go on up)."""
+    top = section.point_m(0.0, 0.0, section.z_top + 0.05 / FT)
+    outline = DB.Outline(DB.XYZ(top.X - 0.05, top.Y - 0.05, top.Z - 0.02),
+                         DB.XYZ(top.X + 0.05, top.Y + 0.05, top.Z + 0.02))
+    for element in (DB.FilteredElementCollector(doc)
+                    .OfCategory(DB.BuiltInCategory.OST_StructuralColumns)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        if element.Id != column.Id:
+            return True
+    return False
+
+
+FOUNDATION_COVER_M = 0.075  # on the ground: the bar stops over the bottom mesh
+
+
+def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
+    """kwargs of spec.bar_with_ends for a vertical bar (local x, y): into
+    the foundation under `bottom_column` (EA_Barra_Extremos anchor, or its
+    depth less the cover and the mesh) with its bottom leg, and - when no
+    column stands on `top_column` - ended under the top cover with its top
+    leg. Legs in cm per diameter; none when not set."""
+    xs = [p[0] for p in section.polygon_m]
+    ys = [p[1] for p in section.polygon_m]
+    half_b, half_h = (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0
+    d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+    ends = {}
+    depth = foundation_below(doc, bottom_column, Section(bottom_column))
+    if depth:
+        anchor = column_spec.anchor_m
+        if anchor is None:
+            anchor = depth - FOUNDATION_COVER_M - 2 * d  # resting on the bottom mesh
+        ends["anchor"] = max(0.0, min(anchor, depth - FOUNDATION_COVER_M))
+        leg = column_spec.leg_bottom_cm.get(key, 0.0) / 100.0
+        if leg:
+            ends["leg_bottom"] = leg
+            ends["dir_bottom"] = spec.leg_vector(x, y, half_b, half_h, column_spec.dir_bottom)
+    leg = column_spec.leg_top_cm.get(key, 0.0) / 100.0
+    if leg and not column_above(doc, top_column, Section(top_column)):
+        ends["top_drop"] = column_spec.cover_m + d
+        ends["leg_top"] = leg
+        ends["dir_top"] = spec.leg_vector(x, y, half_b, half_h, column_spec.dir_top)
+    return ends
+
+
+def _half_sizes(section):
+    xs = [p[0] for p in section.polygon_m]
+    ys = [p[1] for p in section.polygon_m]
+    return ((max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0)
+
+
+def _bar_curves(points_m, section, z0_ft):
+    """Revit lines through local (x, y, z m over z0_ft) points."""
+    pts = [section.point_m(px, py, z0_ft + pz / FT) for px, py, pz in points_m]
+    return List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+
+
+def _bar_normal(section, points_m):
+    """Normal of a vertical bar's plane: across its legs / crank, or the
+    section's x axis when straight."""
+    for a, b in zip(points_m, points_m[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        if math.hypot(dx, dy) > 1e-6:
+            v = section.transform.OfVector(DB.XYZ(dx, dy, 0.0)).Normalize()
+            return DB.XYZ.BasisZ.CrossProduct(v).Normalize()
+    return section.transform.BasisX
+
+
+def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None):
     """(z_start_ft, count, spacing_ft, side) runs of one stirrup family: its
     clear-height distribution, one rebar set per zone and end as written
     (spec.stirrup_sets: '1@.05' a single stirrup, '5@.10' a set of 5 at
@@ -707,9 +812,10 @@ def _runs(family, joint_spacing_m, section, z_clear_top):
     is set. side is -1 for the top end zones: the way stirrups set at one
     height stack (towards the middle, so the first one keeps its distance
     from each end)."""
-    clear_m = (z_clear_top - section.z_bottom) * FT
+    z_start = section.z_bottom if z_start is None else z_start
+    clear_m = (z_clear_top - z_start) * FT
     runs = [
-        (section.z_bottom + start / FT, n, spacing / FT, side)
+        (z_start + start / FT, n, spacing / FT, side)
         for start, n, spacing, _, side in spec.stirrup_sets(clear_m, family.zones, family.rest)
     ]
     if joint_spacing_m and section.z_top - z_clear_top > 0.1 / FT:
@@ -789,20 +895,23 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     delete_generated(doc, column)
     created = []
 
-    normal = section.transform.BasisX
+    height_m = (section.z_top - section.z_bottom) * FT
     for x, y, key in (design["bars"] if longitudinal else []):
-        line = DB.Line.CreateBound(
-            section.point_m(x, y, section.z_bottom), section.point_m(x, y, section.z_top)
-        )
+        path = spec.bar_with_ends([(x, y, 0.0), (x, y, height_m)],
+                                  **bar_ends(doc, column_spec, key, x, y, section, column, column))
         rebar = Rebar.CreateFromCurves(
-            doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, column, normal,
-            List[DB.Curve]([line]),
+            doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, column,
+            _bar_normal(section, path), _bar_curves(path, section, section.z_bottom),
             RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
         )
         _tag(rebar, column)
         created.append((rebar, key, LONGITUDINAL))
 
     z_clear_top = clear_top(doc, column, section)
+    # Izaje: over a footing, from the column base up to izaje_h; the column's
+    # own distribution starts there.
+    izaje_h = column_spec.izaje_h if (column_spec.izaje and foundation_below(doc, column, section)) else 0.0
+    z_start = section.z_bottom + izaje_h / FT
     # (kind, family, [loop centerlines], [tie centerlines]) per family
     groups = {}
     stirrup_shapes = spec.design_shapes(design, "stirrups")
@@ -832,7 +941,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         joint_m = column_spec.joint_spacing_m
         if joint_m and kind == CONFINEMENT:
             joint_m = family.rest
-        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top):
+        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]
                 if is_open:
@@ -873,6 +982,24 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 _set(rebar, n, spacing)
                 _tag(rebar, column)
                 created.append((rebar, family.key, kind))
+    if izaje_h and EDGE in groups:
+        izaje = column_spec.izaje
+        izaje_type = named_bar_type(doc, izaje.type_name, izaje.key) or bar_type_for(izaje.key)
+        positions = spec.izaje_positions(izaje_h, column_spec.izaje_dist)
+        for start, n, spacing in spec.group_runs(positions):
+            for line, is_open, shape_name in groups[EDGE][1]:
+                if is_open:
+                    continue
+                pts = _counterclockwise([section.point_m(x, y, section.z_bottom + start / FT) for x, y in line])
+                loop = List[DB.Curve](
+                    [DB.Line.CreateBound(pts[k], pts[(k + 1) % len(pts)]) for k in range(len(pts))])
+                rebar = _create_stirrup(
+                    doc, shapes, shape_name, column, izaje_type, hooks.get(izaje.key), hooks, izaje.key,
+                    loop, RebarHookOrientation.Left, RebarHookOrientation.Left,
+                )
+                _set(rebar, n, spacing / FT)
+                _tag(rebar, column)
+                created.append((rebar, izaje.key, EDGE))
     return created
 
 
@@ -949,18 +1076,25 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
             pieces, found = spec.splice_pieces(0.0, total, stories, lap, splice["max"])
         warnings += [u"Barras de {}: {}".format(key, w) for w in found]
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
-        r = math.hypot(x, y)
-        ux, uy = (-x / r, -y / r) if r > 1e-6 else (1.0, 0.0)  # towards the center
-        crank_normal = DB.XYZ.BasisZ.CrossProduct(base.transform.OfVector(DB.XYZ(ux, uy, 0.0))).Normalize()
+        ends = bar_ends(doc, column_spec, key, x, y, base, stack[0], stack[-1])
+        # with legs, the crank goes square to the same face (one plane per bar)
+        leg_dir = ends.get("dir_bottom") or ends.get("dir_top")
+        inward = None
+        if leg_dir:
+            out = spec.leg_vector(x, y, *(_half_sizes(base) + (spec.LEG_OUT,)))
+            inward = (-out[0], -out[1])
         for index, (z_start, z_end) in enumerate(pieces):
-            path = spec.bar_piece_points(x, y, d, z_start, z_end, lap, index < len(pieces) - 1)
-            points = [base.point_m(px, py, z0_ft + pz / FT) for px, py, pz in path]
-            normal = crank_normal if len(points) > 2 else base.transform.BasisX
+            path = spec.bar_piece_points(x, y, d, z_start, z_end, lap, index < len(pieces) - 1, inward)
+            path = spec.bar_with_ends(
+                path,
+                **dict((k, v) for k, v in ends.items()
+                       if (index == 0 and k in ("anchor", "leg_bottom", "dir_bottom"))
+                       or (index == len(pieces) - 1 and k in ("top_drop", "leg_top", "dir_top"))))
             middle = (z_start + z_end) / 2.0
             host = stack[next((k for k, top in enumerate(tops) if middle <= top + 1e-6), len(stack) - 1)]
             rebar = Rebar.CreateFromCurves(
-                doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, host, normal,
-                List[DB.Curve]([DB.Line.CreateBound(points[k], points[k + 1]) for k in range(len(points) - 1)]),
+                doc, RebarStyle.Standard, column_spec.bar_type(doc, bar_types, key, mark), None, None, host,
+                _bar_normal(base, path), _bar_curves(path, base, z0_ft),
                 RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
             )
             _tag(rebar, host)
