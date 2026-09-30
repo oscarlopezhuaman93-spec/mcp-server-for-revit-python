@@ -56,41 +56,68 @@
                             <ColumnDefinition Width="34"/>
                             <ColumnDefinition Width="70"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="44"/>
+                            <ColumnDefinition Width="44"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>
+                            <RowDefinition Height="20"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
                         </Grid.RowDefinitions>
-                        <RadioButton Grid.Row="0" x:Name="rb_bar_1" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
+                        <RadioButton Grid.Row="1" x:Name="rb_bar_1" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
                                      Checked="tool_changed" ToolTip="Elige esta barra y haz clic en la planta donde va cada una."/>
-                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="cbo_bar_1" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
+                        <ComboBox Grid.Row="1" Grid.Column="1" x:Name="cbo_bar_1" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
                                   ToolTip="Di&#225;metro de esta opci&#243;n: elige el que uses; se recuerda la pr&#243;xima vez."/>
-                        <ComboBox Grid.Row="0" Grid.Column="2" x:Name="cbo_bar_type_1" Margin="4,0,0,0" VerticalAlignment="Center"
+                        <ComboBox Grid.Row="1" Grid.Column="2" x:Name="cbo_bar_type_1" Margin="4,0,0,0" VerticalAlignment="Center"
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de columna."/>
-                        <RadioButton Grid.Row="1" x:Name="rb_bar_2" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
+                        <RadioButton Grid.Row="2" x:Name="rb_bar_2" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
                                      Checked="tool_changed" ToolTip="Elige esta barra y haz clic en la planta donde va cada una."/>
-                        <ComboBox Grid.Row="1" Grid.Column="1" x:Name="cbo_bar_2" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
+                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cbo_bar_2" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
                                   ToolTip="Di&#225;metro de esta opci&#243;n: elige el que uses; se recuerda la pr&#243;xima vez."/>
-                        <ComboBox Grid.Row="1" Grid.Column="2" x:Name="cbo_bar_type_2" Margin="4,0,0,0" VerticalAlignment="Center"
+                        <ComboBox Grid.Row="2" Grid.Column="2" x:Name="cbo_bar_type_2" Margin="4,0,0,0" VerticalAlignment="Center"
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de columna."/>
-                        <RadioButton Grid.Row="2" x:Name="rb_bar_3" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
+                        <RadioButton Grid.Row="3" x:Name="rb_bar_3" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
                                      Checked="tool_changed" ToolTip="Elige esta barra y haz clic en la planta donde va cada una."/>
-                        <ComboBox Grid.Row="2" Grid.Column="1" x:Name="cbo_bar_3" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
+                        <ComboBox Grid.Row="3" Grid.Column="1" x:Name="cbo_bar_3" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
                                   ToolTip="Di&#225;metro de esta opci&#243;n: elige el que uses; se recuerda la pr&#243;xima vez."/>
-                        <ComboBox Grid.Row="2" Grid.Column="2" x:Name="cbo_bar_type_3" Margin="4,0,0,0" VerticalAlignment="Center"
+                        <ComboBox Grid.Row="3" Grid.Column="2" x:Name="cbo_bar_type_3" Margin="4,0,0,0" VerticalAlignment="Center"
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de columna."/>
-                        <RadioButton Grid.Row="3" x:Name="rb_bar_4" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
+                        <RadioButton Grid.Row="4" x:Name="rb_bar_4" GroupName="tool" Content="&#216;" VerticalAlignment="Center"
                                      Checked="tool_changed" ToolTip="Elige esta barra y haz clic en la planta donde va cada una."/>
-                        <ComboBox Grid.Row="3" Grid.Column="1" x:Name="cbo_bar_4" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
+                        <ComboBox Grid.Row="4" Grid.Column="1" x:Name="cbo_bar_4" VerticalAlignment="Center" SelectionChanged="bar_slot_changed"
                                   ToolTip="Di&#225;metro de esta opci&#243;n: elige el que uses; se recuerda la pr&#243;xima vez."/>
-                        <ComboBox Grid.Row="3" Grid.Column="2" x:Name="cbo_bar_type_4" Margin="4,0,0,0" VerticalAlignment="Center"
+                        <ComboBox Grid.Row="4" Grid.Column="2" x:Name="cbo_bar_type_4" Margin="4,0,0,0" VerticalAlignment="Center"
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de columna."/>
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Pata inf." FontSize="10" HorizontalAlignment="Center"
+                                   ToolTip="Pata (doblez) al pie de la barra, dentro de la cimentaci&#243;n (cm). Vac&#237;o: sin pata."/>
+                        <TextBlock Grid.Row="0" Grid.Column="4" Text="Pata sup." FontSize="10" HorizontalAlignment="Center"
+                                   ToolTip="Pata (doblez) donde termina la barra, en el &#250;ltimo piso (cm). Vac&#237;o: sin pata."/>
+                        <TextBox Grid.Row="1" Grid.Column="3" x:Name="txt_leg_bot_1" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="1" Grid.Column="4" x:Name="txt_leg_top_1" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="2" Grid.Column="3" x:Name="txt_leg_bot_2" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="2" Grid.Column="4" x:Name="txt_leg_top_2" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="3" Grid.Column="3" x:Name="txt_leg_bot_3" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="3" Grid.Column="4" x:Name="txt_leg_top_3" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="4" Grid.Column="3" x:Name="txt_leg_bot_4" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBox Grid.Row="4" Grid.Column="4" x:Name="txt_leg_top_4" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="leg_changed"/>
+                        <TextBlock Grid.Row="5" Grid.ColumnSpan="2" Text="Anclaje (m):" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="5" Grid.Column="2" x:Name="txt_anchor" Margin="4,0,0,0" VerticalAlignment="Center" TextChanged="config_changed"
+                                 ToolTip="Cu&#225;nto baja la barra dentro de la zapata, cimiento o losa de cimentaci&#243;n. Vac&#237;o: hasta la malla del fondo. Tambi&#233;n se edita con un clic en la cota del alzado."/>
+                        <TextBlock Grid.Row="6" Grid.ColumnSpan="2" Text="Pata abajo:" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="6" Grid.Column="2" x:Name="cbo_dir_bot" Margin="4,0,0,0" VerticalAlignment="Center" SelectionChanged="config_changed"
+                                  ToolTip="Hacia d&#243;nde apunta la pata de abajo: afuera o adentro de la columna."/>
+                        <TextBlock Grid.Row="7" Grid.ColumnSpan="2" Text="Pata arriba:" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="7" Grid.Column="2" x:Name="cbo_dir_top" Margin="4,0,0,0" VerticalAlignment="Center" SelectionChanged="config_changed"
+                                  ToolTip="Hacia d&#243;nde apunta la pata de arriba: adentro de la columna o afuera, dentro de la viga o losa."/>
                     </Grid>
                 </GroupBox>
 
@@ -101,6 +128,9 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="30"/>
+                            <RowDefinition Height="30"/>
+                            <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
@@ -130,20 +160,33 @@
                         <TextBlock Grid.Row="3" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_edge_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25  o  1@.05, 10@.10, rto@.20"/>
-                        <TextBlock Grid.Row="4" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
-                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
-                        <CheckBox Grid.Row="5" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
+                        <TextBlock Grid.Row="4" Text="Izaje &#216; / Tipo:" VerticalAlignment="Center"
+                                   ToolTip="Estribos de izaje: sobre la zapata, desde la altura de izaje hacia abajo."/>
+                        <DockPanel Grid.Row="4" Grid.Column="1" VerticalAlignment="Center">
+                            <ComboBox DockPanel.Dock="Left" x:Name="cbo_izaje" Width="62" SelectionChanged="config_changed"/>
+                            <ComboBox x:Name="cbo_izaje_type" Margin="4,0,0,0" SelectionChanged="stirrup_type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit para los estribos de izaje. Autom&#225;tico: el del tipo de columna."/>
+                        </DockPanel>
+                        <TextBlock Grid.Row="5" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="5" Grid.Column="1" x:Name="txt_izaje_dist" TextChanged="config_changed" VerticalAlignment="Center"
+                                 ToolTip="Desde la altura de izaje hacia abajo, hasta la cara de la zapata. Ej. 9@0.15. Vac&#237;o: sin izaje."/>
+                        <TextBlock Grid.Row="6" Text="     Altura izaje (m):" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="6" Grid.Column="1" x:Name="txt_izaje_h" TextChanged="config_changed" VerticalAlignment="Center"
+                                 ToolTip="Desde la cara superior de la zapata. Sobre esta cota empieza la distribuci&#243;n normal de la columna. Tambi&#233;n se edita con un clic en la cota del alzado."/>
+                        <TextBlock Grid.Row="7" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="7" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
+                        <CheckBox Grid.Row="8" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
                                   ToolTip="Estribos tambien dentro del nudo viga-columna (desde el fondo de la viga hasta el tope)."/>
-                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_nucleo}">
                             <TextBlock Text="@ " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="50"/>
                             <TextBlock Text=" cm" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <Button Grid.Row="6" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
+                        <Button Grid.Row="9" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus columnas, en todos los niveles."/>
-                        <UniformGrid Grid.Row="7" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
+                        <UniformGrid Grid.Row="10" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
                             <Button Content="Guardar en archivo..." Height="28" Margin="0,0,3,0" Click="file_save_click"
                                     ToolTip="Guarda estos estribos y el dibujo de la seccion en un archivo, para usarlos en otro tipo o proyecto."/>
                             <Button Content="Abrir archivo..." Height="28" Margin="3,0,0,0" Click="file_open_click"

@@ -347,6 +347,9 @@ class AceroWindow(forms.WPFWindow):
 
         self.cbo_conf.ItemsSource = List[str](STIRRUP_DIAMETERS)
         self.cbo_edge.ItemsSource = List[str](STIRRUP_DIAMETERS)
+        self.cbo_izaje.ItemsSource = List[str](STIRRUP_DIAMETERS)
+        self.cbo_dir_bot.ItemsSource = List[str](list(rs.LEG_DIRS))
+        self.cbo_dir_top.ItemsSource = List[str](list(rs.LEG_DIRS))
         # "Ø acero" of the sketch: which stirrup family a new stirrup/tie
         # uses. A new longitudinal bar takes the diameter of the "Barras"
         # option chosen.
@@ -473,6 +476,8 @@ class AceroWindow(forms.WPFWindow):
         cfg = t.config()
         self._set_form({
             "bars_type": cfg["EA_Barras_Tipo"],
+            "izaje": cfg["EA_Izaje"],
+            "ends": cfg["EA_Barra_Extremos"],
             "conf_type": cfg["EA_Estribo_Conf_Tipo"],
             "edge_type": cfg["EA_Estribo_Borde_Tipo"],
             "conf": cfg["EA_Estribo_Conf_Diametro"] or u'3/8"',
@@ -518,6 +523,22 @@ class AceroWindow(forms.WPFWindow):
             combo.SelectedItem = f.get(key) if f.get(key) in STIRRUP_DIAMETERS else u'3/8"'
         self._fill_bar_types(f.get("conf_type") or u"", f.get("edge_type") or u"")
         self.bars_types = rc.read_bar_type_names(f.get("bars_type"))
+        izaje = rs.read_json_setting(f.get("izaje"))
+        self.cbo_izaje.SelectedItem = izaje.get("d") if izaje.get("d") in STIRRUP_DIAMETERS else u'3/8"'
+        names = self._type_names()
+        if self.cbo_izaje_type.ItemsSource is None:
+            self.cbo_izaje_type.ItemsSource = List[str](names)
+        self._filling_types = True
+        self.cbo_izaje_type.SelectedItem = izaje.get("type") if izaje.get("type") in names else AUTO_TYPE
+        self._filling_types = False
+        self.txt_izaje_dist.Text = izaje.get("dist") or u""
+        self.txt_izaje_h.Text = u"{:g}".format(float(izaje["h"])) if izaje.get("h") else u""
+        ends = rs.read_json_setting(f.get("ends"))
+        self.legs_bot = dict(ends.get("bot") or {})
+        self.legs_top = dict(ends.get("top") or {})
+        self.txt_anchor.Text = u"{}".format(ends.get("anchor") or u"")
+        self.cbo_dir_bot.SelectedItem = ends.get("dir_bot") if ends.get("dir_bot") in rs.LEG_DIRS else rs.LEG_OUT
+        self.cbo_dir_top.SelectedItem = ends.get("dir_top") if ends.get("dir_top") in rs.LEG_DIRS else rs.LEG_IN
         self._fill_slot_types()
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
@@ -529,6 +550,8 @@ class AceroWindow(forms.WPFWindow):
         return {
             "conf": self.cbo_conf.SelectedItem or u'3/8"',
             "bars_type": json.dumps(getattr(self, "bars_types", {}), ensure_ascii=False) if getattr(self, "bars_types", None) else u"",
+            "izaje": self._izaje_text(),
+            "ends": self._ends_text(),
             "conf_type": self._chosen_type(self.cbo_conf_type),
             "edge_type": self._chosen_type(self.cbo_edge_type),
             "conf_dist": (self.txt_conf_dist.Text or u"").strip(),
@@ -545,6 +568,8 @@ class AceroWindow(forms.WPFWindow):
             "EA_Estribo_Conf_Distribucion": f["conf_dist"],
             "EA_Estribo_Conf_Tipo": f["conf_type"],
             "EA_Barras_Tipo": f["bars_type"],
+            "EA_Izaje": f["izaje"],
+            "EA_Barra_Extremos": f["ends"],
             "EA_Estribo_Borde_Tipo": f["edge_type"],
             "EA_Estribo_Borde_Diametro": f["edge"],
             "EA_Estribo_Borde_Distribucion": f["edge_dist"],
@@ -874,10 +899,72 @@ class AceroWindow(forms.WPFWindow):
         if getattr(self, "_filling_types", True):
             return
         key = self.type_keys.get(self._chosen_type(sender))
-        diameter = self.cbo_conf if sender is self.cbo_conf_type else self.cbo_edge
+        diameter = {id(self.cbo_conf_type): self.cbo_conf, id(self.cbo_edge_type): self.cbo_edge,
+                    id(self.cbo_izaje_type): self.cbo_izaje}[id(sender)]
         if key and key in STIRRUP_DIAMETERS and diameter.SelectedItem != key:
             diameter.SelectedItem = key
         self.config_changed(sender, args)
+
+    @staticmethod
+    def _number(text):
+        try:
+            return float((text or u"").strip().replace(u",", u"."))
+        except ValueError:
+            return None
+
+    def _izaje_text(self):
+        """EA_Izaje of the form: JSON, or blank when there is no izaje."""
+        if not hasattr(self, "txt_izaje_dist"):
+            return u""
+        dist, h = (self.txt_izaje_dist.Text or u"").strip(), self._number(self.txt_izaje_h.Text)
+        if not dist or not h:
+            return u""
+        return json.dumps({"d": self.cbo_izaje.SelectedItem or u'3/8"', "dist": dist, "h": h,
+                           "type": self._chosen_type(self.cbo_izaje_type)}, ensure_ascii=False)
+
+    def _ends_text(self):
+        """EA_Barra_Extremos of the form: anchorage, legs per diameter (cm)
+        and their directions, as JSON; blank when nothing is set."""
+        if not hasattr(self, "legs_bot"):
+            return u""
+        anchor = self._number(self.txt_anchor.Text)
+        data = {"anchor": anchor if anchor is not None else u"",
+                "bot": dict((k, v) for k, v in self.legs_bot.items() if v),
+                "top": dict((k, v) for k, v in self.legs_top.items() if v),
+                "dir_bot": self.cbo_dir_bot.SelectedItem or rs.LEG_OUT,
+                "dir_top": self.cbo_dir_top.SelectedItem or rs.LEG_IN}
+        if anchor is None and not data["bot"] and not data["top"]:
+            return u""
+        return json.dumps(data, ensure_ascii=False)
+
+    def _leg_boxes(self):
+        return [(self.txt_leg_bot_1, self.txt_leg_top_1), (self.txt_leg_bot_2, self.txt_leg_top_2),
+                (self.txt_leg_bot_3, self.txt_leg_top_3), (self.txt_leg_bot_4, self.txt_leg_top_4)]
+
+    def leg_changed(self, sender, args):
+        """A leg (cm) typed for one bar option: kept for its diameter."""
+        if getattr(self, "_filling_types", True) or not hasattr(self, "legs_bot"):
+            return
+        for (_, cbo), (bot, top) in zip(self.bar_tools, self._leg_boxes()):
+            if sender is bot or sender is top:
+                legs = self.legs_bot if sender is bot else self.legs_top
+                value = self._number(sender.Text)
+                if value:
+                    legs[cbo.SelectedItem] = value
+                else:
+                    legs.pop(cbo.SelectedItem, None)
+        self.config_changed(sender, args)
+
+    def elev_edit(self, tag):
+        """A click on an editable cota of the elevation: its new value."""
+        box = {"izaje_h": self.txt_izaje_h, "anchor": self.txt_anchor}.get(tag)
+        if box is None:
+            return
+        label = u"Altura de izaje (m), desde la cara de la zapata:" if tag == "izaje_h" else \
+            u"Anclaje (m) dentro de la cimentacion (vacio: hasta la malla del fondo):"
+        value = forms.ask_for_string(default=box.Text or u"", prompt=label, title="Acero")
+        if value is not None:
+            box.Text = value.strip()
 
     def _slot_type_combos(self):
         return [self.cbo_bar_type_1, self.cbo_bar_type_2, self.cbo_bar_type_3, self.cbo_bar_type_4]
@@ -892,6 +979,10 @@ class AceroWindow(forms.WPFWindow):
                 combo.ItemsSource = List[str](names)
             wanted = getattr(self, "bars_types", {}).get(cbo.SelectedItem)
             combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        for (_, cbo), (bot, top) in zip(self.bar_tools, self._leg_boxes()):
+            for box, legs in ((bot, getattr(self, "legs_bot", {})), (top, getattr(self, "legs_top", {}))):
+                value = legs.get(cbo.SelectedItem)
+                box.Text = u"{:g}".format(value) if value else u""
         self._filling_types = False
 
     def bar_type_changed(self, sender, args):
@@ -1560,8 +1651,33 @@ class AceroWindow(forms.WPFWindow):
             dx = (origin.X - base.center[0]) * rc.FT
             dy = (origin.Y - base.center[1]) * rc.FT
             dz = (section.z_bottom - base.z_bottom) * rc.FT
-            edge, edge_msg = self._family_view(f["edge"], f["edge_dist"], clear)
-            conf, conf_msg = self._family_view(f["conf"], f["conf_dist"], clear)
+            # over a footing: izaje up to its height, the column's own
+            # distribution from there (rc.generate_column)
+            depth = rc.foundation_below(doc, column, section) if index == 0 else None
+            izaje = rs.read_json_setting(f["izaje"])
+            izaje_h = float(izaje["h"]) if (depth and izaje.get("dist") and izaje.get("h")) else 0.0
+            edge, edge_msg = self._family_view(f["edge"], f["edge_dist"], clear - izaje_h)
+            conf, conf_msg = self._family_view(f["conf"], f["conf_dist"], clear - izaje_h)
+            for fam in (edge, conf):
+                if fam and izaje_h:
+                    fam["tagged"] = [(z + izaje_h, zone) for z, zone in fam["tagged"]]
+            extra = {}
+            if izaje_h:
+                try:
+                    extra["izaje"] = rs.izaje_positions(izaje_h, izaje["dist"])
+                except rs.SpecError as e:
+                    messages.append(u"Izaje: {}".format(e))
+                extra["izaje_h"] = izaje_h
+            ends = rs.read_json_setting(f["ends"])
+            if depth:
+                anchor = ends.get("anchor")
+                extra["anchor"] = (float(anchor) if anchor not in (None, u"") else
+                                   depth - rc.FOUNDATION_COVER_M - 0.03)
+                extra["leg_bot"] = max([float(v) for v in (ends.get("bot") or {}).values()] or [0.0]) / 100.0
+                extra["dir_bot"] = ends.get("dir_bot") or rs.LEG_OUT
+            if index == len(columns) - 1 and not rc.column_above(doc, column, section):
+                extra["leg_top"] = max([float(v) for v in (ends.get("top") or {}).values()] or [0.0]) / 100.0
+                extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
             joint = []
             if f["nucleo"] and height - clear > 0.1:
                 try:
@@ -1574,8 +1690,8 @@ class AceroWindow(forms.WPFWindow):
                 messages.append(u"Falta la distribucion del estribo de borde")
             # confinement stirrups/ties keep their "rto" in the joint (rc.generate_column)
             joint_conf = rs.joint_positions(height - clear, conf["rest"]) if joint and conf else []
-            segments.append({"x": dx, "y": dy, "z": dz, "height": height, "clear": clear,
-                             "edge": edge, "conf": conf, "joint": joint, "joint_conf": joint_conf})
+            segments.append(dict({"x": dx, "y": dy, "z": dz, "height": height, "clear": clear,
+                                  "edge": edge, "conf": conf, "joint": joint, "joint_conf": joint_conf}, **extra))
             for n in touching:
                 x0, y0, z0, x1, y1, z1 = n["box"]
                 neighbors.append({
@@ -1691,6 +1807,11 @@ class AceroWindow(forms.WPFWindow):
         args.Handled = True
 
     def elev_mouse_down(self, sender, args):
+        tag = getattr(args.OriginalSource, "Tag", None)
+        if args.ChangedButton == MouseButton.Left and tag in ("izaje_h", "anchor"):
+            self.elev_edit(tag)  # an editable cota
+            args.Handled = True
+            return
         fitted = self._elev_fitted()
         if fitted is not None and args.ChangedButton in (MouseButton.Middle, MouseButton.Left):
             self.elev_nav.start_pan(fitted, args.GetPosition(self.canvas_elev))

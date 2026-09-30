@@ -334,12 +334,71 @@ def elevation_extent(data):
     half = data["width"] * widen / 2.0
     neighbors = data.get("neighbors", [])
     zs = [z for n in neighbors for z in (n["box"][2], n["box"][5])]
-    right = max([s["x"] * widen + half + 0.30 for s in _segments(data)]
+    right = max([s["x"] * widen + half + 0.90 for s in _segments(data)]  # room for the editable cotas
                 + [n["box"][3] * widen for n in neighbors])
     top = max([data["height"]] + zs) + 1.2 * u
     bottom = _floor(data) - 2.8 * u  # "Luz libre" and the message
     _, _, x_total = _dimension_layout(data)
     return x_total - 1.2 * u, bottom, right, top
+
+
+C_IZAJE = _brush(142, 68, 173)
+C_EDIT = _brush(255, 243, 176)
+
+
+def _edit_text(canvas, frame, x, y, text, tag):
+    """A value the user edits with a click (Tag = what it edits)."""
+    from System.Windows.Input import Cursors
+    tb = TextBlock()
+    tb.Text = text + u"  \u270e"
+    tb.FontSize = 10
+    tb.FontWeight = FontWeights.Bold
+    tb.Foreground = C_DIM
+    tb.Background = C_EDIT
+    tb.Tag = tag
+    tb.Cursor = Cursors.Hand
+    tb.ToolTip = u"Clic para editar"
+    tb.Measure(Size(1e4, 1e4))
+    px, py = _px(frame, x, y)
+    Canvas.SetLeft(tb, px)
+    Canvas.SetTop(tb, py - tb.DesiredSize.Height / 2.0)
+    canvas.Children.Add(tb)
+
+
+def _foundation_ends(canvas, frame, data, segments, widen, half):
+    """Izaje stirrups over the footing with their editable height, the
+    bars run down into the foundation (editable anchorage) with their
+    bottom legs, and the top legs where the bars end."""
+    s = segments[0]
+    cx, base = s["x"] * widen, s["z"]
+    u = _elevation_unit(data)
+    for offset in s.get("izaje", []):
+        _line(canvas, frame, (cx - half + 0.01, base + offset), (cx + half - 0.01, base + offset), C_IZAJE, 2)
+    if s.get("izaje_h"):
+        h = s["izaje_h"]
+        x = cx + half + 0.12
+        _line(canvas, frame, (cx + half, base + h), (x + 0.05, base + h), C_IZAJE, 1)
+        _line(canvas, frame, (x, base), (x, base + h), C_IZAJE, 1)
+        _edit_text(canvas, frame, x + 0.04, base + h / 2.0, u"Izaje {:.2f} m".format(h), "izaje_h")
+    anchor = s.get("anchor")
+    if anchor is not None:
+        leg, out = s.get("leg_bot", 0.0), s.get("dir_bot") != u"Adentro"
+        for bx in data["bars_x"]:
+            x = cx + bx * widen
+            _line(canvas, frame, (x, base), (x, base - anchor), C_BAR, 2)
+            if leg:
+                sign = (1.0 if bx >= 0 else -1.0) * (1.0 if out else -1.0)
+                _line(canvas, frame, (x, base - anchor), (x + sign * leg, base - anchor), C_BAR, 2)
+        _edit_text(canvas, frame, cx + half + 0.12, base - anchor / 2.0, u"Anclaje {:.2f} m".format(anchor), "anchor")
+    top_seg = segments[-1]
+    if top_seg.get("leg_top"):
+        leg, out = top_seg["leg_top"], top_seg.get("dir_top") == u"Afuera"
+        z = top_seg["z"] + top_seg["height"] - 0.05
+        tcx = top_seg["x"] * widen
+        for bx in data["bars_x"]:
+            x = tcx + bx * widen
+            sign = (1.0 if bx >= 0 else -1.0) * (1.0 if out else -1.0)
+            _line(canvas, frame, (x, z), (x + sign * leg, z), C_BAR, 2)
 
 
 def draw_elevation(canvas, data, frame):
@@ -437,6 +496,7 @@ def draw_elevation(canvas, data, frame):
         _text(canvas, frame, cx + half + 0.03, z1 - min(z1 - z0 for z0, _ in items) / 2.0,
               label, brush=C_LAP_TEXT, size=10, anchor="left")
 
+    _foundation_ends(canvas, frame, data, segments, widen, half)
     _dimensions(canvas, frame, data)
     # below everything (a footing under the base included), one line each
     floor, u = _floor(data), _elevation_unit(data)
