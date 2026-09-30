@@ -60,11 +60,11 @@
                             <ColumnDefinition Width="44"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="28"/>
-                            <RowDefinition Height="28"/>
-                            <RowDefinition Height="28"/>
-                            <RowDefinition Height="28"/>
                             <RowDefinition Height="20"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>
                             <RowDefinition Height="28"/>

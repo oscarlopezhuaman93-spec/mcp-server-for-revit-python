@@ -379,7 +379,7 @@ def _foundation_ends(canvas, frame, data, segments, widen, half):
         x = cx + half + 0.12
         _line(canvas, frame, (cx + half, base + h), (x + 0.05, base + h), C_IZAJE, 1)
         _line(canvas, frame, (x, base), (x, base + h), C_IZAJE, 1)
-        _edit_text(canvas, frame, x + 0.04, base + h / 2.0, u"Izaje {:.2f} m".format(h), "izaje_h")
+        _edit_text(canvas, frame, x + 0.04, base + h * 0.3, u"Izaje {:.2f} m".format(h), "izaje_h")
     anchor = s.get("anchor")
     if anchor is not None:
         leg, out = s.get("leg_bot", 0.0), s.get("dir_bot") != u"Adentro"
@@ -460,7 +460,7 @@ def draw_elevation(canvas, data, frame):
             runs = _zone_runs(edge["tagged"])
             for i, (zone, first, last, count) in enumerate(runs):
                 # continuous bands: each one reaches halfway to its neighbours
-                lo = 0.0 if i == 0 else (runs[i - 1][2] + first) / 2.0
+                lo = s.get("izaje_h", 0.0) if i == 0 else (runs[i - 1][2] + first) / 2.0
                 hi = s["clear"] if i == len(runs) - 1 else (last + runs[i + 1][1]) / 2.0
                 _rect(canvas, frame, band_x0, base + lo, band_x1, base + hi,
                       ZONE_BRUSHES[zone % len(ZONE_BRUSHES)])
