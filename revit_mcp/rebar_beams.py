@@ -437,7 +437,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         (kind, spec.BAR_DIAMETERS_MM[groups[kind][0].key] / 1000.0, is_tie) for kind, i, is_tie in flat])))
 
     for kind, (family, loops, ties) in groups.items():
-        bar_type = rc._bar_type(bar_types, family.key, BEAM_MARK)
+        bar_type = (rc.named_bar_type(doc, family.type_name, family.key)
+                    or rc._bar_type(bar_types, family.key, BEAM_MARK))
         hook = hooks.get(family.key)
         for a, b in spans:
             host = line.element_at((a + b) / 2.0)
@@ -515,7 +516,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]
             host = line.element_at((s0 + s1) / 2.0)
             rebar = Rebar.CreateFromCurves(
-                doc, RebarStyle.Standard, rc._bar_type(bar_types, key, BEAM_MARK), None, None, host,
+                doc, RebarStyle.Standard, beam_spec.bar_type(doc, bar_types, key, BEAM_MARK), None, None, host,
                 line.section.across, List[DB.Curve](curves),
                 RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
             )

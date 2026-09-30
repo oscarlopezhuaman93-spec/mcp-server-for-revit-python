@@ -10,6 +10,7 @@ __title__ = "Acero\nViga"
 __author__ = "Revit MCP"
 
 import io
+import json
 import os
 import re
 import sys
@@ -47,6 +48,8 @@ from System.Windows import (FontWeights, HorizontalAlignment, Point, Size, Thick
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.DB.Structure import RebarShape, RebarStyle
 from System.Windows.Input import Key, Keyboard, MouseButton
+from System.Windows import GridLength, TextWrapping
+from System.Windows.Controls import Dock, DockPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import Color, DoubleCollection, PointCollection, SolidColorBrush
@@ -431,8 +434,14 @@ class AceroWindow(forms.WPFWindow):
         self._filling_shapes = False
         self.rebar_shapes = read_rebar_shapes()
         self._fill_shapes()
+        picked_types = set(id_of(e.GetTypeId()) for e in
+                           (doc.GetElement(DB.ElementId(i)) for i in state.picked_ids) if e is not None)
         for t in types:
+            if picked_types and t.id not in picked_types:
+                continue  # with beams picked, only their types are listed
             self.list_types.Items.Add(self._type_item(t))
+        if picked_types:
+            self._compact_list()
         self._refresh_picked()
         if state.form:
             self._set_form(state.form)
@@ -451,6 +460,8 @@ class AceroWindow(forms.WPFWindow):
         self.checkboxes[t.id] = box
         label = TextBlock()
         label.Text = u"{}{}  ({})".format(u"✓ " if t.configured() else u"", t.short_name, len(t.columns))
+        label.TextWrapping = TextWrapping.Wrap
+        label.MaxWidth = 300  # a long type name wraps instead of hiding
         panel.Children.Add(box)
         panel.Children.Add(label)
         item = ListBoxItem()
@@ -488,6 +499,9 @@ class AceroWindow(forms.WPFWindow):
                 self.list_types.ScrollIntoView(item)
         cfg = t.config()
         self._set_form({
+            "bars_type": cfg["EA_Barras_Tipo"],
+            "conf_type": cfg["EA_Estribo_Conf_Tipo"],
+            "edge_type": cfg["EA_Estribo_Borde_Tipo"],
             "conf": cfg["EA_Estribo_Conf_Diametro"] or u'3/8"',
             "conf_dist": cfg["EA_Estribo_Conf_Distribucion"],
             "edge": cfg["EA_Estribo_Borde_Diametro"] or u'3/8"',
@@ -535,6 +549,9 @@ class AceroWindow(forms.WPFWindow):
     def _set_form(self, f):
         for combo, key in ((self.cbo_conf, "conf"), (self.cbo_edge, "edge")):
             combo.SelectedItem = f.get(key) if f.get(key) in STIRRUP_DIAMETERS else u'3/8"'
+        self._fill_bar_types(f.get("conf_type") or u"", f.get("edge_type") or u"")
+        self.bars_types = rc.read_bar_type_names(f.get("bars_type"))
+        self._fill_slot_types()
         self.txt_conf_dist.Text = f.get("conf_dist") or u""
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
@@ -543,6 +560,9 @@ class AceroWindow(forms.WPFWindow):
     def _get_form(self):
         return {
             "conf": self.cbo_conf.SelectedItem or u'3/8"',
+            "bars_type": json.dumps(getattr(self, "bars_types", {}), ensure_ascii=False) if getattr(self, "bars_types", None) else u"",
+            "conf_type": self._chosen_type(self.cbo_conf_type),
+            "edge_type": self._chosen_type(self.cbo_edge_type),
             "conf_dist": (self.txt_conf_dist.Text or u"").strip(),
             "edge": self.cbo_edge.SelectedItem or u'3/8"',
             "edge_dist": (self.txt_edge_dist.Text or u"").strip(),
@@ -555,6 +575,9 @@ class AceroWindow(forms.WPFWindow):
         config = {
             "EA_Estribo_Conf_Diametro": f["conf"],
             "EA_Estribo_Conf_Distribucion": f["conf_dist"],
+            "EA_Estribo_Conf_Tipo": f["conf_type"],
+            "EA_Estribo_Borde_Tipo": f["edge_type"],
+            "EA_Barras_Tipo": f["bars_type"],
             "EA_Estribo_Borde_Diametro": f["edge"],
             "EA_Estribo_Borde_Distribucion": f["edge_dist"],
             "EA_Recubrimiento_cm": f["cover"],
@@ -690,13 +713,10 @@ class AceroWindow(forms.WPFWindow):
         self._leave("pick")
 
     def run_click(self, sender, args):
-        if self.dirty:
-            if forms.alert(
-                u"El dibujo de la seccion tiene cambios sin guardar. "
-                u"Guardarlos en los tipos marcados antes de generar?",
-                title="Acero", yes=True, no=True,
-            ) and not self.save():
-                return
+        # No "Guardar configuracion" button: generating saves the form and
+        # the drawing into the types first (the generation reads them there).
+        if not self.save():
+            return
         # The columns picked in the model, or else every column of the
         # checked types.
         if not self.state.picked_ids and not self.checked_ids():
@@ -880,6 +900,7 @@ class AceroWindow(forms.WPFWindow):
         if getattr(self, "_filling_bars", True):
             return
         save_bar_slots([cbo.SelectedItem for _, cbo in self.bar_tools])
+        self._fill_slot_types()
         for radio, cbo in self.bar_tools:
             if cbo is not sender or not cbo.SelectedItem:
                 continue
@@ -902,6 +923,97 @@ class AceroWindow(forms.WPFWindow):
                 self.redraw()
         elif self._steel_slot(tool):
             self.kind_for[self._steel_slot(tool)] = kind
+
+    def _compact_list(self):
+        """With beams picked, the type box holds just their types: it sits
+        right under "Seleccionar todo", its own height, and the settings
+        follow it (no blank box)."""
+        panel = self.list_types.Parent
+        bottom = [c for c in panel.Children if DockPanel.GetDock(c) == Dock.Bottom]
+        items = [self.list_types] + bottom[::-1]  # bottom-docked: first is lowest
+        for child in items:
+            panel.Children.Remove(child)
+        at = panel.Children.IndexOf(self.chk_all) + 1
+        for offset, child in enumerate(items):
+            panel.Children.Insert(at + offset, child)
+            DockPanel.SetDock(child, Dock.Top)
+        panel.LastChildFill = False
+        self.list_types.MaxHeight = 240  # its own height, long names wrapped
+
+    def shapes_toggle_click(self, sender, args):
+        """Show / hide the rebar shape browser."""
+        show = self.box_shapes.Visibility != Visibility.Visible
+        self.box_shapes.Visibility = Visibility.Visible if show else Visibility.Collapsed
+        self.col_shapes.Width = GridLength(250) if show else GridLength(0)
+        self.button_shapes.Content = u"Ocultar formas" if show else u"Mostrar formas"
+
+    def _type_names(self):
+        """[AUTO_TYPE] + every bar type of the project (not the crosstie
+        copies); self.type_keys: name -> its diameter key."""
+        if not hasattr(self, "type_keys"):
+            self.type_keys = rc.bar_type_keys(doc)
+        return [AUTO_TYPE] + sorted(self.type_keys)
+
+    def _fill_bar_types(self, conf_type=None, edge_type=None):
+        """The stirrup "Tipo" lists: every bar type of the project, first
+        "(automatico)"; keeps (or sets) the choice."""
+        names = self._type_names()
+        self._filling_types = True
+        for combo, wanted in ((self.cbo_conf_type, conf_type), (self.cbo_edge_type, edge_type)):
+            if wanted is None:
+                wanted = self._chosen_type(combo)
+            if combo.ItemsSource is None:
+                combo.ItemsSource = List[str](names)
+            combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        self._filling_types = False
+
+    def stirrup_type_changed(self, sender, args):
+        """A stirrup type chosen: its diameter goes beside it."""
+        if getattr(self, "_filling_types", True):
+            return
+        key = self.type_keys.get(self._chosen_type(sender))
+        diameter = self.cbo_conf if sender is self.cbo_conf_type else self.cbo_edge
+        if key and key in STIRRUP_DIAMETERS and diameter.SelectedItem != key:
+            diameter.SelectedItem = key
+        self.config_changed(sender, args)
+
+    def _slot_type_combos(self):
+        return [self.cbo_bar_type_1, self.cbo_bar_type_2, self.cbo_bar_type_3, self.cbo_bar_type_4]
+
+    def _fill_slot_types(self):
+        """Each longitudinal bar option's "Tipo": the type chosen for its
+        diameter (self.bars_types), else "(automatico)"."""
+        names = self._type_names()
+        self._filling_types = True
+        for (_, cbo), combo in zip(self.bar_tools, self._slot_type_combos()):
+            if combo.ItemsSource is None:
+                combo.ItemsSource = List[str](names)
+            wanted = getattr(self, "bars_types", {}).get(cbo.SelectedItem)
+            combo.SelectedItem = wanted if wanted in names else AUTO_TYPE
+        self._filling_types = False
+
+    def bar_type_changed(self, sender, args):
+        """A bar option's type chosen: kept for its diameter; a type of
+        another diameter moves the option to that diameter."""
+        if getattr(self, "_filling_types", True) or not hasattr(self, "bars_types"):
+            return
+        cbo = self.bar_tools[self._slot_type_combos().index(sender)][1]
+        name = self._chosen_type(sender)
+        key = self.type_keys.get(name) if name else None
+        if key and key != cbo.SelectedItem and key in list(cbo.ItemsSource):
+            self.bars_types[key] = name
+            cbo.SelectedItem = key  # bar_slot_changed refreshes the types
+            return
+        if name:
+            self.bars_types[cbo.SelectedItem] = name
+        else:
+            self.bars_types.pop(cbo.SelectedItem, None)
+        self._fill_slot_types()
+
+    @staticmethod
+    def _chosen_type(combo):
+        item = combo.SelectedItem
+        return u"" if not item or item == AUTO_TYPE else item
 
     def stirrup_diameter_changed(self, sender, args):
         if not hasattr(self, "kind_for"):
@@ -2102,6 +2214,9 @@ def pick_beams(state):
         state.scope = "pick"
         # show the type (and, in the views, the beam) just picked
         state.active = id_of(doc.GetElement(DB.ElementId(state.picked_ids[0])).GetTypeId())
+
+
+AUTO_TYPE = u"(automatico)"
 
 
 # --- main -------------------------------------------------------------------
