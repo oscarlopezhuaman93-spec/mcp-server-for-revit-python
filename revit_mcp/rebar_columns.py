@@ -861,7 +861,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 _tag(rebar, column)
                 created.append((rebar, family.key, kind))
             for index, (ta, tb, shape_name) in enumerate(ties):
-                z = z_set + side * lift_ft[(kind, index, True)]
+                z = z_set + lift_ft[(kind, index, True)]  # a tie: always just below the stirrup
                 tie_type = tie_bar_type(doc, stirrup_type, ta, tb, design["bars"], shape_name)
                 a, b = tie_ends(ta, tb, design["bars"], family.key, shape_name, tie_type)
                 line = DB.Line.CreateBound(

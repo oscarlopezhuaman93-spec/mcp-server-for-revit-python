@@ -345,27 +345,20 @@ def stack_lifts(items):
     through each other. `items`: [(kind, diameter_m, is_tie)] in drawing
     order. Edge ("borde") stirrups go first, then confinement; within a
     kind, stirrups before ties. The first one stays where it is set.
-    Stirrups stack one on another (they cross); the ties of one kind all
-    lie at one height, on the stirrups below them, as on site: side by
-    side in plan, never stacked on each other."""
+    Stirrups stack one on another (they cross). Every tie lies one tie
+    diameter BELOW the first stirrup (negative lift), touching it: above,
+    it would run into the stirrup's 135-degree hooks, which Revit lifts
+    over the stirrup; the ties sit side by side in plan, never stacked on
+    each other."""
     order = sorted(range(len(items)), key=lambda i: (
         0 if items[i][0] == KIND_EDGE else 1, 1 if items[i][2] else 0, i))
     lifts = [0.0] * len(items)
     height = 0.0
-    tie_layer = None  # (kind, its height, its thickest tie)
     for i in order:
         kind, diameter, is_tie = items[i]
         if is_tie:
-            if tie_layer is None or tie_layer[0] != kind:
-                if tie_layer is not None:
-                    height += tie_layer[2]
-                tie_layer = [kind, height, 0.0]
-            lifts[i] = tie_layer[1]
-            tie_layer[2] = max(tie_layer[2], diameter)
+            lifts[i] = -diameter
             continue
-        if tie_layer is not None:
-            height += tie_layer[2]
-            tie_layer = None
         lifts[i] = height
         height += diameter
     return lifts

@@ -36,7 +36,7 @@ reload(rc)
 reload(rv)
 
 from pyrevit import revit, DB, forms, script
-from System.Windows import GridLength, Visibility
+from System.Windows import GridLength, TextWrapping, Visibility
 from System.Windows.Controls import Dock, DockPanel, Expander, GroupBox
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
@@ -415,7 +415,7 @@ class AceroWindow(forms.WPFWindow):
             panel.Children.Insert(at + offset, child)
             DockPanel.SetDock(child, Dock.Top)
         panel.LastChildFill = False
-        self.list_types.MaxHeight = 26 * self.list_types.Items.Count + 8
+        self.list_types.MaxHeight = 240  # its own height, long names wrapped
 
     def shapes_toggle_click(self, sender, args):
         """Show / hide the rebar shape browser."""
@@ -434,6 +434,8 @@ class AceroWindow(forms.WPFWindow):
         self.checkboxes[t.id] = box
         label = TextBlock()
         label.Text = u"{}{}  ({})".format(u"✓ " if t.configured() else u"", t.name, len(t.columns))
+        label.TextWrapping = TextWrapping.Wrap
+        label.MaxWidth = 300  # a long type name wraps instead of hiding
         panel.Children.Add(box)
         panel.Children.Add(label)
         item = ListBoxItem()
@@ -1600,7 +1602,8 @@ class AceroWindow(forms.WPFWindow):
                 except rs.SpecError:
                     continue
                 # stacked towards the middle, like rc._runs (down in the top half)
-                zs = ([dz + z + (-lift if z > clear / 2.0 + 1e-6 else lift) for z, _ in family["tagged"]]
+                zs = ([dz + z + (lift if is_open is None else -lift if z > clear / 2.0 + 1e-6 else lift)
+                       for z, _ in family["tagged"]]
                       + [dz + lift + clear + j for j in (joint_conf if kind == rs.KIND_CONFINEMENT else joint)])
                 loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
                               rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))

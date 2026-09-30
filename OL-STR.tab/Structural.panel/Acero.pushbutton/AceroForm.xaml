@@ -153,7 +153,8 @@
                 </GroupBox>
 
 
-                <ListBox x:Name="list_types" SelectionMode="Single" SelectionChanged="type_selected"/>
+                <ListBox x:Name="list_types" SelectionMode="Single" SelectionChanged="type_selected"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
             </DockPanel>
 
             <!-- Right: section drawing -->
