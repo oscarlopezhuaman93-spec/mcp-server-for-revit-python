@@ -678,6 +678,7 @@ class Scene3D(object):
             "longitudinal": _color(60, 60, 60),
             "borde": _color(214, 120, 60),
             "confinamiento": _color(40, 150, 90),
+            "izaje": _color(142, 68, 173),
         }
         if detail == u"Bajo":
             colors = dict((k, _color(50, 50, 50)) for k in colors)

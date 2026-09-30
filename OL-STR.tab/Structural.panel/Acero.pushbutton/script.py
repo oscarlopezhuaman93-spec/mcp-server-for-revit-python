@@ -1723,6 +1723,11 @@ class AceroWindow(forms.WPFWindow):
                       + [dz + lift + clear + j for j in (joint_conf if kind == rs.KIND_CONFINEMENT else joint)])
                 loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
                               rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
+                if extra.get("izaje") and kind == rs.KIND_EDGE and closed:
+                    izaje_key = izaje.get("d") or u'3/8"'
+                    loops.append(("izaje", [(x + dx, y + dy) for x, y in line], True,
+                                  [dz + z for z in extra["izaje"]],
+                                  rs.BAR_DIAMETERS_MM.get(izaje_key, 9.525) / 2000.0))
         top = max(s["z"] + s["height"] for s in segments)
         # Stacked columns with continuous bars: the pieces and laps the
         # generation will make (rc.generate_stack).
@@ -1743,6 +1748,34 @@ class AceroWindow(forms.WPFWindow):
                     bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))
                     if i < len(pieces) - 1:
                         laps.append((round(b - lap, 3), round(b, 3), key))
+        # the bars into the foundation and their end legs (rc.bar_ends)
+        ends = rs.read_json_setting(f["ends"])
+        first, last = segments[0], segments[-1]
+        if first.get("anchor") is not None or last.get("leg_top"):
+            if bar_paths is None:
+                bar_paths = [([(x, y, 0.0), (x, y, top)], rs.BAR_DIAMETERS_MM[k] / 2000.0) for x, y, k in bars]
+            xs0 = [p[0] for p in base.polygon_m]
+            ys0 = [p[1] for p in base.polygon_m]
+            half = ((max(xs0) - min(xs0)) / 2.0, (max(ys0) - min(ys0)) / 2.0)
+            keys = dict(((round(x, 4), round(y, 4)), k) for x, y, k in bars)
+            done = []
+            for i, (points, radius) in enumerate(bar_paths):
+                x, y = points[0][0], points[0][1]
+                key = keys.get((round(x, 4), round(y, 4)))
+                kw = {}
+                if points[0][2] < 1e-6 and first.get("anchor") is not None:
+                    kw["anchor"] = first["anchor"]
+                    leg = float((ends.get("bot") or {}).get(key) or 0) / 100.0
+                    if leg:
+                        kw["leg_bottom"] = leg
+                        kw["dir_bottom"] = rs.leg_vector(x, y, half[0], half[1], first.get("dir_bot"))
+                leg = float((ends.get("top") or {}).get(key) or 0) / 100.0
+                if points[-1][2] > top - 1e-6 and last.get("leg_top") is not None and leg:
+                    kw["top_drop"] = 0.05
+                    kw["leg_top"] = leg
+                    kw["dir_top"] = rs.leg_vector(x, y, half[0], half[1], last.get("dir_top"))
+                done.append((rs.bar_with_ends(points, **kw), radius))
+            bar_paths = done
         xs = [p[0] for p in base.polygon_m]
         elev = {
             "width": max(xs) - min(xs),

@@ -815,12 +815,12 @@ class TestIzajeAndBarEnds:
         from revit_mcp.rebar_spec import izaje_positions
 
         # 9@0.15 under a 1.35 m cota: 1.20, 1.05 ... every 0.15 down to the footing
-        pos = izaje_positions(1.35, "9@0.15")
-        assert pos[-1] == pytest.approx(1.20)
+        pos = izaje_positions(1.20, "9@0.15")
+        assert pos[-1] == pytest.approx(1.20)  # the first on the cota
         assert len(pos) == 9 and pos[0] == pytest.approx(0.0)  # the lowest on the footing
         assert all(abs((b - a) - 0.15) < 1e-6 for a, b in zip(pos, pos[1:]))
         # a rest fills down to the footing
-        assert izaje_positions(1.0, "1@0.05, rto@0.30") == pytest.approx([0.05, 0.35, 0.65, 0.95])
+        assert izaje_positions(1.0, "2@0.10, rto@0.30") == pytest.approx([0.0, 0.3, 0.6, 0.9, 1.0])
 
     def test_leg_vector_square_to_the_nearest_face(self):
         from revit_mcp.rebar_spec import leg_vector, LEG_IN, LEG_OUT

@@ -498,19 +498,20 @@ LEG_DIRS = (LEG_OUT, LEG_IN)
 
 
 def izaje_positions(height, text, min_offset=0.0):
-    """Offsets (m, over the column base) of the izaje stirrups: from the
-    izaje height (the cota) down towards the footing, like any
-    distribution from its end ('9@.15': the first 0.15 under the cota;
-    a final 'rto@..' fills down to the footing face, the lowest on it)."""
+    """Offsets (m, over the column base) of the izaje stirrups, as drawn
+    on site: the first ON the izaje height (the cota), then down towards
+    the footing ('9@.15' under a 1.20 cota: 1.20, 1.05 ... 0.00, the last
+    on the footing face; a final 'rto@..' fills down to it)."""
     zones, rest = parse_distribution(text, need_rest=False)
-    positions, z = [], height
+    positions, z, step = [], height, 0.0
     for count, spacing in zones:
         for _ in range(count):
-            z -= spacing
-            if z < min_offset - 1e-9:
+            z -= step
+            step = spacing
+            if z < min_offset - 1e-6:
                 return sorted(positions)
             positions.append(round(z, 4))
-    while rest and z - rest >= min_offset - 1e-9:
+    while rest and z - rest >= min_offset - 1e-6:
         z -= rest
         positions.append(round(z, 4))
     return sorted(positions)
