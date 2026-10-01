@@ -1084,7 +1084,13 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
             pieces, found = [(0.0, total)], []
             lap = 0.0
         else:
-            pieces, found = spec.splice_pieces(0.0, total, stories, lap, splice["max"])
+            # The bar length counts its anchorage and legs: the cuts are
+            # found on the developed bar (from the bottom leg's tip to the
+            # top leg's), then put back on the column's axis.
+            below = ends.get("anchor", 0.0) + ends.get("leg_bottom", 0.0)
+            above = ends.get("leg_top", 0.0) - ends.get("top_drop", 0.0)
+            pieces, found = spec.splice_pieces(-below, total + above, stories, lap, splice["max"])
+            pieces = [(max(a, 0.0), min(b, total)) for a, b in pieces]
         warnings += [u"Barras de {}: {}".format(key, w) for w in found]
         # with legs, the crank goes square to the same face (one plane per bar)
         leg_dir = ends.get("dir_bottom") or ends.get("dir_top")
