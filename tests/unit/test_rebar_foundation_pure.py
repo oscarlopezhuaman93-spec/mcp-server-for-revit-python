@@ -48,3 +48,9 @@ def test_top_mesh_hooks_down_and_two_spans():
 def test_positions_centered_and_snap():
     assert rf.bar_positions(0.0, 1.0, 0.3) == pytest.approx([0.05, 0.35, 0.65, 0.95])
     assert rf.snap_to_outline((0.48, 0.3), SQUARE, 0.05) == pytest.approx((0.5, 0.3))
+
+
+def test_distribute_by_spacing_quantity_or_both():
+    assert rf.distribute(0.0, 1.0, rf.SPACING, 0.3, 0) == pytest.approx([0.05, 0.35, 0.65, 0.95])
+    assert rf.distribute(0.0, 1.0, rf.QUANTITY, 0.0, 5) == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+    assert rf.distribute(0.0, 1.0, rf.BOTH, 0.2, 3) == pytest.approx([0.3, 0.5, 0.7])

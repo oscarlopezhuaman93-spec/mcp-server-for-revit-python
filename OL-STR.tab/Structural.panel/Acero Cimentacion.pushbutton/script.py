@@ -126,6 +126,9 @@ class CimentacionWindow(forms.WPFWindow):
         self._filling = True
         for combo in (self.cbo_bot_dx, self.cbo_bot_dy, self.cbo_top_dx, self.cbo_top_dy, self.cbo_sketch_d):
             combo.ItemsSource = BAR_KEYS
+        for combo in (self.cbo_bot_mx, self.cbo_bot_my, self.cbo_top_mx, self.cbo_top_my, self.cbo_sketch_m):
+            combo.ItemsSource = list(rf.DIST_MODES)
+        self.cbo_sketch_m.SelectedItem = rf.SPACING
         self.cbo_sketch_d.SelectedItem = u'1/2"'
         self._filling = False
         for i in state.picked_ids:
@@ -207,7 +210,9 @@ class CimentacionWindow(forms.WPFWindow):
     def _mesh_controls(self, tag):
         return {"on": getattr(self, "chk_" + tag), "dx": getattr(self, "cbo_{}_dx".format(tag)),
                 "dy": getattr(self, "cbo_{}_dy".format(tag)), "sx": getattr(self, "txt_{}_sx".format(tag)),
-                "sy": getattr(self, "txt_{}_sy".format(tag)), "hook": getattr(self, "txt_{}_hook".format(tag))}
+                "sy": getattr(self, "txt_{}_sy".format(tag)), "hook": getattr(self, "txt_{}_hook".format(tag)),
+                "mx": getattr(self, "cbo_{}_mx".format(tag)), "my": getattr(self, "cbo_{}_my".format(tag)),
+                "nx": getattr(self, "txt_{}_nx".format(tag)), "ny": getattr(self, "txt_{}_ny".format(tag))}
 
     def _fill_steel(self):
         self._filling = True
@@ -220,6 +225,10 @@ class CimentacionWindow(forms.WPFWindow):
             c["sx"].Text = u"{:g}".format(float(m.get("sx") or 0.2))
             c["sy"].Text = u"{:g}".format(float(m.get("sy") or 0.2))
             c["hook"].Text = u"{:g}".format(float(m.get("hook") or 0.0))
+            for a in ("x", "y"):
+                c["m" + a].SelectedItem = m.get("m" + a) or rf.SPACING
+                c["n" + a].Text = u"{}".format(int(m.get("n" + a) or 10))
+                self._mode_enable(c, a)
         self.txt_sketch_count.Text = u"{} barra(s) dibujada(s)".format(len(steel["sketch"]))
         self._filling = False
 
@@ -242,7 +251,19 @@ class CimentacionWindow(forms.WPFWindow):
             m["sx"] = max(0.05, self._num(c["sx"].Text, m["sx"]))
             m["sy"] = max(0.05, self._num(c["sy"].Text, m["sy"]))
             m["hook"] = max(0.0, self._num(c["hook"].Text, m["hook"]))
+            for a in ("x", "y"):
+                m["m" + a] = c["m" + a].SelectedItem or rf.SPACING
+                m["n" + a] = max(1, int(self._num(c["n" + a].Text, m.get("n" + a) or 10)))
+                self._mode_enable(c, a)
         self._draw_elevations()
+
+    @staticmethod
+    def _mode_enable(c, a):
+        """Quantity box only for Cantidad / Ambos, spacing box only for
+        Espaciado / Ambos."""
+        mode = c["m" + a].SelectedItem or rf.SPACING
+        c["n" + a].IsEnabled = mode != rf.SPACING
+        c["s" + a].IsEnabled = mode != rf.QUANTITY
 
     # -- sketch ----------------------------------------------------------
     def sketch_toggle(self, sender, args):
@@ -283,7 +304,9 @@ class CimentacionWindow(forms.WPFWindow):
         steel = self.state.steel[self.state.active]
         steel["sketch"].append({"view": view, "pts": [list(p) for p in self.draft],
                                 "d": self.cbo_sketch_d.SelectedItem or u'1/2"',
-                                "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2))})
+                                "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2)),
+                                "m": self.cbo_sketch_m.SelectedItem or rf.SPACING,
+                                "n": max(1, int(self._num(self.txt_sketch_n.Text, 5)))})
         self.draft, self.draft_view = [], None
         self.txt_sketch_count.Text = u"{} barra(s) dibujada(s)".format(len(steel["sketch"]))
         self._draw_elevations()
@@ -439,7 +462,8 @@ class CimentacionWindow(forms.WPFWindow):
                 lvl = (1 - level)
                 z = (min(zs) + d / 2.0 + lvl * d_first) if layer == rf.BOTTOM else (max(zs) - d / 2.0 - lvl * d_first)
                 lo, hi = planner._range(other, d)
-                for pos in rf.bar_positions(lo, hi, float(m["sy"] if view == rf.FRONT else m["sx"])):
+                a = "y" if view == rf.FRONT else "x"
+                for pos in rf.distribute(lo, hi, m.get("m" + a, rf.SPACING), float(m["s" + a]), m.get("n" + a, 1)):
                     u = -pos if view == rf.SIDE else pos
                     if rf.point_inside(inner, (u, z)):
                         self._dot(canvas, frame, u, z, max(2.5, d * frame[0] / 2.0), dark)

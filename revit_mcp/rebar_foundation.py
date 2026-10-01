@@ -269,6 +269,29 @@ def bar_positions(lo, hi, spacing):
     return [start + k * spacing for k in range(n)]
 
 
+SPACING = u"Espaciado"
+QUANTITY = u"Cantidad"
+BOTH = u"Ambos"
+DIST_MODES = (SPACING, QUANTITY, BOTH)
+
+
+def distribute(lo, hi, mode, spacing, count):
+    """Bar positions between lo and hi: SPACING - every `spacing` m, as
+    many as fit (centered); QUANTITY - `count` bars spread from lo to hi;
+    BOTH - `count` bars every `spacing` m, centered (clipped to lo..hi)."""
+    count = max(1, int(count or 1))
+    if mode == QUANTITY:
+        if count == 1 or hi - lo < 1e-6:
+            return [(lo + hi) / 2.0]
+        step = (hi - lo) / (count - 1)
+        return [lo + k * step for k in range(count)]
+    if mode == BOTH:
+        mid = (lo + hi) / 2.0
+        start = mid - (count - 1) * spacing / 2.0
+        return [z for z in (start + k * spacing for k in range(count)) if lo - 1e-6 <= z <= hi + 1e-6]
+    return bar_positions(lo, hi, spacing)
+
+
 def snap_to_outline(p, outline, tol):
     """The point of the outline nearest to p when within tol (m), else p."""
     best = None
@@ -292,7 +315,8 @@ def point_inside(points, p):
 # --- Bars of a foundation (Revit geometry) -------------------------------------
 def default_steel():
     """The steel settings of a foundation type ("EA_Cim_Acero")."""
-    mesh = {"on": True, "dx": u'1/2"', "sx": 0.20, "dy": u'1/2"', "sy": 0.20, "hook": 0.25}
+    mesh = {"on": True, "dx": u'1/2"', "sx": 0.20, "dy": u'1/2"', "sy": 0.20, "hook": 0.25,
+            "mx": SPACING, "nx": 10, "my": SPACING, "ny": 10}
     top = dict(mesh, on=False)
     return {BOTTOM: mesh, TOP: top, "sketch": []}
 
@@ -330,12 +354,14 @@ class BarPlanner(object):
         if not settings.get("on"):
             return bars
         for view, dkey, skey, level in ((FRONT, "dx", "sx", 0), (SIDE, "dy", "sy", 1)):
+            axis = skey[1]
             key = settings[dkey]
             d = self.mm[key] / 1000.0
             lo, hi = self._range(view, d)
             # the second direction lies on the first: one first-direction bar further in
             level_d = self.mm[settings["dx"]] / 1000.0 if level else 0.0
-            for pos in bar_positions(lo, hi, float(settings[skey])):
+            for pos in distribute(lo, hi, settings.get("m" + axis, SPACING), float(settings[skey]),
+                                  settings.get("n" + axis, 1)):
                 for _, inner in self.outlines(view, pos):
                     zs = [p[1] for p in inner]
                     for path in mesh_layer_paths(inner, layer, d, float(settings.get("hook") or 0.0),
@@ -352,7 +378,7 @@ class BarPlanner(object):
         pts = [tuple(p) for p in item["pts"]]
         lo, hi = self._range(view, d)
         bars = []
-        for pos in bar_positions(lo, hi, float(item["s"])):
+        for pos in distribute(lo, hi, item.get("m", SPACING), float(item["s"]), item.get("n", 1)):
             for outer, inner in self.outlines(view, pos):
                 if all(point_inside(outer, p) for p in pts):
                     bars.append((view, pos, pts, key))

@@ -45,42 +45,54 @@
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_bot" Content="Malla inferior (gancho hacia arriba)" FontWeight="Bold" Margin="0,4,0,2" IsChecked="True" Click="steel_changed"/>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
-                            <TextBlock Text="Dir. X  &#216;" Width="58" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_bot_dx" Width="62" SelectionChanged="steel_changed"/>
-                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_bot_sx" Width="46" TextChanged="steel_changed"/>
+                            <TextBlock Text="X &#216;" Width="26" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_bot_dx" Width="58" SelectionChanged="steel_changed"/>
+                            <ComboBox x:Name="cbo_bot_mx" Width="82" Margin="3,0,0,0" SelectionChanged="steel_changed"
+                                      ToolTip="Espaciado: barras cada @ m. Cantidad: n barras repartidas. Ambos: n barras cada @ m, centradas."/>
+                            <TextBox x:Name="txt_bot_nx" Width="30" Margin="3,0,0,0" TextChanged="steel_changed" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_bot_sx" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
-                            <TextBlock Text="Dir. Y  &#216;" Width="58" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_bot_dy" Width="62" SelectionChanged="steel_changed"/>
-                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_bot_sy" Width="46" TextChanged="steel_changed"/>
+                            <TextBlock Text="Y &#216;" Width="26" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_bot_dy" Width="58" SelectionChanged="steel_changed"/>
+                            <ComboBox x:Name="cbo_bot_my" Width="82" Margin="3,0,0,0" SelectionChanged="steel_changed"
+                                      ToolTip="Espaciado: barras cada @ m. Cantidad: n barras repartidas. Ambos: n barras cada @ m, centradas."/>
+                            <TextBox x:Name="txt_bot_ny" Width="30" Margin="3,0,0,0" TextChanged="steel_changed" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_bot_sy" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
-                            <TextBlock Text="Gancho" Width="58" VerticalAlignment="Center"/>
+                            <TextBlock Text="Gancho " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_bot_hook" Width="46" TextChanged="steel_changed"
                                      ToolTip="Largo del gancho en cada extremo (m). 0 = recta."/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <CheckBox x:Name="chk_top" Content="Malla superior (gancho hacia abajo)" FontWeight="Bold" Margin="0,4,0,2" IsChecked="False" Click="steel_changed"/>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
-                            <TextBlock Text="Dir. X  &#216;" Width="58" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_top_dx" Width="62" SelectionChanged="steel_changed"/>
-                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_top_sx" Width="46" TextChanged="steel_changed"/>
+                            <TextBlock Text="X &#216;" Width="26" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_top_dx" Width="58" SelectionChanged="steel_changed"/>
+                            <ComboBox x:Name="cbo_top_mx" Width="82" Margin="3,0,0,0" SelectionChanged="steel_changed"
+                                      ToolTip="Espaciado: barras cada @ m. Cantidad: n barras repartidas. Ambos: n barras cada @ m, centradas."/>
+                            <TextBox x:Name="txt_top_nx" Width="30" Margin="3,0,0,0" TextChanged="steel_changed" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_top_sx" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
-                            <TextBlock Text="Dir. Y  &#216;" Width="58" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_top_dy" Width="62" SelectionChanged="steel_changed"/>
-                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_top_sy" Width="46" TextChanged="steel_changed"/>
+                            <TextBlock Text="Y &#216;" Width="26" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_top_dy" Width="58" SelectionChanged="steel_changed"/>
+                            <ComboBox x:Name="cbo_top_my" Width="82" Margin="3,0,0,0" SelectionChanged="steel_changed"
+                                      ToolTip="Espaciado: barras cada @ m. Cantidad: n barras repartidas. Ambos: n barras cada @ m, centradas."/>
+                            <TextBox x:Name="txt_top_ny" Width="30" Margin="3,0,0,0" TextChanged="steel_changed" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_top_sy" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
-                            <TextBlock Text="Gancho" Width="58" VerticalAlignment="Center"/>
+                            <TextBlock Text="Gancho " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_top_hook" Width="46" TextChanged="steel_changed"
                                      ToolTip="Largo del gancho en cada extremo (m). 0 = recta."/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
@@ -97,9 +109,11 @@
                                 </Canvas>
                             </ToggleButton>
                             <TextBlock Text="  &#216;" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_sketch_d" Width="62" Margin="2,0,0,0"/>
-                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_sketch_s" Width="46" Text="0.20"/>
+                            <ComboBox x:Name="cbo_sketch_d" Width="58" Margin="2,0,0,0"/>
+                            <ComboBox x:Name="cbo_sketch_m" Width="82" Margin="3,0,0,0"/>
+                            <TextBox x:Name="txt_sketch_n" Width="30" Margin="3,0,0,0" Text="5" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_sketch_s" Width="40" Text="0.20"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,2,0,1">
