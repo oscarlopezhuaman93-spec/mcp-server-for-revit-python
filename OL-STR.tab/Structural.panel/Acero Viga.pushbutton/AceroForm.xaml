@@ -11,7 +11,11 @@
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
             <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
                     FontWeight="Bold" Click="run_click"
-                    ToolTip="Genera las vigas seleccionadas en el modelo (cada una completa, con todos sus tramos; o, si lo eliges, todas las de su tipo); si no hay ninguna seleccionada, todas las vigas de los tipos marcados."/>
+                    ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de las vigas seleccionadas, cada una completa con todos sus tramos (si no hay ninguna seleccionada, de todas las vigas de los tipos marcados)."/>
+            <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
+                    ToolTip="Carga una configuraci&#243;n guardada (estribos, barras y dibujo de la secci&#243;n)."/>
+            <Button DockPanel.Dock="Right" Content="Guardar en archivo..." Width="150" Height="40" Margin="0,0,8,0" Click="file_save_click"
+                    ToolTip="Guarda la configuraci&#243;n y el dibujo de la secci&#243;n en un archivo, para usarlos en otro tipo o proyecto."/>
         </DockPanel>
 
         <Grid>
@@ -53,7 +57,7 @@
                 </Expander>
 
                 <!-- Longitudinal bars: four diameters (drawing tool) and their Revit bar type -->
-                <GroupBox DockPanel.Dock="Bottom" Header="3. Configuraci&#243;n de barra longitudinal" Margin="0,8,0,0" Padding="6,4,6,6">
+                <Expander DockPanel.Dock="Bottom" Header="3. Configuraci&#243;n de barra longitudinal" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="34"/>
@@ -95,9 +99,9 @@
                                   SelectionChanged="bar_type_changed"
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de viga."/>
                     </Grid>
-                </GroupBox>
+                </Expander>
 
-                <GroupBox DockPanel.Dock="Bottom" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6">
+                <Expander DockPanel.Dock="Bottom" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170"/>
@@ -142,14 +146,8 @@
                         <Button Grid.Row="6" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus vigas."/>
-                        <UniformGrid Grid.Row="7" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
-                            <Button Content="Guardar en archivo..." Height="28" Margin="0,0,3,0" Click="file_save_click"
-                                    ToolTip="Guarda estos estribos y el dibujo de la seccion en un archivo, para usarlos en otro tipo o proyecto."/>
-                            <Button Content="Abrir archivo..." Height="28" Margin="3,0,0,0" Click="file_open_click"
-                                    ToolTip="Carga una configuracion guardada en el tipo elegido; luego pulsa 'Guardar configuracion en los tipos marcados'."/>
-                        </UniformGrid>
                     </Grid>
-                </GroupBox>
+                </Expander>
 
 
                 <ListBox x:Name="list_types" SelectionMode="Single" SelectionChanged="type_selected"

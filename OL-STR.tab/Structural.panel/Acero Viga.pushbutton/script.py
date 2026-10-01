@@ -2256,7 +2256,7 @@ if state.scope == "pick":
              if any(id_of(e.Id) in picked for e in line.elements)]
     scope_label = u"vigas seleccionadas"
     all_lines = [line for type_id in picked_types for line in by_id[type_id].lines]
-    if len(all_lines) > len(lines):
+    if False:  # the window generates the picked beams only
         only_picked = u"Solo las vigas seleccionadas ({})".format(len(lines))
         all_of_type = u"Todas las vigas de {} ({})".format(
             u", ".join(by_id[t].name for t in picked_types), len(all_lines))
@@ -2302,13 +2302,7 @@ if missing_legs:
     script.exit()
 
 elements = sum(len(line.elements) for line in with_spec)
-mode = forms.CommandSwitchWindow.show(
-    ["Vista previa (sin cambios en el modelo)", "Generar barras y metrado"],
-    message=u"Modo de ejecucion ({} vigas, {} tramos, {}):".format(len(with_spec), elements, scope_label),
-)
-if not mode:
-    script.exit()
-dry_run = mode.startswith("Vista previa")
+dry_run = False  # straight to the model: no mode question
 
 bar_types = rc.BarTypes(doc)
 hooks = rc.StirrupHooks(doc)
@@ -2360,49 +2354,7 @@ except Exception:
         t.RollBack()
     raise
 
-output.print_md("# Resultado Acero - Vigas {}".format("(vista previa)" if dry_run else ""))
-output.print_md(u"**Alcance:** {}".format(scope_label))
-output.print_md("**Vigas armadas:** {}".format(sum(v["n"] for v in by_type.values())))
-if not dry_run:
-    output.print_md("**Barras creadas:** {}".format(total_bars))
-skipped = len(lines) - len(with_spec)
-if skipped:
-    output.print_md("**Vigas sin configuracion (omitidas):** {}".format(skipped))
-
-output.print_md(
-    u"\n| Tipo | Vigas | Tramos | Longitudinal (kg) | Estribo de borde (kg) "
-    u"| Confinamiento y grapas (kg) | Total (kg) |"
-)
-output.print_md("|---|---|---|---|---|---|---|")
-grand = dict((k, 0.0) for k in KINDS)
-for type_name in sorted(by_type):
-    agg = by_type[type_name]
-    for kind in KINDS:
-        grand[kind] += agg[kind]
-    output.print_md(u"| {} | {} | {} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(
-        type_name, agg["n"], agg["e"], agg[rc.LONGITUDINAL], agg[rc.EDGE], agg[rc.CONFINEMENT],
-        sum(agg[k] for k in KINDS)))
-output.print_md("| **Total** | | | **{:.2f}** | **{:.2f}** | **{:.2f}** | **{:.2f}** |".format(
-    grand[rc.LONGITUDINAL], grand[rc.EDGE], grand[rc.CONFINEMENT], sum(grand.values())))
-
-output.print_md(
-    u"\n*Barras superiores e inferiores continuas por toda la viga (sus tramos del mismo tipo y "
-    u"eje), ancladas en la cara lejana del apoyo extremo menos el recubrimiento ({})".format(
-        u"gancho 90 o recto segun el tipo")
-    + (u", en barras de hasta {:g} m con empalme: superiores en el tercio central de un tramo, "
-       u"inferiores en un tercio extremo fuera del confinamiento".format(splice["max"]) if splice else u"")
-    + u". Estribos en cada luz libre, distribuidos desde la cara de cada apoyo. El peso de cada "
-    u"barra se reparte entre los tramos que recorre.*"
-)
-mismatched = {}  # shape name -> elements where Revit refused it
-for element_id, shape_name in rebar_shapes.mismatched:
-    mismatched.setdefault(shape_name, set()).add(element_id)
-for shape_name in sorted(mismatched):
-    warnings.append(
-        u"Forma {}: el estribo dibujado no coincide con ella en {} tramo(s); "
-        u"Revit uso la forma que corresponde al dibujo.".format(shape_name, len(mismatched[shape_name]))
-    )
-if warnings:
-    output.print_md("\n### Advertencias ({})".format(len(warnings)))
-    for w in warnings[:50]:
-        output.print_md(u"- {}".format(w))
+# No report window: only what failed, in one message.
+failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Viga ")]
+if failed:
+    forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")
