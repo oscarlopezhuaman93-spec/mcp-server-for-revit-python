@@ -1,0 +1,81 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Acero - Cimentaci&#243;n"
+        Height="880" Width="1560" MinWidth="1200" MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
+                    FontWeight="Bold" Click="run_click"
+                    ToolTip="Guarda los recubrimientos en el tipo. La colocaci&#243;n de barras en los alzados y su generaci&#243;n vienen en el siguiente paso."/>
+            <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
+                    ToolTip="Carga los recubrimientos guardados en un archivo."/>
+            <Button DockPanel.Dock="Right" Content="Guardar en archivo..." Width="150" Height="40" Margin="0,0,8,0" Click="file_save_click"
+                    ToolTip="Guarda los recubrimientos por cara en un archivo."/>
+        </DockPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="370"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: elements + configuration -->
+            <DockPanel Grid.Column="0" Margin="0,0,10,0" LastChildFill="False">
+                <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="1. Selecciona la cimentaci&#243;n (zapata, cimiento corrido, losa de cimentaci&#243;n)."/>
+                <Button DockPanel.Dock="Top" x:Name="button_pick" Content="SELECCIONAR CIMENTACI&#211;N" Height="34"
+                        FontWeight="Bold" Click="pick_click"/>
+                <TextBlock DockPanel.Dock="Top" x:Name="txt_picked" Foreground="Gray" HorizontalAlignment="Center"
+                           Margin="0,4,0,6" Text="No hay elementos seleccionados."/>
+                <ListBox DockPanel.Dock="Top" x:Name="list_elements" MaxHeight="160" SelectionChanged="element_selected"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                <Expander DockPanel.Dock="Top" Header="2. Recubrimientos por cara" Margin="0,8,0,0" IsExpanded="True">
+                    <DockPanel Margin="6,4,6,4">
+                        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,6"
+                                   Text="Cada cara tiene su color y n&#250;mero en la vista 3D y en los alzados. Haz clic en una casilla para resaltar su cara."/>
+                        <ScrollViewer DockPanel.Dock="Top" MaxHeight="330" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="panel_covers"/>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Expander>
+                <Expander DockPanel.Dock="Top" Header="3. Configuraci&#243;n de acero" Margin="0,8,0,0" IsExpanded="False">
+                    <TextBlock Margin="6,4,6,4" TextWrapping="Wrap" Foreground="Gray"
+                               Text="Siguiente paso: colocar y editar las barras en los alzados frontal y lateral, adaptadas a la forma del elemento y a sus recubrimientos."/>
+                </Expander>
+            </DockPanel>
+
+            <!-- Center: 3D -->
+            <DockPanel Grid.Column="1" Margin="0,0,6,0">
+                <TextBlock DockPanel.Dock="Top" x:Name="txt_title" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D"/>
+                <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
+                    <Viewport3D x:Name="view3d" ClipToBounds="True"
+                                MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
+                                MouseMove="view3d_mouse_move"/>
+                </Border>
+            </DockPanel>
+
+            <!-- Right: two elevations -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO FRONTAL (corte por el centro, mirando hacia +Y)"/>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
+                        <Canvas x:Name="canvas_front" Background="White" ClipToBounds="True" SizeChanged="views_resized"/>
+                    </Border>
+                </DockPanel>
+                <DockPanel Grid.Row="1">
+                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO LATERAL (corte por el centro, mirando hacia -X)"/>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
+                        <Canvas x:Name="canvas_side" Background="White" ClipToBounds="True" SizeChanged="views_resized"/>
+                    </Border>
+                </DockPanel>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>
