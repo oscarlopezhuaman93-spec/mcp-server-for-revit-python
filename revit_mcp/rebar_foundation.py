@@ -234,12 +234,13 @@ def polygon_spans(points, z):
     return [(xs[k], xs[k + 1]) for k in range(0, len(xs) - 1, 2)]
 
 
-def mesh_layer_paths(inner, layer, diameter, hook, level=0):
+def mesh_layer_paths(inner, layer, diameter, hook, level=0, hook_b=None):
     """Bar paths [(u, z)] of one mesh layer in a section, inside the
     `inner` outline (covers already applied): along its bottom (BOTTOM,
     hooks up) or top (TOP, hooks down), `level` bar diameters further in
     (the second direction of the mesh lies on the first), ends a half
-    diameter inside, hooks of `hook` m kept inside the outline."""
+    diameter inside, legs of `hook` (start, T1) and `hook_b` (end, T3;
+    `hook` when None) m kept inside the outline."""
     zs = [p[1] for p in inner]
     r = diameter / 2.0
     if layer == BOTTOM:
@@ -251,11 +252,16 @@ def mesh_layer_paths(inner, layer, diameter, hook, level=0):
         a, b = u0 + r, u1 - r
         if b - a < 0.05:
             continue
-        h = min(hook, max(zs) - min(zs) - diameter) if hook > 0 else 0.0
-        if h > 0.05:
-            paths.append([(a, z + sign * h), (a, z), (b, z), (b, z + sign * h)])
-        else:
-            paths.append([(a, z), (b, z)])
+        room = max(zs) - min(zs) - diameter
+        ha = min(hook, room) if hook > 0 else 0.0
+        hb = hook if hook_b is None else hook_b
+        hb = min(hb, room) if hb > 0 else 0.0
+        path = [(a, z), (b, z)]
+        if ha > 0.05:
+            path.insert(0, (a, z + sign * ha))
+        if hb > 0.05:
+            path.append((b, z + sign * hb))
+        paths.append(path)
     return paths
 
 
@@ -316,6 +322,7 @@ def point_inside(points, p):
 def default_steel():
     """The steel settings of a foundation type ("EA_Cim_Acero")."""
     mesh = {"on": True, "dx": u'1/2"', "sx": 0.20, "dy": u'1/2"', "sy": 0.20, "hook": 0.25,
+            "hook_a": 0.25, "hook_b": 0.25, "tx": u"", "ty": u"",
             "mx": SPACING, "nx": 10, "my": SPACING, "ny": 10}
     top = dict(mesh, on=False)
     return {BOTTOM: mesh, TOP: top, "sketch": []}
@@ -364,12 +371,13 @@ class BarPlanner(object):
                                   settings.get("n" + axis, 1)):
                 for _, inner in self.outlines(view, pos):
                     zs = [p[1] for p in inner]
-                    for path in mesh_layer_paths(inner, layer, d, float(settings.get("hook") or 0.0),
-                                                 level=0):
+                    ha = float(settings.get("hook_a", settings.get("hook")) or 0.0)
+                    hb = float(settings.get("hook_b", settings.get("hook")) or 0.0)
+                    for path in mesh_layer_paths(inner, layer, d, ha, level=0, hook_b=hb):
                         if level:
                             shift = level_d if layer == BOTTOM else -level_d
                             path = [(u, z + shift) for u, z in path]
-                        bars.append((view, pos, path, key))
+                        bars.append((view, pos, path, key, settings.get("t" + axis) or u""))
         return bars
 
     def sketch(self, item):
@@ -383,7 +391,7 @@ class BarPlanner(object):
         for pos in distribute(lo, hi, item.get("m", SPACING), float(item["s"]), item.get("n", 1)):
             for outer, inner in self.outlines(view, pos):
                 if all(point_inside(outer, p) for p in pts):
-                    bars.append((view, pos, pts, key))
+                    bars.append((view, pos, pts, key, item.get("t") or u""))
                     break
         return bars
 
@@ -397,34 +405,35 @@ class BarPlanner(object):
         if not splice:
             return bars
         out = []
-        for view, pos, path, key in bars:
+        for view, pos, path, key, tname in bars:
             lap = splice["laps"].get(key)
             closed = len(path) > 2 and path[0] == path[-1]
             if lap is None or closed:
-                out.append((view, pos, path, key))
+                out.append((view, pos, path, key, tname))
             else:
-                out += [(view, pos, piece, key) for piece in split_path(path, splice["max"], lap)]
+                out += [(view, pos, piece, key, tname) for piece in split_path(path, splice["max"], lap)]
         return out
 
 
 def bar_sets(bars):
-    """Bars grouped into Revit sets: same view, diameter and path, at
-    consecutive evenly spaced positions -> [(view, key, path, first, count, spacing)]."""
+    """Bars grouped into Revit sets: same view, diameter, bar type and
+    path, at consecutive evenly spaced positions ->
+    [(view, key, path, first, count, spacing, type name)]."""
     groups = {}
-    for view, pos, path, key in bars:
-        sig = (view, key, tuple((round(u, 3), round(z, 3)) for u, z in path))
+    for view, pos, path, key, tname in bars:
+        sig = (view, key, tname, tuple((round(u, 3), round(z, 3)) for u, z in path))
         groups.setdefault(sig, []).append(pos)
     sets = []
-    for (view, key, path), positions in groups.items():
+    for (view, key, tname, path), positions in groups.items():
         positions.sort()
         run = [positions[0]]
         for p in positions[1:]:
             if len(run) > 1 and abs((p - run[-1]) - (run[1] - run[0])) > 1e-3:
-                sets.append((view, key, list(path), run[0], len(run), run[1] - run[0]))
+                sets.append((view, key, list(path), run[0], len(run), run[1] - run[0], tname))
                 run = [p]
             else:
                 run.append(p)
-        sets.append((view, key, list(path), run[0], len(run), (run[1] - run[0]) if len(run) > 1 else 0.0))
+        sets.append((view, key, list(path), run[0], len(run), (run[1] - run[0]) if len(run) > 1 else 0.0, tname))
     return sets
 
 
@@ -468,13 +477,19 @@ def split_path(path, max_length, lap):
 
 def set_segment_length(points, index, length):
     """Points with segment `index` (points[index] -> points[index+1]) made
-    `length` m long, the following points moved with its end."""
+    `length` m long. The first and the last segment grow at their free
+    end (a leg grows away from the bar: down from a top bar, up from a
+    bottom one); a middle one moves the points after it."""
     a, b = points[index], points[index + 1]
     old = math.hypot(b[0] - a[0], b[1] - a[1])
     if old < 1e-9 or length <= 0:
         return list(points)
     ux, uz = (b[0] - a[0]) / old, (b[1] - a[1]) / old
     dx, dz = ux * (length - old), uz * (length - old)
+    pts = list(points)
+    if index == 0 and len(points) > 2:
+        pts[0] = (a[0] - dx, a[1] - dz)
+        return pts
     return [p if k <= index else (p[0] + dx, p[1] + dz) for k, p in enumerate(points)]
 
 
@@ -544,3 +559,48 @@ def bar_points_3d(view, pos, path):
     if view == FRONT:
         return [(u, pos, z) for u, z in path]
     return [(pos, -u, z) for u, z in path]
+
+
+def plan_outline(foundation):
+    """The foundation's outline in plan: the edges [((x, y), (x, y))] of
+    its bottom faces that belong to one triangle only."""
+    count = {}
+    for face in foundation.faces:
+        if face.normal[2] > -0.9:
+            continue
+        for tri in face.triangles:
+            for k in range(3):
+                a, b = tri[k], tri[(k + 1) % 3]
+                ka, kb = (round(a[0], 3), round(a[1], 3)), (round(b[0], 3), round(b[1], 3))
+                edge = (ka, kb) if ka <= kb else (kb, ka)
+                count[edge] = count.get(edge, 0) + 1
+    edges = [e for e, n in count.items() if n == 1]
+    return merge_collinear(edges)
+
+
+def merge_collinear(edges, tol=1e-3):
+    """Edges [((x, y), (x, y))] with the collinear ones sharing an end
+    joined: a triangulated face splits a straight side in pieces."""
+    edges = [tuple(e) for e in edges]
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(edges)):
+            for j in range(i + 1, len(edges)):
+                a, b = edges[i]
+                c, d = edges[j]
+                shared = set([a, b]) & set([c, d])
+                if len(shared) != 1:
+                    continue
+                m = shared.pop()
+                p = a if b == m else b
+                q = c if d == m else d
+                cross = (m[0] - p[0]) * (q[1] - p[1]) - (m[1] - p[1]) * (q[0] - p[0])
+                if abs(cross) < tol:
+                    edges[i] = (p, q)
+                    del edges[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return edges

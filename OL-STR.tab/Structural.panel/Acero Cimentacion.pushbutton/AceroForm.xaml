@@ -55,6 +55,11 @@
                             <TextBox x:Name="txt_bot_sx" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="42,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_bot_tx" Width="232" SelectionChanged="type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit (todos los del proyecto). Autom&#225;tico: el que corresponde al di&#225;metro."/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
                             <TextBlock Text="Y &#216;" Width="26" VerticalAlignment="Center"/>
                             <ComboBox x:Name="cbo_bot_dy" Width="58" SelectionChanged="steel_changed"/>
@@ -65,11 +70,18 @@
                             <TextBox x:Name="txt_bot_sy" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="42,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_bot_ty" Width="232" SelectionChanged="type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit (todos los del proyecto). Autom&#225;tico: el que corresponde al di&#225;metro."/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
-                            <TextBlock Text="Gancho " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_bot_hook" Width="46" TextChanged="steel_changed"
-                                     ToolTip="Largo del gancho en cada extremo (m). 0 = recta."/>
-                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            <TextBlock Text="Tramos (m):  T1 " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_bot_ha" Width="40" TextChanged="steel_changed"
+                                     ToolTip="T1: gancho al inicio de la barra (m). 0 = sin gancho."/>
+                            <TextBlock Text="  T2 = largo del elemento  T3 " VerticalAlignment="Center" Foreground="Gray"/>
+                            <TextBox x:Name="txt_bot_hb" Width="40" TextChanged="steel_changed"
+                                     ToolTip="T3: gancho al final de la barra (m). 0 = sin gancho."/>
                         </StackPanel>
                         <CheckBox x:Name="chk_top" Content="Malla superior (gancho hacia abajo)" FontWeight="Bold" Margin="0,4,0,2" IsChecked="False" Click="steel_changed"/>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
@@ -82,6 +94,11 @@
                             <TextBox x:Name="txt_top_sx" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="42,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_top_tx" Width="232" SelectionChanged="type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit (todos los del proyecto). Autom&#225;tico: el que corresponde al di&#225;metro."/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
                             <TextBlock Text="Y &#216;" Width="26" VerticalAlignment="Center"/>
                             <ComboBox x:Name="cbo_top_dy" Width="58" SelectionChanged="steel_changed"/>
@@ -92,11 +109,18 @@
                             <TextBox x:Name="txt_top_sy" Width="40" TextChanged="steel_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="42,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_top_ty" Width="232" SelectionChanged="type_changed"
+                                      ToolTip="Tipo de barra de armadura de Revit (todos los del proyecto). Autom&#225;tico: el que corresponde al di&#225;metro."/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_top}">
-                            <TextBlock Text="Gancho " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_top_hook" Width="46" TextChanged="steel_changed"
-                                     ToolTip="Largo del gancho en cada extremo (m). 0 = recta."/>
-                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            <TextBlock Text="Tramos (m):  T1 " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_top_ha" Width="40" TextChanged="steel_changed"
+                                     ToolTip="T1: gancho al inicio de la barra (m). 0 = sin gancho."/>
+                            <TextBlock Text="  T2 = largo del elemento  T3 " VerticalAlignment="Center" Foreground="Gray"/>
+                            <TextBox x:Name="txt_top_hb" Width="40" TextChanged="steel_changed"
+                                     ToolTip="T3: gancho al final de la barra (m). 0 = sin gancho."/>
                         </StackPanel>
                         <CheckBox x:Name="chk_sketch" Content="Boceto (barras dibujadas a mano)" FontWeight="Bold" Margin="0,8,0,2"
                                   IsChecked="True" Click="steel_changed"/>
@@ -116,6 +140,10 @@
                             <TextBox x:Name="txt_sketch_n" Width="30" Margin="3,0,0,0" Text="5" TextChanged="sketch_props_changed" ToolTip="Cantidad de barras"/>
                             <TextBlock Text=" @" VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_sketch_s" Width="40" Text="0.20" TextChanged="sketch_props_changed"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="48,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_sketch}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_sketch_t" Width="226" SelectionChanged="type_changed"/>
                         </StackPanel>
                         <StackPanel Margin="16,2,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sketch}">
                             <DockPanel>
@@ -184,7 +212,12 @@
                     </Border>
                 </DockPanel>
                 <DockPanel Grid.Row="1">
-                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO LATERAL (corte por el centro, mirando hacia -X)"/>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                        <RadioButton x:Name="rb_side" GroupName="lowerview" IsChecked="True" Checked="lower_view_changed"
+                                     FontWeight="Bold" Content="ALZADO LATERAL (corte por el centro, mirando hacia -X)" Margin="0,0,14,0"/>
+                        <RadioButton x:Name="rb_plan" GroupName="lowerview" Checked="lower_view_changed"
+                                     FontWeight="Bold" Content="PLANTA (cotas y cortes)"/>
+                    </StackPanel>
                     <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                         <Canvas x:Name="canvas_side" Background="White" ClipToBounds="True" SizeChanged="views_resized"
                                 MouseLeftButtonDown="side_left" MouseRightButtonDown="side_right" MouseMove="side_move"

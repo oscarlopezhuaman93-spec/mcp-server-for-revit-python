@@ -54,6 +54,7 @@ FOUNDATION_BIC = DB.BuiltInCategory.OST_StructuralFoundation
 COVERS_PARAM = "EA_Cim_Recubrimientos"  # JSON {face number: cm} on the type
 STEEL_PARAM = "EA_Cim_Acero"  # JSON meshes + sketched bars on the type (rf.default_steel)
 BAR_KEYS = [k for k in rs.bar_diameter_keys() if 6 <= rs.BAR_DIAMETERS_MM[k] <= 36]
+AUTO_TYPE = u"(automatico)"
 PALETTE = [(231, 76, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15), (155, 89, 182),
            (230, 126, 34), (26, 188, 156), (233, 30, 99), (121, 85, 72), (0, 150, 136),
            (63, 81, 181), (205, 220, 57)]
@@ -134,6 +135,12 @@ class CimentacionWindow(forms.WPFWindow):
             combo.ItemsSource = BAR_KEYS
         for combo in (self.cbo_bot_mx, self.cbo_bot_my, self.cbo_top_mx, self.cbo_top_my, self.cbo_sketch_m):
             combo.ItemsSource = list(rf.DIST_MODES)
+        # the Revit bar types: all of the project, "(automatico)" first
+        self.type_keys = rc.bar_type_keys(doc)
+        names = [AUTO_TYPE] + sorted(self.type_keys)
+        for combo in self._type_combos():
+            combo.ItemsSource = names
+            combo.SelectedItem = AUTO_TYPE
         self.cbo_sketch_m.SelectedItem = rf.SPACING
         self.cbo_sketch_d.SelectedItem = u'1/2"'
         self._filling = False
@@ -218,12 +225,39 @@ class CimentacionWindow(forms.WPFWindow):
             panel.Children.Add(row)
 
     # -- steel form ------------------------------------------------------
+    def _type_combos(self):
+        return [self.cbo_bot_tx, self.cbo_bot_ty, self.cbo_top_tx, self.cbo_top_ty, self.cbo_sketch_t]
+
+    @staticmethod
+    def _chosen_type(combo):
+        item = combo.SelectedItem
+        return u"" if not item or item == AUTO_TYPE else item
+
+    def type_changed(self, sender, args):
+        """A bar type chosen: the diameter beside it follows its type."""
+        if self._filling:
+            return
+        name = self._chosen_type(sender)
+        key = self.type_keys.get(name)
+        pairs = {id(self.cbo_bot_tx): self.cbo_bot_dx, id(self.cbo_bot_ty): self.cbo_bot_dy,
+                 id(self.cbo_top_tx): self.cbo_top_dx, id(self.cbo_top_ty): self.cbo_top_dy,
+                 id(self.cbo_sketch_t): self.cbo_sketch_d}
+        diameter = pairs[id(sender)]
+        if key and key in BAR_KEYS and diameter.SelectedItem != key:
+            diameter.SelectedItem = key  # its own handler saves the form
+        if sender is self.cbo_sketch_t:
+            self.sketch_props_changed(sender, args)
+        else:
+            self.steel_changed(sender, args)
+
     def _mesh_controls(self, tag):
         return {"on": getattr(self, "chk_" + tag), "dx": getattr(self, "cbo_{}_dx".format(tag)),
                 "dy": getattr(self, "cbo_{}_dy".format(tag)), "sx": getattr(self, "txt_{}_sx".format(tag)),
-                "sy": getattr(self, "txt_{}_sy".format(tag)), "hook": getattr(self, "txt_{}_hook".format(tag)),
+                "sy": getattr(self, "txt_{}_sy".format(tag)),
                 "mx": getattr(self, "cbo_{}_mx".format(tag)), "my": getattr(self, "cbo_{}_my".format(tag)),
-                "nx": getattr(self, "txt_{}_nx".format(tag)), "ny": getattr(self, "txt_{}_ny".format(tag))}
+                "nx": getattr(self, "txt_{}_nx".format(tag)), "ny": getattr(self, "txt_{}_ny".format(tag)),
+                "ha": getattr(self, "txt_{}_ha".format(tag)), "hb": getattr(self, "txt_{}_hb".format(tag)),
+                "tx": getattr(self, "cbo_{}_tx".format(tag)), "ty": getattr(self, "cbo_{}_ty".format(tag))}
 
     def _fill_steel(self):
         self._filling = True
@@ -235,7 +269,11 @@ class CimentacionWindow(forms.WPFWindow):
             c["dy"].SelectedItem = m.get("dy")
             c["sx"].Text = u"{:g}".format(float(m.get("sx") or 0.2))
             c["sy"].Text = u"{:g}".format(float(m.get("sy") or 0.2))
-            c["hook"].Text = u"{:g}".format(float(m.get("hook") or 0.0))
+            c["ha"].Text = u"{:g}".format(float(m.get("hook_a", m.get("hook")) or 0.0))
+            c["hb"].Text = u"{:g}".format(float(m.get("hook_b", m.get("hook")) or 0.0))
+            for a in ("x", "y"):
+                name = m.get("t" + a) or u""
+                c["t" + a].SelectedItem = name if name in self.type_keys else AUTO_TYPE
             for a in ("x", "y"):
                 c["m" + a].SelectedItem = m.get("m" + a) or rf.SPACING
                 c["n" + a].Text = u"{}".format(int(m.get("n" + a) or 10))
@@ -264,7 +302,10 @@ class CimentacionWindow(forms.WPFWindow):
             m["dy"] = c["dy"].SelectedItem or m["dy"]
             m["sx"] = max(0.05, self._num(c["sx"].Text, m["sx"]))
             m["sy"] = max(0.05, self._num(c["sy"].Text, m["sy"]))
-            m["hook"] = max(0.0, self._num(c["hook"].Text, m["hook"]))
+            m["hook_a"] = max(0.0, self._num(c["ha"].Text, m.get("hook_a", m.get("hook", 0.0))))
+            m["hook_b"] = max(0.0, self._num(c["hb"].Text, m.get("hook_b", m.get("hook", 0.0))))
+            m["tx"] = self._chosen_type(c["tx"])
+            m["ty"] = self._chosen_type(c["ty"])
             for a in ("x", "y"):
                 m["m" + a] = c["m" + a].SelectedItem or rf.SPACING
                 m["n" + a] = max(1, int(self._num(c["n" + a].Text, m.get("n" + a) or 10)))
@@ -313,7 +354,7 @@ class CimentacionWindow(forms.WPFWindow):
         return best[1]
 
     def _sketch_click(self, view, canvas, args):
-        if not self.btn_sketch.IsChecked:
+        if not self.btn_sketch.IsChecked or (view == rf.SIDE and self.rb_plan.IsChecked):
             return
         p = self._to_model(view, canvas, args)
         if p is None:
@@ -341,7 +382,8 @@ class CimentacionWindow(forms.WPFWindow):
                                 "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2)),
                                 "m": self.cbo_sketch_m.SelectedItem or rf.SPACING,
                                 "n": max(1, int(self._num(self.txt_sketch_n.Text, 5))),
-                                "closed": bool(closed)})
+                                "closed": bool(closed),
+                                "t": self._chosen_type(self.cbo_sketch_t)})
         self.draft, self.draft_view = [], None
         self.selected_sketch = len(steel["sketch"]) - 1
         self._fill_sketch_list()
@@ -376,6 +418,8 @@ class CimentacionWindow(forms.WPFWindow):
             self.cbo_sketch_m.SelectedItem = item.get("m") or rf.SPACING
             self.txt_sketch_n.Text = u"{}".format(item.get("n") or 5)
             self.txt_sketch_s.Text = u"{:g}".format(float(item["s"]))
+            name = item.get("t") or u""
+            self.cbo_sketch_t.SelectedItem = name if name in self.type_keys else AUTO_TYPE
             self._filling = False
         self._sketch_mode_enable()
         self._fill_segments()
@@ -421,7 +465,12 @@ class CimentacionWindow(forms.WPFWindow):
         if not length or length <= 0:
             return
         pts = rf.set_segment_length([tuple(q) for q in item["pts"]], sender.Tag, length)
+        outlines = self._center_outlines(item["view"])
+        if outlines:
+            inner = outlines[0][1]
+            pts = [rf.clamp_inside(q, inner) for q in pts]  # never out of the cover
         item["pts"] = [list(q) for q in pts]
+        self._fill_segments()
         self._draw_elevations()
         self._build_steel_3d()
 
@@ -439,6 +488,7 @@ class CimentacionWindow(forms.WPFWindow):
         item["m"] = self.cbo_sketch_m.SelectedItem or rf.SPACING
         item["n"] = max(1, int(self._num(self.txt_sketch_n.Text, item.get("n") or 5)))
         item["s"] = max(0.05, self._num(self.txt_sketch_s.Text, item["s"]))
+        item["t"] = self._chosen_type(self.cbo_sketch_t)
         i = self.selected_sketch
         self._fill_sketch_list()
         self.selected_sketch = i
@@ -544,6 +594,15 @@ class CimentacionWindow(forms.WPFWindow):
         self._draw_elevations()
         self._build_steel_3d()
 
+    def _neighbors(self):
+        key = ("neighbors", self.state.active)
+        if key not in self._cache:
+            try:
+                self._cache[key] = rf.neighbors(self.foundation)
+            except Exception:
+                self._cache[key] = []
+        return self._cache[key]
+
     def _build_steel_3d(self):
         """The steel as generated (sketches, splices included) inside the
         see-through foundation, with the elements touching it."""
@@ -561,12 +620,6 @@ class CimentacionWindow(forms.WPFWindow):
         group.Children.Add(AmbientLight(Color.FromRgb(110, 110, 110)))
         group.Children.Add(DirectionalLight(Colors.White, Vector3D(-0.6, -0.8, -1.0)))
         group.Children.Add(DirectionalLight(Color.FromRgb(120, 120, 120), Vector3D(0.7, 0.5, 0.3)))
-        key = ("neighbors", self.state.active)
-        if key not in self._cache:
-            try:
-                self._cache[key] = rf.neighbors(f)
-            except Exception:
-                self._cache[key] = []
 
         def add_triangles(triangles, color):
             mesh = MeshGeometry3D()
@@ -581,14 +634,14 @@ class CimentacionWindow(forms.WPFWindow):
             model.BackMaterial = material
             group.Children.Add(model)
 
-        for n in self._cache[key]:
+        for n in self._neighbors():
             add_triangles(n["triangles"], Color.FromArgb(90, 150, 155, 165))
         try:
             bars = rf.BarPlanner(f, covers, rs.BAR_DIAMETERS_MM).all_bars(steel, splice)
         except Exception:
             bars = []
         meshes = {}
-        for view, pos, path, bar_key in bars:
+        for view, pos, path, bar_key, _ in bars:
             sketched = False
             mesh = meshes.setdefault(view, MeshGeometry3D())
             pts = rf.bar_points_3d(view, pos, path)
@@ -626,6 +679,18 @@ class CimentacionWindow(forms.WPFWindow):
                 model = GeometryModel3D(mesh, material)
                 model.BackMaterial = material
                 group.Children.Add(model)
+            for n in self._neighbors():
+                mesh = MeshGeometry3D()
+                for tri in n["triangles"]:
+                    base = mesh.Positions.Count
+                    for x, y, z in tri:
+                        mesh.Positions.Add(Point3D(x, y, z))
+                    for k in range(3):
+                        mesh.TriangleIndices.Add(base + k)
+                gray = DiffuseMaterial(SolidColorBrush(Color.FromArgb(90, 150, 155, 165)))
+                model = GeometryModel3D(mesh, gray)
+                model.BackMaterial = gray
+                group.Children.Add(model)
             x0, x1, y0, y1, z0, z1 = f.extent
             extent = (max(x1 - x0, y1 - y0), max(z1 - z0, 0.3))
             if self.scene._extent != extent:
@@ -639,6 +704,59 @@ class CimentacionWindow(forms.WPFWindow):
     def _draw_elevations(self):
         for canvas, view in ((self.canvas_front, rf.FRONT), (self.canvas_side, rf.SIDE)):
             self._draw_elevation(canvas, view)
+
+    def lower_view_changed(self, sender, args):
+        if hasattr(self, "navs"):
+            self.navs[rf.SIDE].reset()
+            self._draw_elevation(self.canvas_side, rf.SIDE)
+
+    def _draw_plan(self, canvas):
+        """The foundation in plan: its outline with each edge's length, the
+        overall sizes, and the two cuts the elevations show."""
+        f = self.foundation
+        edges = rf.plan_outline(f)
+        if not edges:
+            return
+        xs = [p[0] for e in edges for p in e]
+        ys = [p[1] for e in edges for p in e]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 0.45, y0 - 0.45, x1 + 0.45, y1 + 0.45)
+        self._fitted = getattr(self, "_fitted", {})
+        self._fitted[rf.SIDE] = fitted
+        frame = self.navs[rf.SIDE].resolve(fitted)
+        self._frames[rf.SIDE] = frame
+        dark = SolidColorBrush(Color.FromRgb(40, 40, 40))
+        dim = SolidColorBrush(Color.FromRgb(31, 78, 160))
+        red = SolidColorBrush(Color.FromRgb(200, 50, 40))
+        for face in f.faces:
+            if face.normal[2] < -0.9:
+                for tri in face.triangles:
+                    rv._polygon(canvas, frame, [(p[0], p[1]) for p in tri], SolidColorBrush(Color.FromRgb(225, 228, 232)))
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        irregular = len(edges) > 4  # a rectangle: its two overall sizes say it all
+        for a, b in edges:
+            rv._line(canvas, frame, a, b, dark, 2.5)
+            length = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+            if irregular and length > 0.05:
+                mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+                # the length written just outside the edge
+                ox, oy = mx - cx, my - cy
+                norm = (ox * ox + oy * oy) ** 0.5 or 1.0
+                rv._text(canvas, frame, mx + ox / norm * 0.12, my + oy / norm * 0.12, u"{:.2f}".format(length),
+                         brush=dim, size=11)
+        # overall sizes
+        rv._line(canvas, frame, (x0, y0 - 0.3), (x1, y0 - 0.3), dim, 1)
+        rv._text(canvas, frame, cx, y0 - 0.38, u"{:.2f} m".format(x1 - x0), brush=dim, size=11, bold=True)
+        rv._line(canvas, frame, (x0 - 0.3, y0), (x0 - 0.3, y1), dim, 1)
+        rv._text(canvas, frame, x0 - 0.42, cy, u"{:.2f}".format(y1 - y0), brush=dim, size=11, bold=True)
+        # the cuts of the elevations
+        yc = self._center(rf.FRONT)
+        xc = self._center(rf.SIDE)
+        rv._line(canvas, frame, (x0 - 0.2, yc), (x1 + 0.2, yc), red, 1.5, dash=True)
+        rv._text(canvas, frame, x1 + 0.3, yc + 0.08, u"A  Alzado frontal", brush=red, size=11, anchor="left", bold=True)
+        rv._line(canvas, frame, (xc, y0 - 0.2), (xc, y1 + 0.2), red, 1.5, dash=True)
+        rv._text(canvas, frame, xc + 0.05, y1 + 0.3, u"B  Alzado lateral", brush=red, size=11, anchor="left", bold=True)
+        rv._text(canvas, frame, x1 + 0.1, y1 + 0.3, u"X \u2192   Y \u2191", brush=dark, size=10)
 
     def _center(self, view):
         x0, x1, y0, y1, _, _ = self.foundation.extent
@@ -691,7 +809,9 @@ class CimentacionWindow(forms.WPFWindow):
             level = 0 if view == rf.FRONT else 1
             d_first = mm[m["dx"]] / 1000.0
             for outer, inner in self._center_outlines(view):
-                for path in rf.mesh_layer_paths(inner, layer, mm[d_in] / 1000.0, float(m.get("hook") or 0.0)):
+                for path in rf.mesh_layer_paths(inner, layer, mm[d_in] / 1000.0,
+                                                float(m.get("hook_a", m.get("hook")) or 0.0),
+                                                hook_b=float(m.get("hook_b", m.get("hook")) or 0.0)):
                     if level:
                         shift = d_first if layer == rf.BOTTOM else -d_first
                         path = [(u, z + shift) for u, z in path]
@@ -734,6 +854,9 @@ class CimentacionWindow(forms.WPFWindow):
         canvas.Children.Clear()
         f = self.foundation
         if f is None or canvas.ActualWidth < 10:
+            return
+        if view == rf.SIDE and self.rb_plan.IsChecked:
+            self._draw_plan(canvas)
             return
         outlines = self._section(view)
         if not outlines:
@@ -930,7 +1053,8 @@ if window.action == "run":
                 foundation = rf.Foundation(element)
                 rc.delete_generated(doc, element)
                 planner = rf.BarPlanner(foundation, covers, rs.BAR_DIAMETERS_MM)
-                for view, key, path, first, count, spacing in rf.bar_sets(planner.all_bars(steel, splice)):
+                for view, key, path, first, count, spacing, tname in rf.bar_sets(planner.all_bars(steel, splice)):
+                    bar_type = rc.named_bar_type(doc, tname, key) or bar_types.pick(key, u"ZAPATA")  # automatic: prefer a footing type
                     closed = len(path) > 3 and path[0] == path[-1]
                     if closed:
                         path = path[:-1]
@@ -946,12 +1070,12 @@ if window.action == "run":
                                                  for k in range(len(pts))])
                         hook = hooks.get(key)
                         rebar = Rebar.CreateFromCurves(
-                            doc, RebarStyle.StirrupTie, bar_types.pick(key, None), hook, hook, element, normal,
+                            doc, RebarStyle.StirrupTie, bar_type, hook, hook, element, normal,
                             curves, RebarHookOrientation.Left, RebarHookOrientation.Left, True, True)
                     else:
                         curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
                         rebar = Rebar.CreateFromCurves(
-                            doc, RebarStyle.Standard, bar_types.pick(key, None), None, None, element, normal, curves,
+                            doc, RebarStyle.Standard, bar_type, None, None, element, normal, curves,
                             RebarHookOrientation.Right, RebarHookOrientation.Right, True, True)
                     if count > 1:
                         # sets run along the normal; the side ones go towards +x

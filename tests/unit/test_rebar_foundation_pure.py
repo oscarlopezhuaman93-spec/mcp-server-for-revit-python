@@ -62,6 +62,14 @@ def test_split_path_and_segment_length():
     assert len(pieces) == 2
     assert rf.path_length(pieces[0]) == pytest.approx(9.0)
     assert rf.path_length(pieces[0]) + rf.path_length(pieces[1]) - 0.75 == pytest.approx(10.5)
-    pts = rf.set_segment_length([(0, 0), (1, 0), (1, 1)], 0, 2.0)
-    assert pts == [(0, 0), (2.0, 0.0), (2.0, 1.0)]
+    # the first leg grows at its free end, the last one too
+    pts = rf.set_segment_length([(0, 1), (0, 0), (2, 0)], 0, 1.5)
+    assert pts == [(0.0, 1.5), (0, 0), (2, 0)]
+    pts = rf.set_segment_length([(0, 0), (2, 0), (2, 1)], 1, 1.5)
+    assert pts == [(0, 0), (2, 0), (2.0, 1.5)]
     assert rf.clamp_inside((2.0, 0.5), SQUARE) == pytest.approx((0.5, 0.5))
+
+
+def test_merge_collinear_edges():
+    edges = [((0, 0), (1, 0)), ((1, 0), (3, 0)), ((3, 0), (3, 2))]
+    assert sorted(rf.merge_collinear(edges)) == sorted([((0, 0), (3, 0)), ((3, 0), (3, 2))])
