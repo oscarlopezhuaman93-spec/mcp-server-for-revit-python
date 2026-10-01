@@ -11,7 +11,11 @@
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
             <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
                     FontWeight="Bold" Click="run_click"
-                    ToolTip="Genera las columnas seleccionadas en el modelo (o, si lo eliges, todas las de su tipo en todos los niveles); si no hay ninguna seleccionada, todas las columnas de los tipos marcados."/>
+                    ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de las columnas seleccionadas (si no hay ninguna seleccionada, de todas las columnas de los tipos marcados)."/>
+            <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
+                    ToolTip="Carga una configuraci&#243;n guardada (estribos, barras y dibujo de la secci&#243;n)."/>
+            <Button DockPanel.Dock="Right" Content="Guardar en archivo..." Width="150" Height="40" Margin="0,0,8,0" Click="file_save_click"
+                    ToolTip="Guarda la configuraci&#243;n y el dibujo de la secci&#243;n en un archivo, para usarlos en otro tipo o proyecto."/>
         </DockPanel>
 
         <Grid>
@@ -50,7 +54,7 @@
                 </Expander>
 
                 <!-- Vertical bars: four diameters (drawing tool) and their Revit bar type -->
-                <GroupBox DockPanel.Dock="Bottom" Header="3. Configuraci&#243;n de barra vertical" Margin="0,8,0,0" Padding="6,4,6,6">
+                <Expander DockPanel.Dock="Bottom" Header="3. Configuraci&#243;n de barra vertical" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="34"/>
@@ -119,9 +123,9 @@
                         <ComboBox Grid.Row="7" Grid.Column="2" x:Name="cbo_dir_top" Margin="4,0,0,0" VerticalAlignment="Center" SelectionChanged="config_changed"
                                   ToolTip="Hacia d&#243;nde apunta la pata de arriba: adentro de la columna o afuera, dentro de la viga o losa."/>
                     </Grid>
-                </GroupBox>
+                </Expander>
 
-                <GroupBox DockPanel.Dock="Bottom" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6">
+                <Expander DockPanel.Dock="Bottom" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170"/>
@@ -160,18 +164,21 @@
                         <TextBlock Grid.Row="3" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_edge_dist" TextChanged="config_changed" VerticalAlignment="Center"
                                  ToolTip="Desde cada extremo, en la luz libre. Ej. 1@5 6@10 Rto@25  o  1@.05, 10@.10, rto@.20"/>
-                        <TextBlock Grid.Row="4" Text="Izaje &#216; / Tipo:" VerticalAlignment="Center"
-                                   ToolTip="Estribos de izaje: sobre la zapata, desde la altura de izaje hacia abajo."/>
-                        <DockPanel Grid.Row="4" Grid.Column="1" VerticalAlignment="Center">
+                        <CheckBox Grid.Row="4" x:Name="chk_izaje" Content="Izaje &#216; / Tipo:" VerticalAlignment="Center" Click="config_changed"
+                                  ToolTip="Activa los estribos de izaje: sobre la zapata, desde la altura de izaje hacia abajo. Desact&#237;valo cuando el elemento no los requiera."/>
+                        <DockPanel Grid.Row="4" Grid.Column="1" VerticalAlignment="Center"
+                                   IsEnabled="{Binding IsChecked, ElementName=chk_izaje}">
                             <ComboBox DockPanel.Dock="Left" x:Name="cbo_izaje" Width="62" SelectionChanged="config_changed"/>
                             <ComboBox x:Name="cbo_izaje_type" Margin="4,0,0,0" SelectionChanged="stirrup_type_changed"
                                       ToolTip="Tipo de barra de armadura de Revit para los estribos de izaje. Autom&#225;tico: el del tipo de columna."/>
                         </DockPanel>
                         <TextBlock Grid.Row="5" Text="     Distribuci&#243;n:" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="5" Grid.Column="1" x:Name="txt_izaje_dist" TextChanged="config_changed" VerticalAlignment="Center"
+                                 IsEnabled="{Binding IsChecked, ElementName=chk_izaje}"
                                  ToolTip="Desde la altura de izaje hacia abajo, hasta la cara de la zapata. Ej. 9@0.15. Vac&#237;o: sin izaje."/>
                         <TextBlock Grid.Row="6" Text="     Altura izaje (m):" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="6" Grid.Column="1" x:Name="txt_izaje_h" TextChanged="config_changed" VerticalAlignment="Center"
+                                 IsEnabled="{Binding IsChecked, ElementName=chk_izaje}"
                                  ToolTip="Desde la cara superior de la zapata. Sobre esta cota empieza la distribuci&#243;n normal de la columna. Tambi&#233;n se edita con un clic en la cota del alzado."/>
                         <TextBlock Grid.Row="7" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
                         <TextBox Grid.Row="7" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
@@ -186,14 +193,8 @@
                         <Button Grid.Row="9" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus columnas, en todos los niveles."/>
-                        <UniformGrid Grid.Row="10" Grid.ColumnSpan="2" Columns="2" Margin="0,6,0,0">
-                            <Button Content="Guardar en archivo..." Height="28" Margin="0,0,3,0" Click="file_save_click"
-                                    ToolTip="Guarda estos estribos y el dibujo de la seccion en un archivo, para usarlos en otro tipo o proyecto."/>
-                            <Button Content="Abrir archivo..." Height="28" Margin="3,0,0,0" Click="file_open_click"
-                                    ToolTip="Carga una configuracion guardada en el tipo elegido; luego pulsa 'Guardar configuracion en los tipos marcados'."/>
-                        </UniformGrid>
                     </Grid>
-                </GroupBox>
+                </Expander>
 
 
                 <ListBox x:Name="list_types" SelectionMode="Single" SelectionChanged="type_selected"

@@ -532,6 +532,7 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_izaje_type.SelectedItem = izaje.get("type") if izaje.get("type") in names else AUTO_TYPE
         self._filling_types = False
         self.txt_izaje_dist.Text = izaje.get("dist") or u""
+        self.chk_izaje.IsChecked = bool(izaje) and izaje.get("on", True)
         self.txt_izaje_h.Text = u"{:g}".format(float(izaje["h"])) if izaje.get("h") else u""
         ends = rs.read_json_setting(f.get("ends"))
         self.legs_bot = dict(ends.get("bot") or {})
@@ -919,7 +920,8 @@ class AceroWindow(forms.WPFWindow):
         dist, h = (self.txt_izaje_dist.Text or u"").strip(), self._number(self.txt_izaje_h.Text)
         if not dist or not h:
             return u""
-        return json.dumps({"d": self.cbo_izaje.SelectedItem or u'3/8"', "dist": dist, "h": h,
+        return json.dumps({"on": bool(self.chk_izaje.IsChecked),
+                           "d": self.cbo_izaje.SelectedItem or u'3/8"', "dist": dist, "h": h,
                            "type": self._chosen_type(self.cbo_izaje_type)}, ensure_ascii=False)
 
     def _ends_text(self):
@@ -1655,7 +1657,8 @@ class AceroWindow(forms.WPFWindow):
             # distribution from there (rc.generate_column)
             depth = rc.foundation_below(doc, column, section) if index == 0 else None
             izaje = rs.read_json_setting(f["izaje"])
-            izaje_h = float(izaje["h"]) if (depth and izaje.get("dist") and izaje.get("h")) else 0.0
+            izaje_h = (float(izaje["h"]) if (depth and izaje.get("on", True) and izaje.get("dist") and izaje.get("h"))
+                       else 0.0)
             edge, edge_msg = self._family_view(f["edge"], f["edge_dist"], clear - izaje_h)
             conf, conf_msg = self._family_view(f["conf"], f["conf_dist"], clear - izaje_h)
             for fam in (edge, conf):
@@ -2313,7 +2316,7 @@ if state.scope == "pick":
     # every level, not just the ones picked.
     picked_types = sorted(set(id_of(c.GetTypeId()) for c in targets))
     same_type = [c for t in picked_types for c in by_id[t].columns]
-    if len(same_type) > len(targets):
+    if False:  # the window generates the picked columns only
         only_picked = u"Solo las columnas seleccionadas ({})".format(len(targets))
         all_levels = u"Todas las columnas de {} en todos los niveles ({})".format(
             u", ".join(by_id[t].name for t in picked_types), len(same_type))
@@ -2353,13 +2356,7 @@ else:
     stacks = rc.column_stacks(with_spec)
     with_spec = [c for s in stacks for c in s]
 
-mode = forms.CommandSwitchWindow.show(
-    ["Vista previa (sin cambios en el modelo)", "Generar barras y metrado"],
-    message=u"Modo de ejecucion ({} columnas, {}):".format(len(with_spec), scope_label),
-)
-if not mode:
-    script.exit()
-dry_run = mode.startswith("Vista previa")
+dry_run = False  # straight to the model: no mode question
 
 bar_types = rc.BarTypes(doc)
 hooks = rc.StirrupHooks(doc)
@@ -2416,54 +2413,7 @@ except Exception:
         t.RollBack()
     raise
 
-output.print_md("# Resultado Acero - Columnas {}".format("(vista previa)" if dry_run else ""))
-output.print_md(u"**Alcance:** {}".format(scope_label))
-output.print_md("**Columnas armadas:** {}".format(sum(v["n"] for v in by_type.values())))
-if not dry_run:
-    output.print_md("**Barras creadas:** {}".format(total_bars))
-skipped = len(targets) - len(with_spec)
-if skipped:
-    output.print_md("**Columnas sin configuracion (omitidas):** {}".format(skipped))
-
-output.print_md(
-    u"\n| Tipo | Columnas | Longitudinal (kg) | Estribo de borde (kg) "
-    u"| Confinamiento y grapas (kg) | Total (kg) |"
-)
-output.print_md("|---|---|---|---|---|---|")
-grand = dict((k, 0.0) for k in KINDS)
-for type_name in sorted(by_type):
-    agg = by_type[type_name]
-    for kind in KINDS:
-        grand[kind] += agg[kind]
-    output.print_md(u"| {} | {} | {:.2f} | {:.2f} | {:.2f} | {:.2f} |".format(
-        type_name, agg["n"], agg[rc.LONGITUDINAL], agg[rc.EDGE], agg[rc.CONFINEMENT],
-        sum(agg[k] for k in KINDS)))
-output.print_md("| **Total** | | **{:.2f}** | **{:.2f}** | **{:.2f}** | **{:.2f}** |".format(
-    grand[rc.LONGITUDINAL], grand[rc.EDGE], grand[rc.CONFINEMENT], sum(grand.values())))
-
-output.print_md(
-    (u"\n*Longitudinales continuas en cada pila de columnas, en barras de hasta {:g} m con "
-     u"empalme en la mitad central de un piso (la barra inferior con bayoneta 1:6); el peso "
-     u"de cada barra se reparte entre las columnas que recorre. ".format(splice["max"])
-     if splice else u"\n*Longitudinales rectas de piso a piso (sin empalmes ni anclajes). ")
-    + u"Estribos en la luz libre, distribuidos desde cada extremo: desde la base hasta el "
-    "fondo de la viga de mayor peralte (o la cara inferior de la losa si no hay viga); "
-    "en el nucleo si se configuro.*"
-)
-for type_name in sorted(stick_out):
-    warnings.append(
-        u"{}: en {} columna(s) el gancho de algun estribo o grapa sobresale de la seccion; "
-        u"conviene un gancho mas corto para ese diametro.".format(type_name, stick_out[type_name])
-    )
-mismatched = {}  # shape name -> columns where Revit refused it
-for column_id, shape_name in rebar_shapes.mismatched:
-    mismatched.setdefault(shape_name, set()).add(column_id)
-for shape_name in sorted(mismatched):
-    warnings.append(
-        u"Forma {}: el estribo dibujado no coincide con ella en {} columna(s); "
-        u"Revit uso la forma que corresponde al dibujo.".format(shape_name, len(mismatched[shape_name]))
-    )
-if warnings:
-    output.print_md("\n### Advertencias ({})".format(len(warnings)))
-    for w in warnings[:50]:
-        output.print_md(u"- {}".format(w))
+# No report window: only what failed, in one message.
+failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Columna(s)")]
+if failed:
+    forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")

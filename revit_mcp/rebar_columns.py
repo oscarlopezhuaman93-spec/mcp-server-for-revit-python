@@ -260,7 +260,7 @@ class ColumnSpec(object):
         self.bar_type_names = read_bar_type_names(config.get("EA_Barras_Tipo"))
         izaje = spec.read_json_setting(config.get("EA_Izaje"))
         self.izaje, self.izaje_h = None, 0.0
-        if (izaje.get("dist") or u"").strip() and float(izaje.get("h") or 0) > 0:
+        if izaje.get("on", True) and (izaje.get("dist") or u"").strip() and float(izaje.get("h") or 0) > 0:
             self.izaje = StirrupFamily(izaje.get("d") or u'3/8"', izaje["dist"] + u", rto@1",
                                        u"Estribo de izaje", izaje.get("type"))
             self.izaje_dist = izaje["dist"]
