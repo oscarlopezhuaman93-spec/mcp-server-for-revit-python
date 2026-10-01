@@ -23,7 +23,8 @@
             </Grid.ColumnDefinitions>
 
             <!-- Left: elements + configuration -->
-            <DockPanel Grid.Column="0" Margin="0,0,10,0" LastChildFill="False">
+            <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+            <DockPanel LastChildFill="False">
                 <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
                            Text="1. Selecciona la cimentaci&#243;n (zapata, cimiento corrido, losa de cimentaci&#243;n)."/>
                 <Button DockPanel.Dock="Top" x:Name="button_pick" Content="SELECCIONAR CIMENTACI&#211;N" Height="34"
@@ -97,10 +98,11 @@
                                      ToolTip="Largo del gancho en cada extremo (m). 0 = recta."/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <TextBlock Text="Boceto" FontWeight="Bold" Margin="0,8,0,2"/>
-                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
+                        <CheckBox x:Name="chk_sketch" Content="Boceto (barras dibujadas a mano)" FontWeight="Bold" Margin="0,8,0,2"
+                                  IsChecked="True" Click="steel_changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sketch}">
                             <ToggleButton x:Name="btn_sketch" Width="30" Height="26" Click="sketch_toggle"
-                                          ToolTip="Dibujar barra por boceto: clic en cada punto en un alzado (se pega al recubrimiento), clic derecho para terminar. Esc cancela.">
+                                          ToolTip="Dibujar barra por boceto: clic en cada punto en un alzado (dentro del recubrimiento); clic en el primer punto cierra un estribo; clic derecho termina. Esc cancela.">
                                 <Canvas Width="16" Height="16">
                                     <Rectangle Width="16" Height="16" Stroke="#FF5B8BD0" StrokeThickness="1"/>
                                     <Line X1="3" Y1="13" X2="13" Y2="3" Stroke="#FF2E5FA8" StrokeThickness="2"/>
@@ -108,31 +110,64 @@
                                     <Rectangle Canvas.Left="11" Canvas.Top="1" Width="4" Height="4" Fill="#FF2E5FA8"/>
                                 </Canvas>
                             </ToggleButton>
-                            <TextBlock Text="  &#216;" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_sketch_d" Width="58" Margin="2,0,0,0"/>
-                            <ComboBox x:Name="cbo_sketch_m" Width="82" Margin="3,0,0,0"/>
-                            <TextBox x:Name="txt_sketch_n" Width="30" Margin="3,0,0,0" Text="5" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" &#216;" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_sketch_d" Width="58" Margin="2,0,0,0" SelectionChanged="sketch_props_changed"/>
+                            <ComboBox x:Name="cbo_sketch_m" Width="82" Margin="3,0,0,0" SelectionChanged="sketch_props_changed"/>
+                            <TextBox x:Name="txt_sketch_n" Width="30" Margin="3,0,0,0" Text="5" TextChanged="sketch_props_changed" ToolTip="Cantidad de barras"/>
                             <TextBlock Text=" @" VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_sketch_s" Width="40" Text="0.20"/>
-                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_sketch_s" Width="40" Text="0.20" TextChanged="sketch_props_changed"/>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="16,2,0,1">
-                            <TextBlock x:Name="txt_sketch_count" Text="0 barras dibujadas" Foreground="Gray" VerticalAlignment="Center" Width="140"/>
-                            <Button Content="Borrar &#250;ltima" Width="90" Click="sketch_undo"/>
+                        <StackPanel Margin="16,2,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sketch}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Borrar" Width="56" Click="sketch_delete"/>
+                                <TextBlock x:Name="txt_sketch_count" Text="0 barras dibujadas" Foreground="Gray" VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <ListBox x:Name="list_sketch" MaxHeight="80" Margin="0,2,0,2" SelectionChanged="sketch_selected"/>
+                            <TextBlock Text="Longitudes de tramos (m) de la barra elegida:" Foreground="Gray" FontSize="11"/>
+                            <WrapPanel x:Name="panel_segments"/>
                         </StackPanel>
                     </StackPanel>
                 </Expander>
+                <Expander DockPanel.Dock="Top" Header="4. Empalme de barras" Margin="0,8,0,0">
+                    <StackPanel Margin="6,4,6,4">
+                        <CheckBox x:Name="chk_splice" Click="splice_changed"
+                                  Content="Empalmar las barras m&#225;s largas que la longitud m&#225;xima"
+                                  ToolTip="Las barras de los di&#225;metros marcados que superan la longitud m&#225;xima se cortan en piezas que se traslapan con su longitud de empalme. Es la misma configuraci&#243;n de Acero Columna y Acero Viga."/>
+                        <StackPanel Orientation="Horizontal" Margin="18,4,0,4" IsEnabled="{Binding IsChecked, ElementName=chk_splice}">
+                            <TextBlock Text="Longitud maxima de barra: " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_splice_max" Width="45" TextChanged="splice_changed"/>
+                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock Text="Empalme por diametro: marca los que se empalman (cm; sugerido E.060 clase B):" TextWrapping="Wrap" Margin="0,2,0,2"/>
+                        <WrapPanel x:Name="panel_laps" IsEnabled="{Binding IsChecked, ElementName=chk_splice}"/>
+                    </StackPanel>
+                </Expander>
             </DockPanel>
+            </ScrollViewer>
 
-            <!-- Center: 3D -->
-            <DockPanel Grid.Column="1" Margin="0,0,6,0">
-                <TextBlock DockPanel.Dock="Top" x:Name="txt_title" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D"/>
-                <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
-                    <Viewport3D x:Name="view3d" ClipToBounds="True"
-                                MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
-                                MouseMove="view3d_mouse_move"/>
-                </Border>
-            </DockPanel>
+            <!-- Center: faces (colors and numbers) and steel, each a 3D view -->
+            <Grid Grid.Column="1" Margin="0,0,6,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock DockPanel.Dock="Top" x:Name="txt_title" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D - CARAS"/>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
+                        <Viewport3D x:Name="view3d" ClipToBounds="True"
+                                    MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
+                                    MouseMove="view3d_mouse_move"/>
+                    </Border>
+                </DockPanel>
+                <DockPanel Grid.Row="1">
+                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D - ACERO (con los elementos conectados)"/>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
+                        <Viewport3D x:Name="view3d_steel" ClipToBounds="True"
+                                    MouseWheel="steel3d_wheel" MouseDown="steel3d_mouse_down" MouseUp="steel3d_mouse_up"
+                                    MouseMove="steel3d_mouse_move"/>
+                    </Border>
+                </DockPanel>
+            </Grid>
 
             <!-- Right: two elevations -->
             <Grid Grid.Column="2">
@@ -141,17 +176,19 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO FRONTAL (corte por el centro, mirando hacia +Y)"/>
+                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO FRONTAL (corte por el centro, mirando hacia +Y) - rueda: zoom, bot&#243;n central: mover, doble clic central: ajustar"/>
                     <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                         <Canvas x:Name="canvas_front" Background="White" ClipToBounds="True" SizeChanged="views_resized"
-                                MouseLeftButtonDown="front_left" MouseRightButtonDown="front_right" MouseMove="front_move"/>
+                                MouseLeftButtonDown="front_left" MouseRightButtonDown="front_right" MouseMove="front_move"
+                                MouseWheel="front_wheel" MouseDown="front_down" MouseUp="front_up"/>
                     </Border>
                 </DockPanel>
                 <DockPanel Grid.Row="1">
                     <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO LATERAL (corte por el centro, mirando hacia -X)"/>
                     <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                         <Canvas x:Name="canvas_side" Background="White" ClipToBounds="True" SizeChanged="views_resized"
-                                MouseLeftButtonDown="side_left" MouseRightButtonDown="side_right" MouseMove="side_move"/>
+                                MouseLeftButtonDown="side_left" MouseRightButtonDown="side_right" MouseMove="side_move"
+                                MouseWheel="side_wheel" MouseDown="side_down" MouseUp="side_up"/>
                     </Border>
                 </DockPanel>
             </Grid>

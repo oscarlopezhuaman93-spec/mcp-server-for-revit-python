@@ -376,6 +376,8 @@ class BarPlanner(object):
         view, key = item["view"], item["d"]
         d = self.mm[key] / 1000.0
         pts = [tuple(p) for p in item["pts"]]
+        if item.get("closed"):
+            pts = pts + [pts[0]]  # a closed stirrup: back to its start
         lo, hi = self._range(view, d)
         bars = []
         for pos in distribute(lo, hi, item.get("m", SPACING), float(item["s"]), item.get("n", 1)):
@@ -385,11 +387,24 @@ class BarPlanner(object):
                     break
         return bars
 
-    def all_bars(self, steel):
+    def all_bars(self, steel, splice=None):
+        """Every bar; with `splice` ({"max", "laps": {key: m}}) the open
+        ones longer than the maximum cut into lapped pieces."""
         bars = self.mesh(BOTTOM, steel.get(BOTTOM, {})) + self.mesh(TOP, steel.get(TOP, {}))
-        for item in steel.get("sketch", []):
-            bars += self.sketch(item)
-        return bars
+        if steel.get("sketch_on", True):
+            for item in steel.get("sketch", []):
+                bars += self.sketch(item)
+        if not splice:
+            return bars
+        out = []
+        for view, pos, path, key in bars:
+            lap = splice["laps"].get(key)
+            closed = len(path) > 2 and path[0] == path[-1]
+            if lap is None or closed:
+                out.append((view, pos, path, key))
+            else:
+                out += [(view, pos, piece, key) for piece in split_path(path, splice["max"], lap)]
+        return out
 
 
 def bar_sets(bars):
@@ -411,3 +426,121 @@ def bar_sets(bars):
                 run.append(p)
         sets.append((view, key, list(path), run[0], len(run), (run[1] - run[0]) if len(run) > 1 else 0.0))
     return sets
+
+
+# --- Splices and segment edits (pure) ----------------------------------------
+def path_length(path):
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(path, path[1:]))
+
+
+def sub_path(path, s0, s1):
+    """The part of the polyline between arc lengths s0 and s1."""
+    out, walked = [], 0.0
+    for a, b in zip(path, path[1:]):
+        seg = math.hypot(b[0] - a[0], b[1] - a[1])
+        lo, hi = walked, walked + seg
+        if hi >= s0 - 1e-9 and lo <= s1 + 1e-9 and seg > 1e-12:
+            t0 = max(0.0, (s0 - lo) / seg)
+            t1 = min(1.0, (s1 - lo) / seg)
+            p = (a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0)
+            q = (a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1)
+            if not out:
+                out.append(p)
+            if math.hypot(q[0] - out[-1][0], q[1] - out[-1][1]) > 1e-6:
+                out.append(q)
+        walked = hi
+    return out
+
+
+def split_path(path, max_length, lap):
+    """A bar longer than `max_length` cut into pieces of at most that
+    length, each lapping the next by `lap` (m): [path...]."""
+    total = path_length(path)
+    if max_length <= 0 or total <= max_length + 1e-6 or lap >= max_length:
+        return [path]
+    pieces, start = [], 0.0
+    while total - start > max_length + 1e-6:
+        pieces.append(sub_path(path, start, start + max_length))
+        start += max_length - lap
+    pieces.append(sub_path(path, start, total))
+    return pieces
+
+
+def set_segment_length(points, index, length):
+    """Points with segment `index` (points[index] -> points[index+1]) made
+    `length` m long, the following points moved with its end."""
+    a, b = points[index], points[index + 1]
+    old = math.hypot(b[0] - a[0], b[1] - a[1])
+    if old < 1e-9 or length <= 0:
+        return list(points)
+    ux, uz = (b[0] - a[0]) / old, (b[1] - a[1]) / old
+    dx, dz = ux * (length - old), uz * (length - old)
+    return [p if k <= index else (p[0] + dx, p[1] + dz) for k, p in enumerate(points)]
+
+
+def clamp_inside(p, inner):
+    """p, or the nearest point of the cover outline when p is outside it."""
+    if point_inside(inner, p):
+        return p
+    return snap_to_outline(p, inner, 1e9)
+
+
+# --- Elements touching the foundation (Revit geometry) -------------------------
+NEIGHBOR_CATEGORIES = (
+    (DB.BuiltInCategory.OST_StructuralColumns, u"COLUMNA"),
+    (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
+    (DB.BuiltInCategory.OST_StructuralFoundation, u"CIMENTACION"),
+    (DB.BuiltInCategory.OST_Walls, u"MURO"),
+    (DB.BuiltInCategory.OST_Floors, u"LOSA"),
+) if hasattr(DB, "BuiltInCategory") else ()
+
+
+def neighbors(foundation, reach_m=0.6, contact_m=0.05):
+    """Triangles (local) of the elements touching the foundation, cut to
+    `reach_m` around it: [{"label", "triangles"}]."""
+    element = foundation.element
+    bb = element.get_BoundingBox(None)
+    touch = contact_m / FT
+    near = DB.Outline(DB.XYZ(bb.Min.X - touch, bb.Min.Y - touch, bb.Min.Z - touch),
+                      DB.XYZ(bb.Max.X + touch, bb.Max.Y + touch, bb.Max.Z + touch))
+    x0, x1, y0, y1, z0, z1 = foundation.extent
+    corners = [foundation.world(x, y, z0 - reach_m) for x, y in
+               ((x0 - reach_m, y0 - reach_m), (x1 + reach_m, y0 - reach_m),
+                (x1 + reach_m, y1 + reach_m), (x0 - reach_m, y1 + reach_m))]
+    loop = DB.CurveLoop()
+    for k in range(4):
+        loop.Append(DB.Line.CreateBound(corners[k], corners[(k + 1) % 4]))
+    crop = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+        List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, (z1 - z0 + 2 * reach_m) / FT)
+    doc = element.Document
+    result = []
+    for bic, label in NEIGHBOR_CATEGORIES:
+        found = (DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType()
+                 .WherePasses(DB.BoundingBoxIntersectsFilter(near)))
+        for other in found:
+            if other.Id == element.Id:
+                continue
+            triangles = []
+            for solid in _solids(other):
+                try:
+                    part = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
+                        solid, crop, DB.BooleanOperationsType.Intersect)
+                except Exception:
+                    continue
+                if part is None or part.Volume < 1e-6:
+                    continue
+                for face in part.Faces:
+                    mesh = face.Triangulate()
+                    for i in range(mesh.NumTriangles):
+                        tri = mesh.get_Triangle(i)
+                        triangles.append(tuple(foundation.local(tri.get_Vertex(k)) for k in range(3)))
+            if triangles:
+                result.append({"label": label, "triangles": triangles})
+    return result
+
+
+def bar_points_3d(view, pos, path):
+    """A bar's local 3D points from its section path."""
+    if view == FRONT:
+        return [(u, pos, z) for u, z in path]
+    return [(pos, -u, z) for u, z in path]
