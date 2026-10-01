@@ -19,12 +19,16 @@ if REVIT_MCP_DIR not in sys.path:
     sys.path.append(REVIT_MCP_DIR)
 
 import formwork_params as fw_params
+import rebar_spec as rs
+import rebar_columns as rc
 import rebar_foundation as rf
 import rebar_views as rv
 import utils as fw_utils
 
 reload(fw_utils)
 reload(fw_params)
+reload(rs)
+reload(rc)
 reload(rf)
 reload(rv)
 
@@ -40,10 +44,14 @@ from System.Windows.Media.Media3D import (AmbientLight, DiffuseMaterial, Directi
                                           MeshGeometry3D, Model3DGroup, Point3D, Vector3D)
 from System.Windows.Media import Colors
 from System.Windows.Shapes import Rectangle
+from System.Collections.Generic import List
+from Autodesk.Revit.DB.Structure import Rebar, RebarHookOrientation, RebarStyle
 
 doc = revit.doc
 FOUNDATION_BIC = DB.BuiltInCategory.OST_StructuralFoundation
 COVERS_PARAM = "EA_Cim_Recubrimientos"  # JSON {face number: cm} on the type
+STEEL_PARAM = "EA_Cim_Acero"  # JSON meshes + sketched bars on the type (rf.default_steel)
+BAR_KEYS = [k for k in rs.bar_diameter_keys() if 6 <= rs.BAR_DIAMETERS_MM[k] <= 36]
 PALETTE = [(231, 76, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15), (155, 89, 182),
            (230, 126, 34), (26, 188, 156), (233, 30, 99), (121, 85, 72), (0, 150, 136),
            (63, 81, 181), (205, 220, 57)]
@@ -67,6 +75,19 @@ def read_covers(element_type):
     return dict((int(k), float(v)) for k, v in data.items())
 
 
+def read_steel(element_type):
+    p = element_type.LookupParameter(STEEL_PARAM)
+    steel = rf.default_steel()
+    try:
+        saved = json.loads(p.AsString() or u"{}") if p is not None else {}
+    except ValueError:
+        saved = {}
+    for k in (rf.BOTTOM, rf.TOP):
+        steel[k].update(saved.get(k) or {})
+    steel["sketch"] = saved.get("sketch") or []
+    return steel
+
+
 def default_cover(face):
     """E.060: 7.5 cm against the ground; the top face 5 cm."""
     return 5.0 if face.normal[2] > 0.9 else rf.DEFAULT_COVER_CM
@@ -86,6 +107,7 @@ class State(object):
         self.picked_ids = []
         self.active = None
         self.covers = {}  # element id -> {face: cm} being edited
+        self.steel = {}  # element id -> steel settings being edited
 
 
 class CimentacionWindow(forms.WPFWindow):
@@ -97,6 +119,15 @@ class CimentacionWindow(forms.WPFWindow):
         self.highlight = None
         self.scene = rv.Scene3D(self.view3d)
         self._cache = {}
+        self._frames = {}
+        self.draft = []  # sketch points (u, z) being drawn
+        self.draft_view = None
+        self.cursor = None
+        self._filling = True
+        for combo in (self.cbo_bot_dx, self.cbo_bot_dy, self.cbo_top_dx, self.cbo_top_dy, self.cbo_sketch_d):
+            combo.ItemsSource = BAR_KEYS
+        self.cbo_sketch_d.SelectedItem = u'1/2"'
+        self._filling = False
         for i in state.picked_ids:
             e = doc.GetElement(DB.ElementId(i))
             item = ListBoxItem()
@@ -126,6 +157,9 @@ class CimentacionWindow(forms.WPFWindow):
         if item.Tag not in self._cache:
             self._cache[item.Tag] = rf.Foundation(element)
         self.foundation = self._cache[item.Tag]
+        if item.Tag not in self.state.steel:
+            self.state.steel[item.Tag] = read_steel(doc.GetElement(element.GetTypeId()))
+        self._fill_steel()
         if item.Tag not in self.state.covers:
             saved = read_covers(doc.GetElement(element.GetTypeId()))
             self.state.covers[item.Tag] = dict(
@@ -168,6 +202,128 @@ class CimentacionWindow(forms.WPFWindow):
             label.VerticalAlignment = VerticalAlignment.Center
             row.Children.Add(label)
             panel.Children.Add(row)
+
+    # -- steel form ------------------------------------------------------
+    def _mesh_controls(self, tag):
+        return {"on": getattr(self, "chk_" + tag), "dx": getattr(self, "cbo_{}_dx".format(tag)),
+                "dy": getattr(self, "cbo_{}_dy".format(tag)), "sx": getattr(self, "txt_{}_sx".format(tag)),
+                "sy": getattr(self, "txt_{}_sy".format(tag)), "hook": getattr(self, "txt_{}_hook".format(tag))}
+
+    def _fill_steel(self):
+        self._filling = True
+        steel = self.state.steel[self.state.active]
+        for tag, layer in (("bot", rf.BOTTOM), ("top", rf.TOP)):
+            c, m = self._mesh_controls(tag), steel[layer]
+            c["on"].IsChecked = bool(m.get("on"))
+            c["dx"].SelectedItem = m.get("dx")
+            c["dy"].SelectedItem = m.get("dy")
+            c["sx"].Text = u"{:g}".format(float(m.get("sx") or 0.2))
+            c["sy"].Text = u"{:g}".format(float(m.get("sy") or 0.2))
+            c["hook"].Text = u"{:g}".format(float(m.get("hook") or 0.0))
+        self.txt_sketch_count.Text = u"{} barra(s) dibujada(s)".format(len(steel["sketch"]))
+        self._filling = False
+
+    @staticmethod
+    def _num(text, default):
+        try:
+            return float((text or u"").replace(u",", u"."))
+        except ValueError:
+            return default
+
+    def steel_changed(self, sender, args):
+        if self._filling or self.state.active not in self.state.steel:
+            return
+        steel = self.state.steel[self.state.active]
+        for tag, layer in (("bot", rf.BOTTOM), ("top", rf.TOP)):
+            c, m = self._mesh_controls(tag), steel[layer]
+            m["on"] = bool(c["on"].IsChecked)
+            m["dx"] = c["dx"].SelectedItem or m["dx"]
+            m["dy"] = c["dy"].SelectedItem or m["dy"]
+            m["sx"] = max(0.05, self._num(c["sx"].Text, m["sx"]))
+            m["sy"] = max(0.05, self._num(c["sy"].Text, m["sy"]))
+            m["hook"] = max(0.0, self._num(c["hook"].Text, m["hook"]))
+        self._draw_elevations()
+
+    # -- sketch ----------------------------------------------------------
+    def sketch_toggle(self, sender, args):
+        self.draft, self.draft_view = [], None
+        self._draw_elevations()
+
+    def _to_model(self, view, canvas, args):
+        frame = self._frames.get(view)
+        if frame is None:
+            return None
+        pt = args.GetPosition(canvas)
+        scale, ox, oy = frame
+        p = ((pt.X - ox) / scale, (oy - pt.Y) / scale)
+        # snapped to the cover line (or a corner of it), else to 1 cm
+        for outer, inner in self._center_outlines(view):
+            q = rf.snap_to_outline(p, inner, 12.0 / scale)
+            if q is not p:
+                return q
+        return (round(p[0], 2), round(p[1], 2))
+
+    def _sketch_click(self, view, canvas, args):
+        if not self.btn_sketch.IsChecked:
+            return
+        p = self._to_model(view, canvas, args)
+        if p is None:
+            return
+        if self.draft_view not in (None, view):
+            self.draft = []
+        self.draft_view = view
+        self.draft.append(p)
+        self._draw_elevations()
+
+    def _sketch_finish(self, view):
+        if not self.btn_sketch.IsChecked or len(self.draft) < 2:
+            self.draft = []
+            self._draw_elevations()
+            return
+        steel = self.state.steel[self.state.active]
+        steel["sketch"].append({"view": view, "pts": [list(p) for p in self.draft],
+                                "d": self.cbo_sketch_d.SelectedItem or u'1/2"',
+                                "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2))})
+        self.draft, self.draft_view = [], None
+        self.txt_sketch_count.Text = u"{} barra(s) dibujada(s)".format(len(steel["sketch"]))
+        self._draw_elevations()
+
+    def sketch_undo(self, sender, args):
+        steel = self.state.steel.get(self.state.active)
+        if steel and steel["sketch"]:
+            steel["sketch"].pop()
+            self.txt_sketch_count.Text = u"{} barra(s) dibujada(s)".format(len(steel["sketch"]))
+            self._draw_elevations()
+
+    def front_left(self, sender, args):
+        self._sketch_click(rf.FRONT, self.canvas_front, args)
+
+    def side_left(self, sender, args):
+        self._sketch_click(rf.SIDE, self.canvas_side, args)
+
+    def front_right(self, sender, args):
+        self._sketch_finish(rf.FRONT)
+
+    def side_right(self, sender, args):
+        self._sketch_finish(rf.SIDE)
+
+    def front_move(self, sender, args):
+        self._move(rf.FRONT, self.canvas_front, args)
+
+    def side_move(self, sender, args):
+        self._move(rf.SIDE, self.canvas_side, args)
+
+    def _move(self, view, canvas, args):
+        if self.btn_sketch.IsChecked and self.draft and self.draft_view == view:
+            self.cursor = self._to_model(view, canvas, args)
+            self._draw_elevation(canvas, view)
+
+    def window_key(self, sender, args):
+        from System.Windows.Input import Key
+        if args.Key == Key.Escape and self.draft:
+            self.draft, self.draft_view = [], None
+            self._draw_elevations()
+            args.Handled = True
 
     def cover_changed(self, sender, args):
         try:
@@ -220,18 +376,92 @@ class CimentacionWindow(forms.WPFWindow):
         for canvas, view in ((self.canvas_front, rf.FRONT), (self.canvas_side, rf.SIDE)):
             self._draw_elevation(canvas, view)
 
+    def _center(self, view):
+        x0, x1, y0, y1, _, _ = self.foundation.extent
+        return (y0 + y1) / 2.0 if view == rf.FRONT else (x0 + x1) / 2.0
+
+    def _section(self, view):
+        key = (self.state.active, view)
+        if key not in self._cache:
+            try:
+                self._cache[key] = self.foundation.section(view, self._center(view))
+            except Exception:
+                self._cache[key] = []
+        return self._cache[key]
+
+    def _center_outlines(self, view):
+        covers = self.state.covers.get(self.state.active, {})
+        return [(pts, rf.inner_outline(pts, [covers.get(t, rf.DEFAULT_COVER_CM) / 100.0 if t else 0.0
+                                             for t in tags])) for pts, tags in self._section(view)]
+
+    @staticmethod
+    def _dot(canvas, frame, u, z, radius, brush):
+        from System.Windows.Shapes import Ellipse
+        from System.Windows.Controls import Canvas
+        e = Ellipse()
+        e.Width = e.Height = 2 * radius
+        e.Fill = brush
+        e.IsHitTestVisible = False
+        px, py = rv._px(frame, u, z)
+        Canvas.SetLeft(e, px - radius)
+        Canvas.SetTop(e, py - radius)
+        canvas.Children.Add(e)
+
+    def _draw_bars(self, canvas, frame, view):
+        """The bars in this cut: the ones lying in it as lines, the other
+        direction's as dots, the sketched ones, the sketch being drawn."""
+        steel = self.state.steel.get(self.state.active)
+        if not steel:
+            return
+        mm = rs.BAR_DIAMETERS_MM
+        planner = rf.BarPlanner(self.foundation, self.state.covers.get(self.state.active, {}), mm)
+        planner._sections[(view, round(self._center(view), 4))] = self._center_outlines(view)
+        blue = SolidColorBrush(Color.FromRgb(31, 78, 160))
+        dark = SolidColorBrush(Color.FromRgb(40, 40, 40))
+        other = rf.SIDE if view == rf.FRONT else rf.FRONT
+        for layer in (rf.BOTTOM, rf.TOP):
+            m = steel[layer]
+            if not m.get("on"):
+                continue
+            d_in, d_out = (m["dx"], m["dy"]) if view == rf.FRONT else (m["dy"], m["dx"])
+            level = 0 if view == rf.FRONT else 1
+            d_first = mm[m["dx"]] / 1000.0
+            for outer, inner in self._center_outlines(view):
+                for path in rf.mesh_layer_paths(inner, layer, mm[d_in] / 1000.0, float(m.get("hook") or 0.0)):
+                    if level:
+                        shift = d_first if layer == rf.BOTTOM else -d_first
+                        path = [(u, z + shift) for u, z in path]
+                    for a, b in zip(path, path[1:]):
+                        rv._line(canvas, frame, a, b, dark, 2.5)
+                # the other direction cut square: dots on their level
+                d = mm[d_out] / 1000.0
+                zs = [q[1] for q in inner]
+                lvl = (1 - level)
+                z = (min(zs) + d / 2.0 + lvl * d_first) if layer == rf.BOTTOM else (max(zs) - d / 2.0 - lvl * d_first)
+                lo, hi = planner._range(other, d)
+                for pos in rf.bar_positions(lo, hi, float(m["sy"] if view == rf.FRONT else m["sx"])):
+                    u = -pos if view == rf.SIDE else pos
+                    if rf.point_inside(inner, (u, z)):
+                        self._dot(canvas, frame, u, z, max(2.5, d * frame[0] / 2.0), dark)
+        for item in steel.get("sketch", []):
+            if item["view"] != view:
+                continue
+            pts = [tuple(q) for q in item["pts"]]
+            for a, b in zip(pts, pts[1:]):
+                rv._line(canvas, frame, a, b, blue, 2.5)
+            rv._text(canvas, frame, pts[0][0], pts[0][1] + 0.04, u"\u00d8{} @{:g}".format(item["d"], float(item["s"])),
+                     brush=blue, size=10)
+        if self.draft and self.draft_view == view:
+            pts = list(self.draft) + ([self.cursor] if self.cursor else [])
+            for a, b in zip(pts, pts[1:]):
+                rv._line(canvas, frame, a, b, SolidColorBrush(Color.FromRgb(230, 80, 30)), 2, dash=True)
+
     def _draw_elevation(self, canvas, view):
         canvas.Children.Clear()
         f = self.foundation
         if f is None or canvas.ActualWidth < 10:
             return
-        key = (self.state.active, view)
-        if key not in self._cache:
-            try:
-                self._cache[key] = f.section(view)
-            except Exception as e:
-                self._cache[key] = []
-        outlines = self._cache[key]
+        outlines = self._section(view)
         if not outlines:
             rv._text(canvas, rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, -1, -1, 1, 1),
                      0, 0, u"El corte por el centro no pasa por el elemento", size=11)
@@ -240,6 +470,7 @@ class CimentacionWindow(forms.WPFWindow):
         zs = [p[1] for pts, _ in outlines for p in pts]
         frame = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight,
                              min(us) - 0.25, min(zs) - 0.25, max(us) + 0.25, max(zs) + 0.25)
+        self._frames[view] = frame
         covers = self.state.covers.get(self.state.active, {})
         gray = SolidColorBrush(Color.FromRgb(225, 228, 232))
         for pts, tags in outlines:
@@ -259,6 +490,7 @@ class CimentacionWindow(forms.WPFWindow):
             for i in range(len(inner)):
                 rv._line(canvas, frame, inner[i], inner[(i + 1) % len(inner)],
                          SolidColorBrush(Color.FromRgb(90, 90, 90)), 1, dash=True)
+        self._draw_bars(canvas, frame, view)
 
     # 3D mouse
     def view3d_wheel(self, sender, args):
@@ -339,16 +571,49 @@ while True:
     break
 
 if window.action == "run":
-    t = DB.Transaction(doc, "Acero cimentacion - recubrimientos")
+    bar_types = rc.BarTypes(doc)
+    failed = []
+    t = DB.Transaction(doc, "Acero cimentacion")
     t.Start()
     try:
-        fw_params.ensure_parameters(doc, "Acero", [(COVERS_PARAM, True, [FOUNDATION_BIC], False)])
-        for element_id, covers in state.covers.items():
-            element_type = doc.GetElement(doc.GetElement(DB.ElementId(element_id)).GetTypeId())
-            p = element_type.LookupParameter(COVERS_PARAM)
-            if p is not None and not p.IsReadOnly:
-                p.Set(json.dumps(dict((str(k), v) for k, v in covers.items())))
+        rc.ensure_parameters(doc)
+        fw_params.ensure_parameters(doc, "Acero", [(COVERS_PARAM, True, [FOUNDATION_BIC], False),
+                                                    (STEEL_PARAM, True, [FOUNDATION_BIC], False)])
+        for element_id in state.picked_ids:
+            element = doc.GetElement(DB.ElementId(element_id))
+            element_type = doc.GetElement(element.GetTypeId())
+            covers = state.covers.get(element_id) or read_covers(element_type)
+            steel = state.steel.get(element_id) or read_steel(element_type)
+            for name, value in ((COVERS_PARAM, json.dumps(dict((str(k), v) for k, v in covers.items()))),
+                                (STEEL_PARAM, json.dumps(steel, ensure_ascii=False))):
+                p = element_type.LookupParameter(name)
+                if p is not None and not p.IsReadOnly:
+                    p.Set(value)
+            try:
+                foundation = rf.Foundation(element)
+                rc.delete_generated(doc, element)
+                planner = rf.BarPlanner(foundation, covers, rs.BAR_DIAMETERS_MM)
+                for view, key, path, first, count, spacing in rf.bar_sets(planner.all_bars(steel)):
+                    if view == rf.FRONT:
+                        pts = [foundation.world(u, first, z) for u, z in path]
+                        normal = foundation.uy
+                    else:
+                        pts = [foundation.world(first, -u, z) for u, z in path]
+                        normal = foundation.ux.Negate()
+                    curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+                    rebar = Rebar.CreateFromCurves(
+                        doc, RebarStyle.Standard, bar_types.pick(key, None), None, None, element, normal, curves,
+                        RebarHookOrientation.Right, RebarHookOrientation.Right, True, True)
+                    if count > 1:
+                        # sets run along the normal; the side ones go towards +x
+                        rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(
+                            count, spacing / rf.FT, view == rf.FRONT, True, True)
+                    rc._tag(rebar, element)
+            except Exception as e:
+                failed.append(u"{} (id {}): {}".format(element.Name, element_id, e))
         t.Commit()
     except Exception:
         t.RollBack()
         raise
+    if failed:
+        forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed), title="Acero")

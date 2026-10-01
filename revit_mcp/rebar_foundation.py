@@ -214,3 +214,174 @@ def inner_outline(points, covers):
         t = ((q[0] - p[0]) * e[1] - (q[1] - p[1]) * e[0]) / det
         result.append((p[0] + d[0] * t, p[1] + d[1] * t))
     return result
+
+
+# --- Bars (pure: local meters) ------------------------------------------------
+BOTTOM = u"inf"
+TOP = u"sup"
+
+
+def polygon_spans(points, z):
+    """[(u0, u1)] where the horizontal line at height z runs inside the
+    polygon `points` [(u, z)] (even-odd)."""
+    xs = []
+    n = len(points)
+    for i in range(n):
+        (a, b), (c, d) = points[i], points[(i + 1) % n]
+        if (b <= z < d) or (d <= z < b):
+            xs.append(a + (z - b) * (c - a) / (d - b))
+    xs.sort()
+    return [(xs[k], xs[k + 1]) for k in range(0, len(xs) - 1, 2)]
+
+
+def mesh_layer_paths(inner, layer, diameter, hook, level=0):
+    """Bar paths [(u, z)] of one mesh layer in a section, inside the
+    `inner` outline (covers already applied): along its bottom (BOTTOM,
+    hooks up) or top (TOP, hooks down), `level` bar diameters further in
+    (the second direction of the mesh lies on the first), ends a half
+    diameter inside, hooks of `hook` m kept inside the outline."""
+    zs = [p[1] for p in inner]
+    r = diameter / 2.0
+    if layer == BOTTOM:
+        z, sign = min(zs) + r + level * diameter, 1.0
+    else:
+        z, sign = max(zs) - r - level * diameter, -1.0
+    paths = []
+    for u0, u1 in polygon_spans(inner, z + sign * 1e-4):
+        a, b = u0 + r, u1 - r
+        if b - a < 0.05:
+            continue
+        h = min(hook, max(zs) - min(zs) - diameter) if hook > 0 else 0.0
+        if h > 0.05:
+            paths.append([(a, z + sign * h), (a, z), (b, z), (b, z + sign * h)])
+        else:
+            paths.append([(a, z), (b, z)])
+    return paths
+
+
+def bar_positions(lo, hi, spacing):
+    """Positions from lo to hi at `spacing`, the leftover split at both
+    ends (bars centered in the element)."""
+    if hi - lo < 1e-6 or spacing <= 0:
+        return [(lo + hi) / 2.0]
+    n = int((hi - lo) / spacing + 1e-6) + 1
+    start = lo + (hi - lo - (n - 1) * spacing) / 2.0
+    return [start + k * spacing for k in range(n)]
+
+
+def snap_to_outline(p, outline, tol):
+    """The point of the outline nearest to p when within tol (m), else p."""
+    best = None
+    n = len(outline)
+    for i in range(n):
+        (ax, az), (bx, bz) = outline[i], outline[(i + 1) % n]
+        dx, dz = bx - ax, bz - az
+        length2 = dx * dx + dz * dz or 1e-12
+        t = max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - az) * dz) / length2))
+        q = (ax + dx * t, az + dz * t)
+        d = math.hypot(q[0] - p[0], q[1] - p[1])
+        if d < tol and (best is None or d < best[0]):
+            best = (d, q)
+    return best[1] if best else p
+
+
+def point_inside(points, p):
+    return any(u0 <= p[0] <= u1 for u0, u1 in polygon_spans(points, p[1]))
+
+
+# --- Bars of a foundation (Revit geometry) -------------------------------------
+def default_steel():
+    """The steel settings of a foundation type ("EA_Cim_Acero")."""
+    mesh = {"on": True, "dx": u'1/2"', "sx": 0.20, "dy": u'1/2"', "sy": 0.20, "hook": 0.25}
+    top = dict(mesh, on=False)
+    return {BOTTOM: mesh, TOP: top, "sketch": []}
+
+
+class BarPlanner(object):
+    """Bars of one foundation from its covers ({face: cm}) and steel
+    settings: [(view, position, path [(u, z)], diameter key)]; a FRONT
+    bar lies in the plane y = position (u = x), a SIDE one in x = position
+    (u = -y)."""
+
+    def __init__(self, foundation, covers, diameters_mm):
+        self.f = foundation
+        self.covers = covers
+        self.mm = diameters_mm
+        self._sections = {}
+
+    def outlines(self, view, pos):
+        key = (view, round(pos, 4))
+        if key not in self._sections:
+            found = []
+            for pts, tags in self.f.section(view, pos):
+                c = [self.covers.get(t, DEFAULT_COVER_CM) / 100.0 if t else 0.0 for t in tags]
+                found.append((pts, inner_outline(pts, c)))
+            self._sections[key] = found
+        return self._sections[key]
+
+    def _range(self, view, d):
+        x0, x1, y0, y1, _, _ = self.f.extent
+        side = max([v for k, v in self.covers.items()] + [DEFAULT_COVER_CM]) / 100.0
+        lo, hi = (y0, y1) if view == FRONT else (x0, x1)
+        return lo + side + d / 2.0, hi - side - d / 2.0
+
+    def mesh(self, layer, settings):
+        bars = []
+        if not settings.get("on"):
+            return bars
+        for view, dkey, skey, level in ((FRONT, "dx", "sx", 0), (SIDE, "dy", "sy", 1)):
+            key = settings[dkey]
+            d = self.mm[key] / 1000.0
+            lo, hi = self._range(view, d)
+            # the second direction lies on the first: one first-direction bar further in
+            level_d = self.mm[settings["dx"]] / 1000.0 if level else 0.0
+            for pos in bar_positions(lo, hi, float(settings[skey])):
+                for _, inner in self.outlines(view, pos):
+                    zs = [p[1] for p in inner]
+                    for path in mesh_layer_paths(inner, layer, d, float(settings.get("hook") or 0.0),
+                                                 level=0):
+                        if level:
+                            shift = level_d if layer == BOTTOM else -level_d
+                            path = [(u, z + shift) for u, z in path]
+                        bars.append((view, pos, path, key))
+        return bars
+
+    def sketch(self, item):
+        view, key = item["view"], item["d"]
+        d = self.mm[key] / 1000.0
+        pts = [tuple(p) for p in item["pts"]]
+        lo, hi = self._range(view, d)
+        bars = []
+        for pos in bar_positions(lo, hi, float(item["s"])):
+            for outer, inner in self.outlines(view, pos):
+                if all(point_inside(outer, p) for p in pts):
+                    bars.append((view, pos, pts, key))
+                    break
+        return bars
+
+    def all_bars(self, steel):
+        bars = self.mesh(BOTTOM, steel.get(BOTTOM, {})) + self.mesh(TOP, steel.get(TOP, {}))
+        for item in steel.get("sketch", []):
+            bars += self.sketch(item)
+        return bars
+
+
+def bar_sets(bars):
+    """Bars grouped into Revit sets: same view, diameter and path, at
+    consecutive evenly spaced positions -> [(view, key, path, first, count, spacing)]."""
+    groups = {}
+    for view, pos, path, key in bars:
+        sig = (view, key, tuple((round(u, 3), round(z, 3)) for u, z in path))
+        groups.setdefault(sig, []).append(pos)
+    sets = []
+    for (view, key, path), positions in groups.items():
+        positions.sort()
+        run = [positions[0]]
+        for p in positions[1:]:
+            if len(run) > 1 and abs((p - run[-1]) - (run[1] - run[0])) > 1e-3:
+                sets.append((view, key, list(path), run[0], len(run), run[1] - run[0]))
+                run = [p]
+            else:
+                run.append(p)
+        sets.append((view, key, list(path), run[0], len(run), (run[1] - run[0]) if len(run) > 1 else 0.0))
+    return sets
