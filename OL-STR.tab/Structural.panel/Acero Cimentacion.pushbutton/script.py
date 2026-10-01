@@ -324,8 +324,19 @@ class CimentacionWindow(forms.WPFWindow):
 
     # -- sketch ----------------------------------------------------------
     def sketch_toggle(self, sender, args):
+        if self.btn_sketch.IsChecked:
+            self.btn_rect.IsChecked = False
         self.draft, self.draft_view = [], None
         self._draw_elevations()
+
+    def rect_toggle(self, sender, args):
+        if self.btn_rect.IsChecked:
+            self.btn_sketch.IsChecked = False
+        self.draft, self.draft_view = [], None
+        self._draw_elevations()
+
+    def _drawing(self):
+        return bool(self.btn_sketch.IsChecked or self.btn_rect.IsChecked)
 
     def _to_model(self, view, canvas, args):
         """The clicked point in the section: snapped to the cover line (or
@@ -340,8 +351,22 @@ class CimentacionWindow(forms.WPFWindow):
         outlines = self._center_outlines(view)
         if not outlines:
             return None
+        tol = 12.0 / scale
+        targets = [(u, z) for u, z, _ in getattr(self, "_dots", {}).get(view, [])]
         for outer, inner in outlines:
-            q = rf.snap_to_outline(p, inner, 12.0 / scale)
+            n = len(inner)
+            targets += list(inner)  # corners
+            targets += [((inner[i][0] + inner[(i + 1) % n][0]) / 2.0, (inner[i][1] + inner[(i + 1) % n][1]) / 2.0)
+                        for i in range(n)]  # middle of each side
+        best = None
+        for q in targets:
+            d = ((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2) ** 0.5
+            if d < tol and (best is None or d < best[0]):
+                best = (d, q)
+        if best:
+            return best[1]
+        for outer, inner in outlines:
+            q = rf.snap_to_outline(p, inner, tol)
             if q is not p:
                 return q
         p = (round(p[0], 2), round(p[1], 2))
@@ -354,7 +379,7 @@ class CimentacionWindow(forms.WPFWindow):
         return best[1]
 
     def _sketch_click(self, view, canvas, args):
-        if not self.btn_sketch.IsChecked or (view == rf.SIDE and self.rb_plan.IsChecked):
+        if not self._drawing() or (view == rf.SIDE and self.rb_plan.IsChecked):
             return
         p = self._to_model(view, canvas, args)
         if p is None:
@@ -362,6 +387,20 @@ class CimentacionWindow(forms.WPFWindow):
         if self.draft_view not in (None, view):
             self.draft = []
         self.draft_view = view
+        if self.btn_rect.IsChecked:
+            # two opposite corners -> a closed rectangular stirrup
+            if not self.draft:
+                self.draft = [p]
+                self._draw_elevations()
+                return
+            a = self.draft[0]
+            u0, u1 = min(a[0], p[0]), max(a[0], p[0])
+            z0, z1 = min(a[1], p[1]), max(a[1], p[1])
+            if u1 - u0 < 0.03 or z1 - z0 < 0.03:
+                return
+            self.draft = [(u0, z0), (u1, z0), (u1, z1), (u0, z1)]
+            self._sketch_finish(view, closed=True)
+            return
         # a click on the first point closes the stirrup
         scale = self._frames[view][0]
         if len(self.draft) >= 3 and ((p[0] - self.draft[0][0]) ** 2 + (p[1] - self.draft[0][1]) ** 2) ** 0.5 \
@@ -372,12 +411,27 @@ class CimentacionWindow(forms.WPFWindow):
         self._draw_elevations()
 
     def _sketch_finish(self, view, closed=False):
-        if not self.btn_sketch.IsChecked or len(self.draft) < 2:
+        if not self._drawing() or len(self.draft) < 2:
             self.draft = []
             self._draw_elevations()
             return
         steel = self.state.steel[self.state.active]
-        steel["sketch"].append({"view": view, "pts": [list(p) for p in self.draft],
+        pts = list(self.draft)
+        if closed:
+            # a stirrup wraps the bars its corners are on (like in Acero
+            # Columna): its centerline goes around them, half its own
+            # diameter further out
+            key = self.cbo_sketch_d.SelectedItem or u'1/2"'
+            bars = [(u, z, k) for u, z, k in getattr(self, "_dots", {}).get(view, [])]
+            try:
+                if rs.wrap_radius(pts, bars) > 0:
+                    pts = rs.stirrup_centerline(pts, bars, key)
+                else:
+                    # corners on the cover line: the stirrup inside it
+                    pts = rs.offset_polygon_outward(pts, -rs.BAR_DIAMETERS_MM[key] / 2000.0)
+            except Exception:
+                pass
+        steel["sketch"].append({"view": view, "pts": [list(p) for p in pts],
                                 "d": self.cbo_sketch_d.SelectedItem or u'1/2"',
                                 "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2)),
                                 "m": self.cbo_sketch_m.SelectedItem or rf.SPACING,
@@ -541,7 +595,7 @@ class CimentacionWindow(forms.WPFWindow):
         if self.navs[view].pan(args.GetPosition(canvas)):
             self._draw_elevation(canvas, view)
             return
-        if self.btn_sketch.IsChecked and self.draft and self.draft_view == view:
+        if self._drawing() and self.draft and self.draft_view == view:
             self.cursor = self._to_model(view, canvas, args)
             self._draw_elevation(canvas, view)
 
@@ -795,6 +849,8 @@ class CimentacionWindow(forms.WPFWindow):
         steel = self.state.steel.get(self.state.active)
         if not steel:
             return
+        self._dots = getattr(self, "_dots", {})
+        self._dots[view] = []
         mm = rs.BAR_DIAMETERS_MM
         planner = rf.BarPlanner(self.foundation, self.state.covers.get(self.state.active, {}), mm)
         planner._sections[(view, round(self._center(view), 4))] = self._center_outlines(view)
@@ -828,6 +884,7 @@ class CimentacionWindow(forms.WPFWindow):
                     u = -pos if view == rf.SIDE else pos
                     if rf.point_inside(inner, (u, z)):
                         self._dot(canvas, frame, u, z, max(2.5, d * frame[0] / 2.0), dark)
+                        self._dots[view].append((u, z, d_out))
         on = steel.get("sketch_on", True)
         for i, item in enumerate(steel.get("sketch", [])):
             if item["view"] != view:
@@ -847,6 +904,9 @@ class CimentacionWindow(forms.WPFWindow):
                      brush=blue, size=10)
         if self.draft and self.draft_view == view:
             pts = list(self.draft) + ([self.cursor] if self.cursor else [])
+            if self.btn_rect.IsChecked and len(pts) == 2:
+                (a0, b0), (a1, b1) = pts
+                pts = [(a0, b0), (a1, b0), (a1, b1), (a0, b1), (a0, b0)]
             for a, b in zip(pts, pts[1:]):
                 rv._line(canvas, frame, a, b, SolidColorBrush(Color.FromRgb(230, 80, 30)), 2, dash=True)
 
@@ -1028,6 +1088,48 @@ while True:
         continue
     break
 
+def _hook_tips_inside(rebar):
+    """True when both hook tips of a closed stirrup lie inside it."""
+    from Autodesk.Revit.DB.Structure import MultiplanarOption
+    body = list(rebar.GetCenterlineCurves(True, True, True, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
+    full = list(rebar.GetCenterlineCurves(False, False, False, MultiplanarOption.IncludeAllMultiplanarCurves, 0))
+    pts = [c.GetEndPoint(0) for c in body]
+    if len(pts) < 3:
+        return True
+    e1 = (pts[1] - pts[0]).Normalize()
+    e2 = e1.CrossProduct(pts[2] - pts[0]).Normalize().CrossProduct(e1)
+    flat = lambda q: ((q - pts[0]).DotProduct(e1), (q - pts[0]).DotProduct(e2))
+    poly = [flat(q) for q in pts]
+    return all(rf.point_inside(poly, flat(t)) for t in (full[0].GetEndPoint(0), full[-1].GetEndPoint(1)))
+
+
+def create_closed_stirrup(pts, bar_type, hook, host, normal):
+    """A sketched closed stirrup with its hooks turned inward: made one way
+    round and, if Revit turns its hooks out, remade the other way. The
+    hooks go at its widest corner (a sharp corner leaves no room for a
+    135-degree hook, as on site)."""
+    import math
+
+    def angle(k):
+        a, b, c = pts[k - 1], pts[k], pts[(k + 1) % len(pts)]
+        u, v = a - b, c - b
+        return math.acos(max(-1.0, min(1.0, u.Normalize().DotProduct(v.Normalize()))))
+    start = max(range(len(pts)), key=angle)
+    pts = pts[start:] + pts[:start]
+    for points in (pts, [pts[0]] + list(reversed(pts[1:]))):
+        curves = List[DB.Curve]([DB.Line.CreateBound(points[k], points[(k + 1) % len(points)])
+                                 for k in range(len(points))])
+        rebar = Rebar.CreateFromCurves(
+            doc, RebarStyle.StirrupTie, bar_type, hook, hook, host, normal,
+            curves, RebarHookOrientation.Left, RebarHookOrientation.Left, True, True)
+        if _hook_tips_inside(rebar):
+            return rebar
+        doc.Delete(rebar.Id)
+    curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[(k + 1) % len(pts)]) for k in range(len(pts))])
+    return Rebar.CreateFromCurves(doc, RebarStyle.StirrupTie, bar_type, hook, hook, host, normal,
+                                  curves, RebarHookOrientation.Right, RebarHookOrientation.Right, True, True)
+
+
 if window.action == "run":
     bar_types = rc.BarTypes(doc)
     hooks = rc.StirrupHooks(doc)
@@ -1065,13 +1167,15 @@ if window.action == "run":
                         pts = [foundation.world(first, -u, z) for u, z in path]
                         normal = foundation.ux.Negate()
                     if closed:
-                        # a sketched closed stirrup, with the stirrup hooks
-                        curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[(k + 1) % len(pts)])
-                                                 for k in range(len(pts))])
-                        hook = hooks.get(key)
-                        rebar = Rebar.CreateFromCurves(
-                            doc, RebarStyle.StirrupTie, bar_type, hook, hook, element, normal,
-                            curves, RebarHookOrientation.Left, RebarHookOrientation.Left, True, True)
+                        # a sketched closed stirrup, with the stirrup hooks:
+                        # counterclockwise around its normal, so the Left
+                        # hooks turn inward (as in Acero Columna)
+                        area = DB.XYZ(0, 0, 0)
+                        for k in range(len(pts)):
+                            area = area + pts[k].CrossProduct(pts[(k + 1) % len(pts)])
+                        if area.DotProduct(normal) < 0:
+                            pts = list(reversed(pts))
+                        rebar = create_closed_stirrup(pts, bar_type, hooks.get(key), element, normal)
                     else:
                         curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
                         rebar = Rebar.CreateFromCurves(
