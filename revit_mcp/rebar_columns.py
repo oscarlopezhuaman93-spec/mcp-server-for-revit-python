@@ -103,7 +103,8 @@ def element_name(element):
 
 def ensure_parameters(doc):
     """Create/bind the rebar parameters. Inside an active Transaction."""
-    columns = [DB.BuiltInCategory.OST_StructuralColumns]
+    # columns and walls ("Acero Muro") share the same type settings
+    columns = [DB.BuiltInCategory.OST_StructuralColumns, DB.BuiltInCategory.OST_Walls]
     specs = [(name, True, columns, False) for name in TYPE_PARAMS]
     specs.append((WEIGHT_PARAM, False, columns, True))
     specs.append((ORIGIN_PARAM, True, [DB.BuiltInCategory.OST_Rebar], True))
@@ -570,6 +571,9 @@ class Section(object):
     Lengths on the object are in feet unless named `_m`."""
 
     def __init__(self, column):
+        if isinstance(column, DB.Wall):
+            self._wall(column)
+            return
         t = column.GetTransform()
         if abs(t.BasisZ.Z) < 0.999:
             raise spec.SpecError(u"columna inclinada (no soportada)")
@@ -614,6 +618,34 @@ class Section(object):
         self.is_rectangle = len(polygon_ft) == 4 and abs(area - self.b * self.h) < 1e-4 * self.b * self.h + 1e-6
         self.z_bottom = t.OfPoint(DB.XYZ(cx, cy, z_bottom)).Z
         self.z_top = t.OfPoint(DB.XYZ(cx, cy, z_top)).Z
+
+    def _wall(self, wall):
+        """A straight vertical wall as a prism: x along its axis, y across
+        its thickness, the section its length x thickness (openings and
+        joins aside)."""
+        curve = getattr(wall.Location, "Curve", None)
+        if not isinstance(curve, DB.Line):
+            raise spec.SpecError(u"muro curvo o sin eje recto (no soportado)")
+        bb = wall.get_BoundingBox(None)
+        a, b = curve.GetEndPoint(0), curve.GetEndPoint(1)
+        direction = DB.XYZ(b.X - a.X, b.Y - a.Y, 0.0).Normalize()
+        t = DB.Transform.Identity
+        t.Origin = DB.XYZ((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0, 0.0)
+        t.BasisX = direction
+        t.BasisY = DB.XYZ.BasisZ.CrossProduct(direction)
+        t.BasisZ = DB.XYZ.BasisZ
+        length = curve.Length
+        width = wall.Width
+        half_l, half_w = length / 2.0, width / 2.0
+        polygon_ft = [(-half_l, -half_w), (half_l, -half_w), (half_l, half_w), (-half_l, half_w)]
+        self.transform = t
+        self.center = (0.0, 0.0)
+        self.polygon_m = [(x * FT, y * FT) for x, y in polygon_ft]
+        self.b = length
+        self.h = width
+        self.is_rectangle = True
+        self.z_bottom = bb.Min.Z
+        self.z_top = bb.Max.Z
 
     def point_m(self, x_m, y_m, z_world):
         """World point at a local section offset (meters, from the section
@@ -736,12 +768,13 @@ def foundation_below(doc, column, section):
 
 
 def column_above(doc, column, section):
-    """True when another column stands on this one (its bars go on up)."""
+    """True when another element of its category (column on column, wall on
+    wall) stands on this one (its bars go on up)."""
     top = section.point_m(0.0, 0.0, section.z_top + 0.05 / FT)
     outline = DB.Outline(DB.XYZ(top.X - 0.05, top.Y - 0.05, top.Z - 0.02),
                          DB.XYZ(top.X + 0.05, top.Y + 0.05, top.Z + 0.02))
     for element in (DB.FilteredElementCollector(doc)
-                    .OfCategory(DB.BuiltInCategory.OST_StructuralColumns)
+                    .OfCategoryId(column.Category.Id)
                     .WhereElementIsNotElementType()
                     .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
         if element.Id != column.Id:
