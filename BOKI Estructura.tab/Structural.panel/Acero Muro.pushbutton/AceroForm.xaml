@@ -11,7 +11,7 @@
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
             <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
                     FontWeight="Bold" Click="run_click"
-                    ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de los muros seleccionados (si no hay ninguna seleccionada, de todos los muros de los tipos marcados)."/>
+                    ToolTip="Guarda la configuraci&#243;n en cada muro y genera el acero de los muros seleccionados (si no hay ninguna seleccionada, de todos los muros de los tipos marcados)."/>
             <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
                     ToolTip="Carga una configuraci&#243;n guardada (estribos, barras y dibujo de la secci&#243;n)."/>
             <Button DockPanel.Dock="Right" Content="Guardar en archivo..." Width="150" Height="40" Margin="0,0,8,0" Click="file_save_click"
@@ -28,7 +28,7 @@
             <!-- Left: types + configuration -->
             <DockPanel Grid.Column="0" Margin="0,0,10,0">
                 <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
-                           Text="1. Marca los tipos a configurar (o selecciona muros en el modelo)."/>
+                           Text="1. Selecciona los muros a configurar (cada muro guarda su propio armado y dibujo)."/>
                 <Button DockPanel.Dock="Top" x:Name="button_pick" Content="SELECCIONAR MUROS" Height="34"
                         FontWeight="Bold" Click="pick_click"/>
                 <TextBlock DockPanel.Dock="Top" x:Name="txt_picked" Foreground="Gray" HorizontalAlignment="Center"

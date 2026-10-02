@@ -103,10 +103,10 @@ def element_name(element):
 
 def ensure_parameters(doc):
     """Create/bind the rebar parameters. Inside an active Transaction."""
-    # columns and walls ("Acero Muro") share the same type settings
-    columns = [DB.BuiltInCategory.OST_StructuralColumns, DB.BuiltInCategory.OST_Walls]
+    columns = [DB.BuiltInCategory.OST_StructuralColumns]
     specs = [(name, True, columns, False) for name in TYPE_PARAMS]
-    specs.append((WEIGHT_PARAM, False, columns, True))
+    specs.append((WEIGHT_PARAM, False, columns + [DB.BuiltInCategory.OST_Walls], True))
+    specs.append((WALL_PARAM, True, [DB.BuiltInCategory.OST_Walls], True))  # per wall
     specs.append((ORIGIN_PARAM, True, [DB.BuiltInCategory.OST_Rebar], True))
     specs.append((BAR_DIAMETER_PARAM, True, [DB.BuiltInCategory.OST_Rebar], False))
     specs.append((BAR_WEIGHT_PARAM, False, [DB.BuiltInCategory.OST_Rebar], False))
@@ -186,8 +186,19 @@ def default_cover_cm(type_name):
     return DEFAULT_COVER_CM
 
 
+WALL_PARAM = "EA_Muro_Acero"  # a wall's own settings and drawing (JSON of TYPE_PARAMS)
+
+
 def read_type_config(column_type):
-    """{param name: text} of a column type; blanks when unset/unbound."""
+    """{param name: text} of a column type - or of one wall (Acero Muro:
+    each wall keeps its own, see WALL_PARAM); blanks when unset/unbound."""
+    if isinstance(column_type, DB.Wall):
+        p = column_type.LookupParameter(WALL_PARAM)
+        try:
+            data = json.loads(p.AsString() or u"{}") if p is not None else {}
+        except ValueError:
+            data = {}
+        return dict((name, data.get(name) or u"") for name in TYPE_PARAMS)
     config = {}
     for name in TYPE_PARAMS:
         p = column_type.LookupParameter(name)
@@ -196,6 +207,13 @@ def read_type_config(column_type):
 
 
 def write_type_config(column_type, config):
+    if isinstance(column_type, DB.Wall):
+        merged = read_type_config(column_type)
+        merged.update(dict((k, v) for k, v in config.items() if k in TYPE_PARAMS))
+        p = column_type.LookupParameter(WALL_PARAM)
+        if p is not None and not p.IsReadOnly:
+            p.Set(json.dumps(merged, ensure_ascii=False))
+        return
     for name in TYPE_PARAMS:
         if name not in config:
             continue
@@ -620,32 +638,59 @@ class Section(object):
         self.z_top = t.OfPoint(DB.XYZ(cx, cy, z_top)).Z
 
     def _wall(self, wall):
-        """A straight vertical wall as a prism: x along its axis, y across
-        its thickness, the section its length x thickness (openings and
-        joins aside)."""
+        """A vertical wall of any shape in plan (straight, curved, L, ...):
+        its section is the outline of its bottom face (arcs as short
+        segments), x along the wall when it is straight. Openings and
+        changes of thickness with the height are not modeled."""
+        solids = list(_solids(wall.get_Geometry(DB.Options())))
+        if not solids:
+            raise spec.SpecError(u"muro sin geometria")
+        solid = max(solids, key=lambda x: x.Volume)
+        bottom, z_top = None, None
+        for face in solid.Faces:
+            if not isinstance(face, DB.PlanarFace):
+                continue
+            if face.FaceNormal.Z < -0.999 and (bottom is None or face.Area > bottom.Area):
+                bottom = face
+            elif face.FaceNormal.Z > 0.999:
+                z_top = face.Origin.Z if z_top is None else max(z_top, face.Origin.Z)
+        if bottom is None:
+            raise spec.SpecError(u"muro sin cara inferior horizontal (no soportado)")
+        loops = list(bottom.GetEdgesAsCurveLoops())
+        loop = max(loops, key=lambda lp: sum(c.Length for c in lp))  # the outer one
+        world = []
+        for curve in loop:
+            pts = list(curve.Tessellate())
+            for q in pts[:-1]:
+                if not world or q.DistanceTo(world[-1]) > 1e-4:
+                    world.append(q)
         curve = getattr(wall.Location, "Curve", None)
-        if not isinstance(curve, DB.Line):
-            raise spec.SpecError(u"muro curvo o sin eje recto (no soportado)")
+        if isinstance(curve, DB.Line):
+            direction = curve.Direction
+            direction = DB.XYZ(direction.X, direction.Y, 0.0).Normalize()
+        else:
+            direction = DB.XYZ.BasisX
         bb = wall.get_BoundingBox(None)
-        a, b = curve.GetEndPoint(0), curve.GetEndPoint(1)
-        direction = DB.XYZ(b.X - a.X, b.Y - a.Y, 0.0).Normalize()
         t = DB.Transform.Identity
-        t.Origin = DB.XYZ((a.X + b.X) / 2.0, (a.Y + b.Y) / 2.0, 0.0)
+        t.Origin = DB.XYZ((bb.Min.X + bb.Max.X) / 2.0, (bb.Min.Y + bb.Max.Y) / 2.0, 0.0)
         t.BasisX = direction
         t.BasisY = DB.XYZ.BasisZ.CrossProduct(direction)
         t.BasisZ = DB.XYZ.BasisZ
-        length = curve.Length
-        width = wall.Width
-        half_l, half_w = length / 2.0, width / 2.0
-        polygon_ft = [(-half_l, -half_w), (half_l, -half_w), (half_l, half_w), (-half_l, half_w)]
+        inverse = t.Inverse
+        local = [inverse.OfPoint(q) for q in world]
+        xs = [q.X for q in local]
+        ys = [q.Y for q in local]
+        cx, cy = (max(xs) + min(xs)) / 2.0, (max(ys) + min(ys)) / 2.0
+        polygon_ft = [(q.X - cx, q.Y - cy) for q in local]
         self.transform = t
-        self.center = (0.0, 0.0)
+        self.center = (cx, cy)
         self.polygon_m = [(x * FT, y * FT) for x, y in polygon_ft]
-        self.b = length
-        self.h = width
-        self.is_rectangle = True
-        self.z_bottom = bb.Min.Z
-        self.z_top = bb.Max.Z
+        self.b = max(xs) - min(xs)
+        self.h = max(ys) - min(ys)
+        area = abs(spec.polygon_signed_area(polygon_ft))
+        self.is_rectangle = len(polygon_ft) == 4 and abs(area - self.b * self.h) < 1e-4 * self.b * self.h + 1e-6
+        self.z_bottom = bottom.Origin.Z
+        self.z_top = z_top if z_top is not None else bb.Max.Z
 
     def point_m(self, x_m, y_m, z_world):
         """World point at a local section offset (meters, from the section

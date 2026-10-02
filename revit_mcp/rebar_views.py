@@ -542,25 +542,56 @@ def _add_tube(mesh, a, b, radius, sides):
             mesh.TriangleIndices.Add(idx)
 
 
+def _ear_triangles(polygon):
+    """Index triples covering a simple polygon (ear clipping): right for
+    concave outlines too (curved or L-shaped walls)."""
+    n = len(polygon)
+    area = sum(polygon[i][0] * polygon[(i + 1) % n][1] - polygon[(i + 1) % n][0] * polygon[i][1] for i in range(n))
+    idx = list(range(n)) if area > 0 else list(range(n))[::-1]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    def inside(p, a, b, c):
+        return cross(a, b, p) >= -1e-12 and cross(b, c, p) >= -1e-12 and cross(c, a, p) >= -1e-12
+
+    triangles = []
+    guard = 0
+    while len(idx) > 3 and guard < 10000:
+        guard += 1
+        for k in range(len(idx)):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % len(idx)]
+            a, b, c = polygon[i0], polygon[i1], polygon[i2]
+            if cross(a, b, c) <= 1e-12:
+                continue
+            if any(inside(polygon[j], a, b, c) for j in idx if j not in (i0, i1, i2)):
+                continue
+            triangles.append((i0, i1, i2))
+            idx.pop(k)
+            break
+        else:
+            break
+    if len(idx) == 3:
+        triangles.append(tuple(idx))
+    return triangles
+
+
 def _add_prism(mesh, polygon, height, offset=(0.0, 0.0, 0.0)):
-    """Section polygon extruded from 0 to height, moved by offset (fan-
-    triangulated caps: fine for the convex sections columns have)."""
+    """Section polygon extruded from 0 to height, moved by offset; the caps
+    ear-clipped, so concave sections (walls) show right too."""
     n = len(polygon)
     dx, dy, dz = offset
     polygon = [(x + dx, y + dy) for x, y in polygon]
-    cx = sum(p[0] for p in polygon) / n
-    cy = sum(p[1] for p in polygon) / n
     base = mesh.Positions.Count
     for z in (dz, dz + height):
-        mesh.Positions.Add(Point3D(cx, cy, z))
         for x, y in polygon:
             mesh.Positions.Add(Point3D(x, y, z))
-    top = base + n + 1
-    for k in range(n):
-        a, b = 1 + k, 1 + (k + 1) % n
-        for idx in (base, base + b, base + a, top, top + a, top + b):
+    top = base + n
+    for i, j, k in _ear_triangles(polygon):
+        for idx in (base + i, base + k, base + j, top + i, top + j, top + k):
             mesh.TriangleIndices.Add(idx)
-        # side quad
+    for k in range(n):
+        a, b = k, (k + 1) % n
         for idx in (base + a, base + b, top + b, base + a, top + b, top + a):
             mesh.TriangleIndices.Add(idx)
 

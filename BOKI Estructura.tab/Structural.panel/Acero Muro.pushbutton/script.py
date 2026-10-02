@@ -201,13 +201,22 @@ def id_of(element_id):
     return fw_utils.element_id_value(element_id)
 
 
+def group_of(element):
+    """Acero Muro: each wall is its own item (its own settings and
+    drawing, rc.WALL_PARAM) - not its type, whose walls differ in size."""
+    return id_of(element.Id)
+
+
 class ColumnType(object):
-    """A column type in use in the model, with a representative column."""
+    """One wall in the model (in Acero Columna: a column type)."""
 
     def __init__(self, type_id, columns):
         self.id = type_id
         self.element = doc.GetElement(DB.ElementId(type_id))
-        self.name = rc.element_name(self.element)
+        level = doc.GetElement(self.element.LevelId)
+        self.name = u"{} - id {}{}".format(
+            rc.element_name(doc.GetElement(self.element.GetTypeId())), type_id,
+            u" - {}".format(level.Name) if level is not None else u"")
         self.columns = columns
         self._section = None
         self.section_error = None
@@ -255,7 +264,7 @@ def collect_types():
     for c in (
         DB.FilteredElementCollector(doc).OfCategory(COLUMNS_BIC).WhereElementIsNotElementType()
     ):
-        by_type.setdefault(id_of(c.GetTypeId()), []).append(c)
+        by_type.setdefault(group_of(c), []).append(c)
     return sorted(
         [ColumnType(t, cols) for t, cols in by_type.items()], key=lambda ct: ct.name
     )
@@ -388,7 +397,7 @@ class AceroWindow(forms.WPFWindow):
         self._filling_shapes = False
         self.rebar_shapes = read_rebar_shapes()
         self._fill_shapes()
-        picked_types = set(id_of(c.GetTypeId()) for c in
+        picked_types = set(group_of(c) for c in
                            (doc.GetElement(DB.ElementId(i)) for i in state.picked_ids) if c is not None)
         for t in types:
             if picked_types and t.id not in picked_types:
@@ -2271,11 +2280,11 @@ def pick_columns(state):
         return
     picked = [doc.GetElement(r.ElementId) for r in refs]
     state.picked_ids = [id_of(c.Id) for c in picked if c is not None]
-    state.checked |= set(id_of(c.GetTypeId()) for c in picked if c is not None)
+    state.checked |= set(group_of(c) for c in picked if c is not None)
     if state.picked_ids:
         state.scope = "pick"
         # show the type (and, in the views, the column) just picked
-        state.active = id_of(doc.GetElement(DB.ElementId(state.picked_ids[0])).GetTypeId())
+        state.active = group_of(doc.GetElement(DB.ElementId(state.picked_ids[0])))
 
 
 AUTO_TYPE = u"(automatico)"
@@ -2292,9 +2301,9 @@ preselected = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
 preselected = [e for e in preselected if e is not None and _ColumnFilter().AllowElement(e)]
 if preselected:
     state.picked_ids = [id_of(c.Id) for c in preselected]
-    state.checked = set(id_of(c.GetTypeId()) for c in preselected)
+    state.checked = set(group_of(c) for c in preselected)
     state.scope = "pick"
-    state.active = id_of(preselected[0].GetTypeId())
+    state.active = group_of(preselected[0])
 
 xaml = os.path.join(SCRIPT_DIR, "AceroForm.xaml")
 while True:
@@ -2314,7 +2323,7 @@ if state.scope == "pick":
     scope_label = "columnas seleccionadas"
     # The type's configuration fits all its columns: offer them all, on
     # every level, not just the ones picked.
-    picked_types = sorted(set(id_of(c.GetTypeId()) for c in targets))
+    picked_types = sorted(set(group_of(c) for c in targets))
     same_type = [c for t in picked_types for c in by_id[t].columns]
     if False:  # the window generates the picked columns only
         only_picked = u"Solo las columnas seleccionadas ({})".format(len(targets))
@@ -2333,12 +2342,12 @@ else:
 
 specs = {}
 spec_errors = {}
-for t in set(id_of(c.GetTypeId()) for c in targets):
+for t in set(group_of(c) for c in targets):
     try:
         specs[t] = rc.ColumnSpec(by_id[t].config())
     except rs.SpecError as e:
         spec_errors[t] = u"{}".format(e)
-with_spec = [c for c in targets if id_of(c.GetTypeId()) in specs]
+with_spec = [c for c in targets if group_of(c) in specs]
 if not with_spec:
     forms.alert(
         u"Ninguna de las {} columnas del alcance tiene su tipo configurado.".format(len(targets)),
@@ -2375,7 +2384,7 @@ try:
     with forms.ProgressBar(title="Acero: {value} de {max_value} columnas") as pb:
         count = 0
         for stack in stacks:
-            ct = by_id[id_of(stack[0].GetTypeId())]
+            ct = by_id[group_of(stack[0])]
             sub = DB.SubTransaction(doc)
             sub.Start()
             try:
