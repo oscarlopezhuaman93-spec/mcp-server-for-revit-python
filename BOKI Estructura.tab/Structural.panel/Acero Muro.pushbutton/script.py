@@ -2569,8 +2569,13 @@ def horizontal_bars(wall, item):
     levels = rs.stirrup_positions(height, zones, rest)
     bar_type = bar_types.pick(key, rc.type_mark(item.name))
     made = []
-    for y in (-y_face, y_face):
-        path = rs.wall_horizontal_path(min(xs), max(xs), y, float(hz.get("al", 0.3)), float(hz.get("ar", 0.3)),
+    al, ar = float(hz.get("al", 0.3)), float(hz.get("ar", 0.3))
+    for face, y in enumerate((-y_face, y_face)):
+        # both faces' hooks turn towards each other: the second face's bars
+        # stop 1.5 diameters short, so their hooks lie beside the first
+        # face's ones (touching, as on site), never through them
+        back = 1.5 * d if face else 0.0
+        path = rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, al - back), max(0.0, ar - back),
                                        float(hz.get("hook", 0.1)), 2 * y_face - d)
         for start, n, spacing in rs.group_runs(levels):
             z = section.z_bottom + start / rc.FT
