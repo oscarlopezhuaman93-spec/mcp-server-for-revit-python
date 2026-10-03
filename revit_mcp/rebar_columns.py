@@ -187,6 +187,7 @@ def default_cover_cm(type_name):
 
 
 WALL_PARAM = "EA_Muro_Acero"  # a wall's own settings and drawing (JSON of TYPE_PARAMS)
+WALL_KEYS = ("EA_Muro_Corte",)  # walls only: vertical bars sketched on the wall's cut (JSON list)
 
 
 def read_type_config(column_type):
@@ -198,7 +199,7 @@ def read_type_config(column_type):
             data = json.loads(p.AsString() or u"{}") if p is not None else {}
         except ValueError:
             data = {}
-        return dict((name, data.get(name) or u"") for name in TYPE_PARAMS)
+        return dict((name, data.get(name) or u"") for name in TYPE_PARAMS + WALL_KEYS)
     config = {}
     for name in TYPE_PARAMS:
         p = column_type.LookupParameter(name)
@@ -209,7 +210,7 @@ def read_type_config(column_type):
 def write_type_config(column_type, config):
     if isinstance(column_type, DB.Wall):
         merged = read_type_config(column_type)
-        merged.update(dict((k, v) for k, v in config.items() if k in TYPE_PARAMS))
+        merged.update(dict((k, v) for k, v in config.items() if k in TYPE_PARAMS + WALL_KEYS))
         p = column_type.LookupParameter(WALL_PARAM)
         if p is not None and not p.IsReadOnly:
             p.Set(json.dumps(merged, ensure_ascii=False))

@@ -310,13 +310,42 @@
                     <DockPanel Grid.Column="1" Grid.Row="1">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
-                            <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <RadioButton x:Name="rb_view_plan" GroupName="planview" IsChecked="True" Content="PLANTA"
+                                         FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" Checked="plan_view_changed"/>
+                            <RadioButton x:Name="rb_view_cut" GroupName="planview" Content="CORTE DEL MURO (acero vertical)"
+                                         FontWeight="Bold" VerticalAlignment="Center" Checked="plan_view_changed"
+                                         ToolTip="Corte real del muro (muros de contenci&#243;n, espesor variable...): dibuja las barras verticales por boceto; se repiten a lo largo del muro."/>
                         </DockPanel>
+                        <StackPanel x:Name="panel_cut_tools" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2" Visibility="Collapsed">
+                            <ToggleButton x:Name="btn_cut_sketch" Width="30" Height="24" IsChecked="True"
+                                          ToolTip="Boceto: clic en cada punto (se pega al recubrimiento, sus esquinas y el centro de cada lado); clic derecho termina; Esc cancela.">
+                                <Canvas Width="16" Height="16">
+                                    <Rectangle Width="16" Height="16" Stroke="#FF5B8BD0" StrokeThickness="1"/>
+                                    <Line X1="3" Y1="13" X2="13" Y2="3" Stroke="#FF2E5FA8" StrokeThickness="2"/>
+                                    <Rectangle Canvas.Left="1" Canvas.Top="11" Width="4" Height="4" Fill="#FF2E5FA8"/>
+                                    <Rectangle Canvas.Left="11" Canvas.Top="1" Width="4" Height="4" Fill="#FF2E5FA8"/>
+                                </Canvas>
+                            </ToggleButton>
+                            <TextBlock Text=" &#216;" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_cut_d" Width="58" Margin="2,0,0,0"/>
+                            <ComboBox x:Name="cbo_cut_m" Width="82" Margin="3,0,0,0" SelectionChanged="cut_mode_changed"/>
+                            <TextBox x:Name="txt_cut_n" Width="30" Margin="3,0,0,0" Text="5" ToolTip="Cantidad de barras"/>
+                            <TextBlock Text=" @" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_cut_s" Width="40" Text="0.20" ToolTip="Espaciado (m) a lo largo del muro"/>
+                            <Button Content="Borrar &#250;ltima" Margin="6,0,0,0" Click="cut_delete"/>
+                            <TextBlock x:Name="txt_cut_count" Margin="6,0,0,0" Foreground="Gray" VerticalAlignment="Center"/>
+                        </StackPanel>
                         <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
-                            <Canvas x:Name="canvas" Background="White"
-                                    MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
-                                    MouseMove="canvas_move" SizeChanged="canvas_resized"
-                                    MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
+                            <Grid>
+                                <Canvas x:Name="canvas" Background="White"
+                                        MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
+                                        MouseMove="canvas_move" SizeChanged="canvas_resized"
+                                        MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
+                                <Canvas x:Name="canvas_cut" Background="White" Visibility="Collapsed" ClipToBounds="True"
+                                        MouseLeftButtonDown="cut_left" MouseRightButtonDown="cut_right"
+                                        MouseMove="cut_move" SizeChanged="cut_resized"
+                                        MouseWheel="cut_wheel" MouseDown="cut_down" MouseUp="cut_up"/>
+                            </Grid>
                         </Border>
                     </DockPanel>
 

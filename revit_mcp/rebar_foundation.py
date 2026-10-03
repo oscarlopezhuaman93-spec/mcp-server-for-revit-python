@@ -56,7 +56,11 @@ class Foundation(object):
         self.element = element
         bb = element.get_BoundingBox(None)
         transform = getattr(element, "GetTransform", None)
-        basis = transform().BasisX if transform else DB.XYZ.BasisX
+        curve = getattr(getattr(element, "Location", None), "Curve", None)
+        if isinstance(element, DB.Wall) and isinstance(curve, DB.Line):
+            basis = curve.Direction  # a wall: x along it, its cut across (SIDE)
+        else:
+            basis = transform().BasisX if transform else DB.XYZ.BasisX
         basis = DB.XYZ(basis.X, basis.Y, 0.0).Normalize()
         self.ux = basis
         self.uy = DB.XYZ.BasisZ.CrossProduct(basis)

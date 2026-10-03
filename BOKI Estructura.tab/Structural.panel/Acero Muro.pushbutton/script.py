@@ -24,6 +24,7 @@ import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
 import rebar_views as rv
+import rebar_foundation as rf
 import utils as fw_utils
 
 # pyRevit keeps one interpreter across clicks: reload so edits on disk
@@ -34,6 +35,7 @@ reload(fw_params)
 reload(rs)
 reload(rc)
 reload(rv)
+reload(rf)
 
 from pyrevit import revit, DB, forms, script
 from System.Windows import GridLength, TextWrapping, Visibility
@@ -376,6 +378,18 @@ class AceroWindow(forms.WPFWindow):
         self._fill_splice()
         self._updating_steel = False
         self.selected = None  # index of the stirrup whose measures are shown
+        # the wall's cut (CORTE DEL MURO): vertical bars sketched on it
+        self.cut_items = []
+        self.cut_draft = []
+        self.cut_cursor = None
+        self.cut_nav = rv.Nav2D()
+        self._cut_frame = None
+        self._cut_fitted = None
+        self._cut_cache = {}
+        self.cbo_cut_d.ItemsSource = List[str](rs.bar_diameter_keys())
+        self.cbo_cut_d.SelectedItem = u'1/2"'
+        self.cbo_cut_m.ItemsSource = List[str](list(rf.DIST_MODES))
+        self.cbo_cut_m.SelectedItem = rf.SPACING
         # Plan / elevation / 3D views: zoom-pan state and what they last showed.
         self.plan_nav = rv.Nav2D()
         self.elev_nav = rv.Nav2D()
@@ -508,6 +522,11 @@ class AceroWindow(forms.WPFWindow):
         self.undo_stack = []
         self.draft = []
         self.selected = None
+        try:
+            self.cut_items = json.loads(cfg.get("EA_Muro_Corte") or u"[]")
+        except ValueError:
+            self.cut_items = []
+        self.cut_draft = []
         self._fill_view_columns(t)
         self.plan_nav.reset()
         self.elev_nav.reset()
@@ -588,6 +607,7 @@ class AceroWindow(forms.WPFWindow):
         }
         if with_drawing:
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
+            config["EA_Muro_Corte"] = json.dumps(self.cut_items) if self.cut_items else u""
         return config
 
     def save_click(self, sender, args):
@@ -1539,7 +1559,178 @@ class AceroWindow(forms.WPFWindow):
 
     def plan_fit_click(self, sender, args):
         self.plan_nav.reset()
+        self.cut_nav.reset()
         self.redraw()
+        self._draw_cut()
+
+    # -- the wall's cut: vertical bars by sketch -----------------------------------
+    def plan_view_changed(self, sender, args):
+        if not hasattr(self, "cut_nav"):
+            return  # fired while the XAML loads
+        cut = bool(self.rb_view_cut.IsChecked)
+        self.canvas_cut.Visibility = Visibility.Visible if cut else Visibility.Collapsed
+        self.panel_cut_tools.Visibility = Visibility.Visible if cut else Visibility.Collapsed
+        self.canvas.Visibility = Visibility.Collapsed if cut else Visibility.Visible
+        self._draw_cut()
+
+    def cut_mode_changed(self, sender, args):
+        mode = self.cbo_cut_m.SelectedItem or rf.SPACING
+        self.txt_cut_n.IsEnabled = mode != rf.SPACING
+        self.txt_cut_s.IsEnabled = mode != rf.QUANTITY
+
+    def _cut_geometry(self):
+        """(foundation-like geometry of the wall, its cut outlines with the
+        cover line) for the column (wall) shown."""
+        t = self.by_id.get(self.state.active)
+        if t is None:
+            return None, []
+        wall = (self._view_columns or t.columns)[0]
+        key = id_of(wall.Id)
+        if key not in self._cut_cache:
+            try:
+                geo = rf.Foundation(wall)
+                x0, x1 = geo.extent[0], geo.extent[1]
+                self._cut_cache[key] = (geo, geo.section(rf.SIDE, (x0 + x1) / 2.0))
+            except Exception:
+                self._cut_cache[key] = (None, [])
+        geo, outlines = self._cut_cache[key]
+        try:
+            cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+        except ValueError:
+            cover = 0.04
+        return geo, [(pts, rf.inner_outline(pts, [cover] * len(pts))) for pts, tags in outlines]
+
+    def cut_resized(self, sender, args):
+        self._draw_cut()
+
+    def _draw_cut(self):
+        canvas = self.canvas_cut
+        canvas.Children.Clear()
+        if not self.rb_view_cut.IsChecked or canvas.ActualWidth < 10:
+            return
+        geo, outlines = self._cut_geometry()
+        if not outlines:
+            rv._text(canvas, rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, -1, -1, 1, 1), 0, 0,
+                     u"No se pudo cortar este muro", size=11)
+            return
+        us = [p[0] for pts, _ in outlines for p in pts]
+        zs = [p[1] for pts, _ in outlines for p in pts]
+        self._cut_fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight,
+                                        min(us) - 0.3, min(zs) - 0.3, max(us) + 0.3, max(zs) + 0.3)
+        frame = self.cut_nav.resolve(self._cut_fitted)
+        self._cut_frame = frame
+        gray = brush(225, 228, 232)
+        dark = brush(60, 60, 60)
+        for pts, inner in outlines:
+            rv._polygon(canvas, frame, pts, gray)
+            for i in range(len(pts)):
+                rv._line(canvas, frame, pts[i], pts[(i + 1) % len(pts)], dark, 2)
+            for i in range(len(inner)):
+                rv._line(canvas, frame, inner[i], inner[(i + 1) % len(inner)], brush(90, 90, 90), 1, dash=True)
+        rv._text(canvas, frame, (min(us) + max(us)) / 2.0, max(zs) + 0.15,
+                 u"Espesor {:.2f} m (abajo {:.2f})".format(max(us) - min(us), self._width_at(outlines, min(zs) + 0.01)),
+                 brush=brush(31, 78, 160), size=10)
+        blue = brush(31, 78, 160)
+        for item in self.cut_items:
+            pts = [tuple(q) for q in item["pts"]]
+            for a, b in zip(pts, pts[1:]):
+                rv._line(canvas, frame, a, b, blue, 2.5)
+            label = u"\u00d8{} ".format(item["d"]) + (
+                u"n={}".format(item.get("n")) if item.get("m") == rf.QUANTITY else u"@{:g}".format(float(item["s"])))
+            rv._text(canvas, frame, pts[0][0], pts[0][1] - 0.06, label, brush=blue, size=10)
+        if self.cut_draft:
+            pts = list(self.cut_draft) + ([self.cut_cursor] if self.cut_cursor else [])
+            for a, b in zip(pts, pts[1:]):
+                rv._line(canvas, frame, a, b, brush(230, 80, 30), 2, dash=True)
+        self.txt_cut_count.Text = u"{} barra(s)".format(len(self.cut_items))
+
+    @staticmethod
+    def _width_at(outlines, z):
+        spans = [s for pts, _ in outlines for s in rf.polygon_spans(pts, z)]
+        return sum(b - a for a, b in spans)
+
+    def _cut_point(self, args):
+        """The clicked point on the cut: snapped to the cover line (its
+        corners and the middle of each side), always inside it."""
+        if self._cut_frame is None:
+            return None
+        pt = args.GetPosition(self.canvas_cut)
+        scale, ox, oy = self._cut_frame
+        p = ((pt.X - ox) / scale, (oy - pt.Y) / scale)
+        geo, outlines = self._cut_geometry()
+        if not outlines:
+            return None
+        tol = 12.0 / scale
+        targets = []
+        for outer, inner in outlines:
+            n = len(inner)
+            targets += list(inner)
+            targets += [((inner[i][0] + inner[(i + 1) % n][0]) / 2.0, (inner[i][1] + inner[(i + 1) % n][1]) / 2.0)
+                        for i in range(n)]
+        near = [q for q in targets if ((q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2) ** 0.5 < tol]
+        if near:
+            return min(near, key=lambda q: (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2)
+        for outer, inner in outlines:
+            q = rf.snap_to_outline(p, inner, tol)
+            if q is not p:
+                return q
+        p = (round(p[0], 2), round(p[1], 2))
+        return min((rf.clamp_inside(p, inner) for outer, inner in outlines),
+                   key=lambda q: (q[0] - p[0]) ** 2 + (q[1] - p[1]) ** 2)
+
+    def cut_left(self, sender, args):
+        if not self.btn_cut_sketch.IsChecked:
+            return
+        p = self._cut_point(args)
+        if p is not None:
+            self.cut_draft.append(p)
+            self._draw_cut()
+
+    def cut_right(self, sender, args):
+        if len(self.cut_draft) >= 2:
+            def num(text, default):
+                try:
+                    return float((text or u"").replace(u",", u"."))
+                except ValueError:
+                    return default
+            self.cut_items.append({"view": rf.SIDE, "pts": [list(q) for q in self.cut_draft],
+                                   "d": self.cbo_cut_d.SelectedItem or u'1/2"',
+                                   "m": self.cbo_cut_m.SelectedItem or rf.SPACING,
+                                   "n": max(1, int(num(self.txt_cut_n.Text, 5))),
+                                   "s": max(0.05, num(self.txt_cut_s.Text, 0.2)), "closed": False})
+            self.dirty = True
+        self.cut_draft = []
+        self.cut_cursor = None
+        self._draw_cut()
+
+    def cut_delete(self, sender, args):
+        if self.cut_items:
+            self.cut_items.pop()
+            self.dirty = True
+            self._draw_cut()
+
+    def cut_move(self, sender, args):
+        if self.cut_nav.pan(args.GetPosition(self.canvas_cut)):
+            self._draw_cut()
+            return
+        if self.cut_draft:
+            self.cut_cursor = self._cut_point(args)
+            self._draw_cut()
+
+    def cut_wheel(self, sender, args):
+        if self._cut_fitted:
+            self.cut_nav.wheel(self._cut_fitted, args.GetPosition(self.canvas_cut), args.Delta)
+            self._draw_cut()
+        args.Handled = True
+
+    def cut_down(self, sender, args):
+        if args.ChangedButton == MouseButton.Middle and self._cut_fitted:
+            self.cut_nav.start_pan(self._cut_fitted, args.GetPosition(self.canvas_cut))
+            self.canvas_cut.CaptureMouse()
+
+    def cut_up(self, sender, args):
+        self.cut_nav.end_pan()
+        self.canvas_cut.ReleaseMouseCapture()
 
     # -- elevation and 3D views ----------------------------------------------
     def _column_info(self, column, fallback):
@@ -2290,6 +2481,40 @@ def pick_columns(state):
 AUTO_TYPE = u"(automatico)"
 
 
+def cut_bars(wall, item):
+    """The vertical bars sketched on the wall's cut (EA_Muro_Corte),
+    repeated along the wall as drawn: [(rebar, key, kind)]."""
+    cfg = item.config()
+    try:
+        sketches = json.loads(cfg.get("EA_Muro_Corte") or u"[]")
+    except ValueError:
+        sketches = []
+    if not sketches:
+        return []
+    geo = rf.Foundation(wall)
+    try:
+        cover_cm = float((cfg.get("EA_Recubrimiento_cm") or u"4").replace(u",", u"."))
+    except ValueError:
+        cover_cm = 4.0
+    planner = rf.BarPlanner(geo, dict((f.number, cover_cm) for f in geo.faces), rs.BAR_DIAMETERS_MM)
+    bars = []
+    for sketch in sketches:
+        bars += planner.sketch(sketch)
+    made = []
+    for view, key, path, first, count, spacing, tname in rf.bar_sets(bars):
+        pts = [geo.world(first, -u, z) for u, z in path]
+        curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+        rebar = DB.Structure.Rebar.CreateFromCurves(
+            doc, RebarStyle.Standard, bar_types.pick(key, rc.type_mark(item.name)), None, None, wall,
+            geo.ux.Negate(), curves, DB.Structure.RebarHookOrientation.Right,
+            DB.Structure.RebarHookOrientation.Right, True, True)
+        if count > 1:
+            rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(count, spacing / rf.FT, False, True, True)
+        rc._tag(rebar, wall)
+        made.append((rebar, key, rc.LONGITUDINAL))
+    return made
+
+
 # --- main -------------------------------------------------------------------
 types = collect_types()
 if not types:
@@ -2391,6 +2616,8 @@ try:
                 created, found = rc.generate_stack(
                     doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
                 )
+                for wall in stack:
+                    created[id_of(wall.Id)] += cut_bars(wall, ct)
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
                 warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)
