@@ -187,7 +187,7 @@ def default_cover_cm(type_name):
 
 
 WALL_PARAM = "EA_Muro_Acero"  # a wall's own settings and drawing (JSON of TYPE_PARAMS)
-WALL_KEYS = ("EA_Muro_Corte",)  # walls only: vertical bars sketched on the wall's cut (JSON list)
+WALL_KEYS = ("EA_Muro_Corte", "EA_Muro_Horizontal")  # walls only: vertical bars sketched on the wall's cut (JSON list)
 
 
 def read_type_config(column_type):

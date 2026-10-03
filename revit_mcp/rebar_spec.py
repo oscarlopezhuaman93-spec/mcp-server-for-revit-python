@@ -1500,3 +1500,18 @@ try:
     weight_table()
 except (IOError, OSError, SpecError):
     pass
+
+
+def wall_horizontal_path(x0, x1, y, anchor_left, anchor_right, hook, max_hook):
+    """Plan path [(x, y)] of a wall's horizontal bar on the face at y (the
+    wall from x0 to x1 along its axis): run into the element at each end
+    (a column) by its anchorage, ended with a leg (`hook`, at most
+    `max_hook`) turned towards the other face, as on site."""
+    a, b = x0 - anchor_left, x1 + anchor_right
+    inward = -1.0 if y > 0 else 1.0
+    h = min(hook, max_hook) if hook > 0 else 0.0
+    path = [(a, y), (b, y)]
+    if h > 0.03:
+        path.insert(0, (a, y + inward * h))
+        path.append((b, y + inward * h))
+    return path

@@ -37,6 +37,32 @@
                           Click="all_click"/>
 
                 <!-- Lap splices of the longitudinal bars (settings kept per user) -->
+                <Expander DockPanel.Dock="Bottom" Header="5. Barras horizontales (anclaje en columnas)" Margin="0,8,0,0">
+                    <StackPanel Margin="6,4,6,4">
+                        <CheckBox x:Name="chk_hz" Content="Barras horizontales en ambas caras" Click="config_changed"
+                                  ToolTip="Barras horizontales del muro, una por cara en cada nivel, que entran a las columnas de los extremos."/>
+                        <StackPanel Orientation="Horizontal" Margin="16,3,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_hz}">
+                            <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_hz_d" Width="58" SelectionChanged="config_changed"/>
+                            <TextBlock Text="  Distribuci&#243;n " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_hz_dist" Width="140" TextChanged="config_changed"
+                                     ToolTip="En la altura del muro, desde cada extremo. Ej. 1@0.05, rto@0.20"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_hz}">
+                            <TextBlock Text="Anclaje izq " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_hz_al" Width="40" TextChanged="config_changed"
+                                     ToolTip="Cu&#225;nto entra la barra en la columna del extremo izquierdo (m). Tambi&#233;n con un clic en la cota del alzado."/>
+                            <TextBlock Text=" der " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_hz_ar" Width="40" TextChanged="config_changed"
+                                     ToolTip="Cu&#225;nto entra en la columna del extremo derecho (m)."/>
+                            <TextBlock Text="  Gancho " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_hz_hook" Width="40" TextChanged="config_changed"
+                                     ToolTip="Pata al final de cada anclaje, hacia la otra cara (m). 0 = recta."/>
+                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
                 <Expander DockPanel.Dock="Bottom" Header="4. Empalme de barras longitudinales" Margin="0,8,0,0">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_splice" Click="splice_changed"

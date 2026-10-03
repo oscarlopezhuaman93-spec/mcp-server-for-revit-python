@@ -389,6 +389,7 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_cut_d.ItemsSource = List[str](rs.bar_diameter_keys())
         self.cbo_cut_d.SelectedItem = u'1/2"'
         self.cbo_cut_m.ItemsSource = List[str](list(rf.DIST_MODES))
+        self.cbo_hz_d.ItemsSource = List[str](rs.bar_diameter_keys())
         self.cbo_cut_m.SelectedItem = rf.SPACING
         # Plan / elevation / 3D views: zoom-pan state and what they last showed.
         self.plan_nav = rv.Nav2D()
@@ -527,6 +528,13 @@ class AceroWindow(forms.WPFWindow):
         except ValueError:
             self.cut_items = []
         self.cut_draft = []
+        hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
+        self.chk_hz.IsChecked = bool(hz.get("on"))
+        self.cbo_hz_d.SelectedItem = hz.get("d") or u'3/8"'
+        self.txt_hz_dist.Text = hz.get("dist") or u"1@0.05, rto@0.20"
+        self.txt_hz_al.Text = u"{:g}".format(float(hz.get("al", 0.30)))
+        self.txt_hz_ar.Text = u"{:g}".format(float(hz.get("ar", 0.30)))
+        self.txt_hz_hook.Text = u"{:g}".format(float(hz.get("hook", 0.10)))
         self._fill_view_columns(t)
         self.plan_nav.reset()
         self.elev_nav.reset()
@@ -608,6 +616,7 @@ class AceroWindow(forms.WPFWindow):
         if with_drawing:
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
             config["EA_Muro_Corte"] = json.dumps(self.cut_items) if self.cut_items else u""
+            config["EA_Muro_Horizontal"] = json.dumps(self._horizontal_form())
         return config
 
     def save_click(self, sender, args):
@@ -986,13 +995,27 @@ class AceroWindow(forms.WPFWindow):
                     legs.pop(cbo.SelectedItem, None)
         self.config_changed(sender, args)
 
+    def _horizontal_form(self):
+        """The wall's horizontal bars as typed (EA_Muro_Horizontal)."""
+        def num(box, default):
+            try:
+                return max(0.0, float((box.Text or u"").replace(u",", u".")))
+            except ValueError:
+                return default
+        return {"on": bool(self.chk_hz.IsChecked), "d": self.cbo_hz_d.SelectedItem or u'3/8"',
+                "dist": (self.txt_hz_dist.Text or u"").strip(), "al": num(self.txt_hz_al, 0.30),
+                "ar": num(self.txt_hz_ar, 0.30), "hook": num(self.txt_hz_hook, 0.10)}
+
     def elev_edit(self, tag):
         """A click on an editable cota of the elevation: its new value."""
-        box = {"izaje_h": self.txt_izaje_h, "anchor": self.txt_anchor}.get(tag)
+        box = {"izaje_h": self.txt_izaje_h, "anchor": self.txt_anchor,
+               "anc_l": self.txt_hz_al, "anc_r": self.txt_hz_ar}.get(tag)
         if box is None:
             return
-        label = u"Altura de izaje (m), desde la cara de la zapata:" if tag == "izaje_h" else \
-            u"Anclaje (m) dentro de la cimentacion (vacio: hasta la malla del fondo):"
+        label = {"izaje_h": u"Altura de izaje (m), desde la cara de la zapata:",
+                 "anchor": u"Anclaje (m) dentro de la cimentacion (vacio: hasta la malla del fondo):",
+                 "anc_l": u"Longitud (m) que entra la barra horizontal en la columna izquierda:",
+                 "anc_r": u"Longitud (m) que entra la barra horizontal en la columna derecha:"}[tag]
         value = forms.ask_for_string(default=box.Text or u"", prompt=label, title="Acero")
         if value is not None:
             box.Text = value.strip()
@@ -1878,6 +1901,14 @@ class AceroWindow(forms.WPFWindow):
                                    depth - rc.FOUNDATION_COVER_M - 0.03)
                 extra["leg_bot"] = max([rs.leg_m(v) for v in (ends.get("bot") or {}).values()] or [0.0])
                 extra["dir_bot"] = ends.get("dir_bot") or rs.LEG_OUT
+            hz = self._horizontal_form()
+            if index == 0 and hz["on"] and hz["dist"]:
+                try:
+                    zones, rest = rs.parse_distribution(hz["dist"])
+                    extra["horiz"] = {"levels": rs.stirrup_positions(height, zones, rest),
+                                      "al": hz["al"], "ar": hz["ar"]}
+                except rs.SpecError as e:
+                    messages.append(u"Barras horizontales: {}".format(e))
             if index == len(columns) - 1 and not rc.column_above(doc, column, section):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
@@ -2044,7 +2075,7 @@ class AceroWindow(forms.WPFWindow):
 
     def elev_mouse_down(self, sender, args):
         tag = getattr(args.OriginalSource, "Tag", None)
-        if args.ChangedButton == MouseButton.Left and tag in ("izaje_h", "anchor"):
+        if args.ChangedButton == MouseButton.Left and tag in ("izaje_h", "anchor", "anc_l", "anc_r"):
             self.elev_edit(tag)  # an editable cota
             args.Handled = True
             return
@@ -2515,6 +2546,46 @@ def cut_bars(wall, item):
     return made
 
 
+def horizontal_bars(wall, item):
+    """The wall's horizontal bars (EA_Muro_Horizontal): one per face at each
+    level of its distribution, run into the columns at both ends by their
+    anchorage, with a leg towards the other face. [(rebar, key, kind)]."""
+    cfg = item.config()
+    hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
+    if not hz.get("on") or not (hz.get("dist") or u"").strip():
+        return []
+    section = rc.Section(wall)
+    key = hz.get("d") or u'3/8"'
+    d = rs.BAR_DIAMETERS_MM[key] / 1000.0
+    try:
+        cover = float((cfg.get("EA_Recubrimiento_cm") or u"4").replace(u",", u".")) / 100.0
+    except ValueError:
+        cover = 0.04
+    xs = [q[0] for q in section.polygon_m]
+    ys = [q[1] for q in section.polygon_m]
+    y_face = (max(ys) - min(ys)) / 2.0 - cover - d / 2.0
+    height = (section.z_top - section.z_bottom) * rc.FT
+    zones, rest = rs.parse_distribution(hz["dist"])
+    levels = rs.stirrup_positions(height, zones, rest)
+    bar_type = bar_types.pick(key, rc.type_mark(item.name))
+    made = []
+    for y in (-y_face, y_face):
+        path = rs.wall_horizontal_path(min(xs), max(xs), y, float(hz.get("al", 0.3)), float(hz.get("ar", 0.3)),
+                                       float(hz.get("hook", 0.1)), 2 * y_face - d)
+        for start, n, spacing in rs.group_runs(levels):
+            z = section.z_bottom + start / rc.FT
+            pts = [section.point_m(px, py, z) for px, py in path]
+            curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+            rebar = DB.Structure.Rebar.CreateFromCurves(
+                doc, RebarStyle.Standard, bar_type, None, None, wall, DB.XYZ.BasisZ, curves,
+                DB.Structure.RebarHookOrientation.Right, DB.Structure.RebarHookOrientation.Right, True, True)
+            if n > 1:
+                rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(n, spacing / rc.FT, True, True, True)
+            rc._tag(rebar, wall)
+            made.append((rebar, key, rc.EDGE))
+    return made
+
+
 # --- main -------------------------------------------------------------------
 types = collect_types()
 if not types:
@@ -2618,6 +2689,7 @@ try:
                 )
                 for wall in stack:
                     created[id_of(wall.Id)] += cut_bars(wall, ct)
+                    created[id_of(wall.Id)] += horizontal_bars(wall, ct)
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
                 warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)

@@ -845,3 +845,12 @@ def test_leg_m_takes_meters_or_cm():
     assert leg_m(25) == pytest.approx(0.25)  # first saved in cm
     assert leg_m(0.02) == 0.0  # too short to bend
     assert leg_m("") == 0.0
+
+
+
+def test_wall_horizontal_path_into_the_columns():
+    from revit_mcp.rebar_spec import wall_horizontal_path
+
+    path = wall_horizontal_path(-0.75, 0.75, 0.064, 0.30, 0.20, 0.15, 0.11)
+    assert path == pytest.approx([(-1.05, 0.064 - 0.11), (-1.05, 0.064), (0.95, 0.064), (0.95, 0.064 - 0.11)])
+    assert wall_horizontal_path(0, 1, -0.05, 0, 0, 0, 0.1) == [(0, -0.05), (1, -0.05)]

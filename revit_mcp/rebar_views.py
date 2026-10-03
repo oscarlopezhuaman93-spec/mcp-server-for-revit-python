@@ -372,6 +372,15 @@ def _foundation_ends(canvas, frame, data, segments, widen, half):
     s = segments[0]
     cx, base = s["x"] * widen, s["z"]
     u = _elevation_unit(data)
+    horiz = s.get("horiz")
+    if horiz:
+        # a wall's horizontal bars, run into the columns at its ends
+        al, ar = horiz["al"], horiz["ar"]
+        for z in horiz["levels"]:
+            _line(canvas, frame, (cx - half - al, base + z), (cx + half + ar, base + z), C_EDGE, 1.5)
+        ztop = base + max(horiz["levels"] or [0.0])
+        _edit_text(canvas, frame, cx - half - al - 0.05, ztop + 0.12, u"Anclaje izq {:.2f} m".format(al), "anc_l")
+        _edit_text(canvas, frame, cx + half + 0.02, ztop + 0.12, u"Anclaje der {:.2f} m".format(ar), "anc_r")
     for offset in s.get("izaje", []):
         _line(canvas, frame, (cx - half + 0.01, base + offset), (cx + half - 0.01, base + offset), C_IZAJE, 2)
     if s.get("izaje_h"):
