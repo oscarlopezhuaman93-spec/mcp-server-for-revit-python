@@ -28,7 +28,7 @@ reload(ft)
 from pyrevit import revit, DB, forms
 from System.Collections.Generic import List
 from System.Windows import Point, Size, Thickness, TextAlignment, FontWeights
-from System.Windows.Controls import Canvas, CheckBox, TextBlock
+from System.Windows.Controls import Canvas, CheckBox, Orientation, StackPanel, TextBlock
 from System.Windows.Media import Color, SolidColorBrush, PathGeometry, PathFigure, LineSegment, FillRule, PointCollection
 from System.Windows.Shapes import Line, Path, Polygon, Polyline
 
@@ -79,15 +79,26 @@ class FootingType(object):
         self.b = self.L = self.h = None
         saved = _json(ftype, STEEL_PARAM)
         self.has_steel = bool(saved)
-        self.steel = {u"sup": {u"b": u"-", u"L": u"-"}, u"inf": {u"b": u"-", u"L": u"-"}}
-        try:
-            f = rf.Foundation(elements[0])
-        except Exception:
-            f = None
+        # (count, diameter, spacing) per layer and side; the texts are made
+        # per row (an irregular footing shows only diameter and spacing)
+        self.steel_raw = {u"sup": {u"b": None, u"L": None}, u"inf": {u"b": None, u"L": None}}
+        f, sizes, rectangles = None, [], True
+        for e in elements:
+            try:
+                fe = rf.Foundation(e)
+            except Exception:
+                continue
+            x0, x1, y0, y1, z0, z1 = fe.extent
+            sizes.append((min(x1 - x0, y1 - y0), max(x1 - x0, y1 - y0), z1 - z0))
+            rectangles = rectangles and ft.is_rectangle(rf.plan_outline(fe))
+            f = f or fe
+        # irregular: a plan that is no rectangle, or footings of this type of
+        # different sizes - b and L read "ver planta"
+        self.irregular_auto = bool(sizes) and not (rectangles and ft.same_sizes(sizes))
         if f is not None:
             x0, x1, y0, y1, z0, z1 = f.extent
             dx, dy = x1 - x0, y1 - y0
-            self.b, self.L, self.h = min(dx, dy), max(dx, dy), z1 - z0
+            self.b, self.L, self.h = sizes[0]
             if saved:
                 self._steel(f, saved, dx >= dy)
         self.bottoms = []
@@ -115,13 +126,20 @@ class FootingType(object):
                 positions = rf.mesh_positions(lo, hi, m, axis)
                 spacing = ft.mesh_spacing(positions, m.get("m" + axis), float(m.get("s" + axis) or 0.2),
                                           m.get("z" + axis))
-                self.steel[tag][side] = ft.steel_text(len(positions), key, spacing)
+                self.steel_raw[tag][side] = (len(positions), key, spacing)
 
     def df(self, ref):
         return ft.df_text([ref - z for z in self.bottoms])
 
     def is_footing(self):
         return self.mark.startswith(u"Z")
+
+    def steel_texts(self, irregular):
+        out = {}
+        for tag, sides in self.steel_raw.items():
+            out[tag] = dict((side, ft.steel_text(raw[0], raw[1], raw[2], irregular) if raw else u"-")
+                            for side, raw in sides.items())
+        return out
 
     def label(self):
         size = u"{:.2f} x {:.2f} x {:.2f}".format(self.b, self.L, self.h) if self.b else u"?"
@@ -141,9 +159,10 @@ def collect_types():
 class Row(object):
     """What the table draws of a type (Df from the chosen level)."""
 
-    def __init__(self, item, ref):
+    def __init__(self, item, ref, irregular):
         self.mark, self.b, self.L, self.h = item.mark, item.b, item.L, item.h
-        self.steel = item.steel
+        self.irregular = irregular
+        self.steel = item.steel_texts(irregular)
         self.df = item.df(ref)
 
 
@@ -351,13 +370,24 @@ class CuadroWindow(forms.WPFWindow):
         self.cbo_level.SelectedItem = ground[0]
         self.boxes = []
         for t in types:
+            row = StackPanel()
+            row.Orientation = Orientation.Horizontal
+            row.Margin = Thickness(0, 2, 0, 2)
             cb = CheckBox()
             cb.Content = t.label()
             cb.IsChecked = t.is_footing()
-            cb.Margin = Thickness(0, 2, 0, 2)
+            cb.Width = 300
             cb.Click += self.options_changed
-            self.boxes.append((cb, t))
-            self.panel_types.Children.Add(cb)
+            irr = CheckBox()
+            irr.Content = u"ver planta"
+            irr.IsChecked = t.irregular_auto
+            irr.ToolTip = (u"b y L dicen 'ver planta' y el acero solo diametro y espaciado. "
+                           u"Marcado solo si la planta no es rectangular o hay zapatas de este tipo de distinto tamano.")
+            irr.Click += self.options_changed
+            row.Children.Add(cb)
+            row.Children.Add(irr)
+            self.boxes.append((cb, t, irr))
+            self.panel_types.Children.Add(row)
         self._ready = True
         self.SizeChanged += self.options_changed
         self.draw()
@@ -368,7 +398,7 @@ class CuadroWindow(forms.WPFWindow):
         except ValueError:
             solado = None
         ref = self.levels.get(self.cbo_level.SelectedItem, 0.0)
-        rows = [Row(t, ref) for cb, t in self.boxes if cb.IsChecked]
+        rows = [Row(t, ref, bool(irr.IsChecked)) for cb, t, irr in self.boxes if cb.IsChecked]
         return (rows, (self.txt_title.Text or u"").strip() or TITLE, int(self.cbo_scale.SelectedItem or 50),
                 int(self.cbo_alpha.SelectedItem or 20), solado)
 
@@ -392,7 +422,7 @@ class CuadroWindow(forms.WPFWindow):
             self.draw()
 
     def _set_all(self, test):
-        for cb, t in self.boxes:
+        for cb, t, irr in self.boxes:
             cb.IsChecked = test(t)
         self.draw()
 

@@ -52,12 +52,55 @@ def footing_mark(type_name):
     return mark
 
 
-def steel_text(count, key, spacing):
-    """"16Ø5/8\"@ 0.15" (spacing None: "@ var.", zones of their own)."""
+def steel_text(count, key, spacing, irregular=False):
+    """"16Ø5/8\"@ 0.15" (spacing None: "@ var.", zones of their own);
+    an irregular footing only its diameter and spacing: "Ø5/8\"@ 0.15"
+    (the count changes along it - see the plan)."""
     if not count or not key:
         return u"-"
     at = u"@ var." if spacing is None else u"@ {:.2f}".format(spacing)
+    if irregular:
+        return u"Ø{}{}".format(key, at)
     return u"{}Ø{}{}".format(count, key, at)
+
+
+def is_rectangle(edges, tol=0.01):
+    """True when a plan outline [((x, y), (x, y))] is one rectangle: 4
+    edges whose area fills their bounding box (within 1%: a few mm of a
+    slightly skewed corner in the model still count as a rectangle)."""
+    if len(edges) != 4:
+        return False
+    pts = [p for e in edges for p in e]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    box = (max(xs) - min(xs)) * (max(ys) - min(ys))
+    # shoelace on the chained edges
+    chain = [edges[0][0], edges[0][1]]
+    rest = list(edges[1:])
+    while rest:
+        for k, (a, b) in enumerate(rest):
+            if _close(a, chain[-1]):
+                chain.append(b)
+                rest.pop(k)
+                break
+            if _close(b, chain[-1]):
+                chain.append(a)
+                rest.pop(k)
+                break
+        else:
+            return False
+    n = len(chain) - 1
+    area = abs(sum(chain[i][0] * chain[i + 1][1] - chain[i + 1][0] * chain[i][1] for i in range(n))) / 2.0
+    return abs(area - box) <= tol * max(box, 1e-6)
+
+
+def _close(a, b, tol=1e-3):
+    return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
+
+
+def same_sizes(sizes, tol=0.005):
+    """True when every (b, L, h) of a type's footings is the same."""
+    return all(all(abs(s[i] - sizes[0][i]) <= tol for i in range(3)) for s in sizes[1:])
 
 
 def mesh_spacing(positions, mode, spacing, zones):
@@ -108,8 +151,14 @@ def draw_table(d, items, title, solado):
         d.line((0, y_body + ROW_H * k), (total, y_body + ROW_H * k), L_GRID)
     for i in (1, 5, 7):  # full height: TIPO | DIMENSIONES | ACERO | Df
         d.line((xs[i], TITLE_H), (xs[i], bottom), L_GRID)
-    for i in (2, 3, 4, 6):  # inside the groups
+    for i in (3, 4, 6):  # inside the groups
         d.line((xs[i], y_head2), (xs[i], bottom), L_GRID)
+    # b | L: in the header, and in the rows that give their sizes (an
+    # irregular one reads "ver planta" across both cells)
+    d.line((xs[2], y_head2), (xs[2], y_body), L_GRID)
+    for k, item in enumerate(items):
+        if not getattr(item, "irregular", False):
+            d.line((xs[2], y_body + ROW_H * k), (xs[2], y_body + ROW_H * (k + 1)), L_GRID)
     # headers
     d.text(total / 2.0, TITLE_H / 2.0, title, T_TITLE)
     d.text(xs[0] + widths[0] / 2.0, (TITLE_H + y_body) / 2.0, u"TIPO", T_HEAD)
@@ -123,7 +172,12 @@ def draw_table(d, items, title, solado):
         y = y_body + ROW_H * k
         mid = y + ROW_H / 2.0
         d.text(xs[0] + widths[0] / 2.0, mid, item.mark, T_TYPE)
-        for i, value in ((1, item.b), (2, item.L), (3, item.h), (4, solado)):
+        cells = ((3, item.h), (4, solado))
+        if getattr(item, "irregular", False):
+            d.text(xs[2], mid, u"ver planta", T_VALUE)  # across b and L
+        else:
+            cells = ((1, item.b), (2, item.L)) + cells
+        for i, value in cells:
             d.text(xs[i] + widths[i] / 2.0, mid, u"{:.2f}".format(value) if value is not None else u"-", T_VALUE)
         for i, side in ((5, u"b"), (6, u"L")):
             x = xs[i] + 2.0

@@ -29,6 +29,26 @@ def test_steel_and_spacing_texts():
     assert ft.mesh_spacing([0.0, 0.5], "Espaciado", 0.2, [{"a": 0}]) is None
 
 
+def test_irregular_steel_and_shapes():
+    assert ft.steel_text(16, '5/8"', 0.15, irregular=True) == u'Ø5/8"@ 0.15'
+    rect = [((0, 0), (2, 0)), ((2, 0), (2, 3)), ((2, 3), (0, 3)), ((0, 3), (0, 0))]
+    assert ft.is_rectangle(rect)
+    assert ft.is_rectangle(list(reversed(rect)))
+    ell = rect[:2] + [((2, 3), (1, 3)), ((1, 3), (1, 1)), ((1, 1), (0, 1)), ((0, 1), (0, 0))]
+    assert not ft.is_rectangle(ell)
+    assert ft.same_sizes([(2.2, 2.75, 0.8), (2.2, 2.75, 0.8)])
+    assert not ft.same_sizes([(2.2, 2.75, 0.8), (5.19, 5.76, 0.8)])
+
+
+def test_irregular_row_reads_ver_planta():
+    class Irregular(Item):
+        irregular = True
+    d = Recorder()
+    ft.draw_table(d, [Irregular()], "T", 0.1)
+    texts = [c[1] for c in d.calls if c[0] == "text"]
+    assert "ver planta" in texts and "2.50" not in texts and "21.80" not in texts
+
+
 def test_df_text():
     assert ft.df_text([1.5]) == "1.50"
     assert ft.df_text([1.5, 1.501, 3.3]) == "1.50 / 3.30"
