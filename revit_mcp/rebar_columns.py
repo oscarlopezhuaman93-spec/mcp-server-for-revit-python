@@ -1260,11 +1260,16 @@ def record_weight(column, created):
 
 # --- Elements around the column, for the elevation and 3D views ---------------
 
-# Only what frames into the column: beams, slabs and its footing.
+# Acero Columna: only what frames into the column - beams, slabs and its
+# footing. Each window passes its own list (Acero Muro: WALL_NEIGHBOR_CATEGORIES);
+# never widen this one for another window.
 NEIGHBOR_CATEGORIES = (
     (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
     (DB.BuiltInCategory.OST_Floors, u"LOSA"),
     (DB.BuiltInCategory.OST_StructuralFoundation, u"ZAPATA"),
+)
+# Acero Muro: a wall also shows the columns at its ends and the walls it meets.
+WALL_NEIGHBOR_CATEGORIES = NEIGHBOR_CATEGORIES + (
     (DB.BuiltInCategory.OST_StructuralColumns, u"COLUMNA"),
     (DB.BuiltInCategory.OST_Walls, u"MURO"),
 )
@@ -1283,7 +1288,7 @@ def _box_triangles(box):
     return tris
 
 
-def column_neighbors(doc, column, section, reach_m=0.6, contact_m=0.05):
+def column_neighbors(doc, column, section, reach_m=0.6, contact_m=0.05, categories=None):
     """Elements touching the column (within `contact_m`: a beam cut back by
     its join with the column still counts) - beams, slabs and its footing -
     cut to `reach_m` around it,
@@ -1322,7 +1327,7 @@ def column_neighbors(doc, column, section, reach_m=0.6, contact_m=0.05):
 
     result = []
     options = DB.Options()
-    for bic, label in NEIGHBOR_CATEGORIES:
+    for bic, label in (categories or NEIGHBOR_CATEGORIES):
         found = (
             DB.FilteredElementCollector(doc)
             .OfCategory(bic)

@@ -1820,7 +1820,8 @@ class AceroWindow(forms.WPFWindow):
             self._clear_cache[key] = (top - section.z_bottom) * rc.FT
         if key not in self._neighbor_cache:
             try:
-                self._neighbor_cache[key] = rc.column_neighbors(doc, column, section)
+                self._neighbor_cache[key] = rc.column_neighbors(doc, column, section,
+                                                                categories=rc.WALL_NEIGHBOR_CATEGORIES)
             except Exception:
                 self._neighbor_cache[key] = []
         return section, self._clear_cache[key], self._neighbor_cache[key]
