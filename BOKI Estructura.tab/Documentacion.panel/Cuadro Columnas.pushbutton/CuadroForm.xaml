@@ -1,0 +1,52 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cuadro de columnas - vista previa"
+        Height="860" Width="1500" MinWidth="1000" MinHeight="600"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Crear cuadro en Leyendas" Width="240" Height="40" FontWeight="Bold"
+                    Click="create_click" ToolTip="Crea una leyenda nueva con el cuadro tal como se ve en la vista previa."/>
+            <Button DockPanel.Dock="Right" Content="Cancelar" Width="110" Height="40" Margin="0,0,8,0" Click="cancel_click"/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center"/>
+        </DockPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="330"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0" Margin="0,0,10,0">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="T&#237;tulo (tambi&#233;n es el nombre de la leyenda):" Margin="0,0,0,3"/>
+                    <TextBox x:Name="txt_title" Height="24" TextChanged="options_changed"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="Escala  1 : " VerticalAlignment="Center" Width="70"/>
+                        <ComboBox x:Name="cbo_scale" Width="80" SelectionChanged="options_changed"
+                                  ToolTip="Escala de la leyenda y de las secciones (se dibujan a su tama&#241;o real)."/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Nivel de detalle:" VerticalAlignment="Center" Width="100"/>
+                        <ComboBox x:Name="cbo_detail" Width="110" SelectionChanged="options_changed"
+                                  ToolTip="Alto: cada barra y estribo por su contorno, con dobleces y ganchos (como Revit en detalle fino). Medio: barras rellenas de color. Bajo: una l&#237;nea por estribo y un punto por barra."/>
+                    </StackPanel>
+                    <TextBlock Text="Tipos de columna a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                        <Button Content="Con armado" Padding="6,1" Click="check_with_steel"/>
+                        <Button Content="Todos" Padding="6,1" Margin="4,0,0,0" Click="check_all"/>
+                        <Button Content="Ninguno" Padding="6,1" Margin="4,0,0,0" Click="check_none"/>
+                    </StackPanel>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                           Text="El cuadro sale sin cotas ni anotaciones en las secciones (se agregan a mano). Los datos salen de lo guardado en Acero Columna para cada tipo."/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="panel_types"/>
+                </ScrollViewer>
+            </DockPanel>
+            <Border Grid.Column="1" BorderBrush="#FFBBBBBB" BorderThickness="1" Background="#FF212830">
+                <ScrollViewer x:Name="scroll_preview" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Canvas x:Name="canvas_preview" Background="#FF212830"/>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

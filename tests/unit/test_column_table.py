@@ -71,5 +71,57 @@ def test_chain_and_sizes():
     assert ct.type_width(RECT) == pytest.approx(106.0)
 
 
+class Recorder(object):
+    """A drawer that keeps what is drawn: (primitive, style)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def line(self, a, b, style):
+        self.calls.append(("line", style))
+
+    def polyline(self, pts, closed, style):
+        self.calls.append(("polyline", style))
+
+    def region(self, loops, fill):
+        self.calls.append(("region", fill))
+
+    def circle(self, cx, cy, r, fill):
+        self.calls.append(("circle", fill))
+
+    def ring(self, cx, cy, r, style):
+        self.calls.append(("ring", style))
+
+    def text(self, x, y, text, kind, rotate=False, align="center"):
+        self.calls.append(("text", text))
+
+
+class Item(object):
+    mark = "C-1"
+    polygon = RECT
+    design = {"bars": [(-0.1, -0.15, '5/8"'), (0.1, -0.15, '5/8"'), (-0.1, 0.15, '5/8"'), (0.1, 0.15, '5/8"')],
+              "stirrups": [("borde", [(-0.11, -0.16), (0.11, -0.16), (0.11, 0.16), (-0.11, 0.16)], 0.0, False)],
+              "ties": []}
+    cfg = {"EA_Estribo_Borde_Diametro": '3/8"', "EA_Estribo_Borde_Distribucion": "1@0.05, rto@0.20"}
+    levels = ["NTZ", "P01"]
+
+
+@pytest.mark.parametrize("detail, bar, steel", [
+    (ct.DETAIL_HIGH, "ring", "BOKI Cuadro Acero Fino"),
+    (ct.DETAIL_MEDIUM, "circle", "BOKI Cuadro Barra"),
+    (ct.DETAIL_LOW, "circle", "BOKI Cuadro Estribo"),
+])
+def test_table_detail_levels_and_no_annotations(detail, bar, steel):
+    d = Recorder()
+    w, h = ct.draw_table(d, [Item()], "CUADRO", 10, detail, MM)
+    kinds = [c[0] for c in d.calls]
+    styles = [c[1] for c in d.calls]
+    assert kinds.count(bar) == 4  # one per bar
+    assert steel in styles
+    assert "BOKI Cuadro Cota" not in styles  # no dimensions nor bar labels
+    assert ("text", "ESC. 1/ 10") in d.calls
+    assert w == pytest.approx(ct.LABEL_W + ct.MIN_TYPE_W)
+
+
 def test_natural_order():
     assert sorted(["C-10", "C-2", "C-1"], key=ct.natural_key) == ["C-1", "C-2", "C-10"]

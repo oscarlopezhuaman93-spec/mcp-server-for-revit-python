@@ -251,10 +251,154 @@ def section_size_paper(polygon, scale=None):
     return (max(xs) - min(xs)) * 1000.0 / scale, (max(ys) - min(ys)) * 1000.0 / scale
 
 
-def type_width(polygon):
-    w, _ = section_size_paper(polygon)
+def type_width(polygon, scale=None):
+    w, _ = section_size_paper(polygon, scale)
     return max(MIN_TYPE_W, w + SECTION_ROOM + 30.0)
 
 
-def section_row_height(polygons):
-    return max([section_size_paper(p)[1] for p in polygons] + [10.0]) + SECTION_ROOM + 20.0
+def section_row_height(polygons, scale=None):
+    return max([section_size_paper(p, scale)[1] for p in polygons] + [10.0]) + SECTION_ROOM + 20.0
+
+
+# --- The table, drawn through a "drawer" ------------------------------------------
+# The same drawing goes to the preview window (WPF) and to the Revit legend:
+# a drawer has line(a, b, style), polyline(pts, closed, style),
+# region(loops, fill), circle(cx, cy, r, fill), ring(cx, cy, r, style) and
+# text(x, y, text, kind, rotate=False, align="center"); positions in paper mm
+# from the table's top-left corner, y down. Style / fill / kind names are
+# the Revit ones (made by the button); the preview maps them to colors.
+DETAIL_LOW, DETAIL_MEDIUM, DETAIL_HIGH = u"Bajo", u"Medio", u"Alto"
+DETAILS = (DETAIL_LOW, DETAIL_MEDIUM, DETAIL_HIGH)
+SCALES = (10, 15, 20, 25, 50)
+TABLE_SECTION_ROOM = 22.0  # paper mm around a section: no dimensions nor labels
+
+
+def table_type_width(polygon, scale):
+    w, _ = section_size_paper(polygon, scale)
+    return max(MIN_TYPE_W, w + TABLE_SECTION_ROOM + 20.0)
+
+
+def table_section_height(polygons, scale):
+    return max([section_size_paper(p, scale)[1] for p in polygons] + [10.0]) + TABLE_SECTION_ROOM + 12.0
+
+
+def _stirrup_diameter(cfg, kind, diameters_mm, confinement=u"confinamiento"):
+    key = cfg.get("EA_Estribo_Conf_Diametro") if kind == confinement else None
+    key = (key or cfg.get("EA_Estribo_Borde_Diametro") or u'3/8"').strip()
+    return diameters_mm.get(key, 9.5) / 1000.0
+
+
+def draw_stirrup_icon(d, x, y, w=3.0, h=4.0):
+    """The little stirrup in the distribution lines."""
+    d.polyline([(x, y - h / 2), (x + w, y - h / 2), (x + w, y + h / 2), (x, y + h / 2)], True,
+               u"BOKI Cuadro Estribo")
+    d.line((x, y - h / 2 + 0.2), (x + 1.2, y - h / 2 + 1.4), u"BOKI Cuadro Estribo")
+
+
+def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
+    """The section drawn true to size at 1:scale, its steel at the chosen
+    detail: HIGH - every bar and stirrup by its outline, bends and hooks
+    (as Revit shows rebar at fine detail); MEDIUM - solid colored bars;
+    LOW - a line per stirrup, a dot per bar. No dimensions nor labels."""
+    poly = item.polygon
+    if not poly:
+        d.text((x0 + x1) / 2.0, (y0 + y1) / 2.0, u"(sin seccion)", u"BOKI Cuadro 2mm")
+        return
+    k = 1000.0 / scale  # paper mm per section meter
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    mx, my = (max(xs) + min(xs)) / 2.0, (max(ys) + min(ys)) / 2.0
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0 - 3.0
+
+    def P(p):
+        return (cx + (p[0] - mx) * k, cy - (p[1] - my) * k)
+
+    design = item.design
+    if design:
+        for kind, pts, wrap, is_open in design.get("stirrups", []):
+            dia = _stirrup_diameter(item.cfg, kind, diameters_mm)
+            pts = list(pts)
+            if detail == DETAIL_LOW:
+                d.polyline([P(q) for q in pts], not is_open, u"BOKI Cuadro Estribo")
+                if not is_open:
+                    for s, e in hook_tails(pts, dia):
+                        d.line(P(s), P(e), u"BOKI Cuadro Estribo")
+                continue
+            pieces = []
+            if is_open:
+                pieces = [[bar_strip(a, b, dia)] for a, b in zip(pts, pts[1:])]
+            else:
+                pieces = [list(stirrup_band(pts, dia))]
+                pieces += [[bar_strip(s, e, dia)] for s, e in hook_tails(pts, dia)]
+            for loops in pieces:
+                if detail == DETAIL_HIGH:
+                    for loop in loops:
+                        d.polyline([P(q) for q in loop], True, u"BOKI Cuadro Acero Fino")
+                else:
+                    d.region([[P(q) for q in loop] for loop in loops], u"BOKI Cuadro Estribo")
+        for kind, a, b in design.get("ties", []):
+            dia = _stirrup_diameter(item.cfg, u"confinamiento", diameters_mm)
+            if detail == DETAIL_LOW:
+                d.line(P(a), P(b), u"BOKI Cuadro Estribo")
+            elif detail == DETAIL_HIGH:
+                d.polyline([P(q) for q in bar_strip(a, b, dia)], True, u"BOKI Cuadro Acero Fino")
+            else:
+                d.region([[P(q) for q in bar_strip(a, b, dia)]], u"BOKI Cuadro Estribo")
+        for x, y, key in design["bars"]:
+            px, py = P((x, y))
+            r = diameters_mm[key] / 2000.0 * k
+            if detail == DETAIL_HIGH:
+                d.ring(px, py, r, u"BOKI Cuadro Acero Fino")
+            elif detail == DETAIL_MEDIUM:
+                d.circle(px, py, r, u"BOKI Cuadro Barra")
+            else:
+                d.circle(px, py, max(0.35, r * 0.6), u"BOKI Cuadro Barra")
+    d.polyline([P(p) for p in poly], True, u"BOKI Cuadro Concreto")
+    d.text(x0 + 3.0, y1 - 4.0, u"ESC. 1/ {}".format(scale), u"BOKI Cuadro Escala", align=u"left")
+
+
+def draw_table(d, items, title, scale, detail, diameters_mm):
+    """The whole table: a column per type (items: .mark, .polygon,
+    .design, .cfg, .levels). Returns (width, height) in paper mm."""
+    widths = [table_type_width(it.polygon, scale) for it in items]
+    xs = [LABEL_W]
+    for w in widths[:-1]:
+        xs.append(xs[-1] + w)
+    total = LABEL_W + sum(widths)
+    n_levels = max([len(it.levels) for it in items] + [1])
+    rows = [(u"TIPO", TIPO_H), (u"BXH", BXH_H),
+            (u"DISTRIBUCION\nDE ESTRIBO", n_levels * LEVEL_LINE_H + 4.0),
+            (u"DIAMETRO (Ø)", DIAM_H),
+            (u"DETALLE\nSECCION", table_section_height([it.polygon for it in items], scale))]
+    ys = [TITLE_H]
+    for _, h in rows:
+        ys.append(ys[-1] + h)
+    bottom = ys[-1]
+    d.polyline([(0, 0), (total, 0), (total, bottom), (0, bottom)], True, u"BOKI Cuadro Grilla")
+    for y in ys[:-1]:
+        d.line((0, y), (total, y), u"BOKI Cuadro Grilla")
+    for x in xs:
+        d.line((x, TITLE_H), (x, bottom), u"BOKI Cuadro Grilla")
+    d.text(total / 2.0, TITLE_H / 2.0, title, u"BOKI Cuadro Titulo")
+    for (name, h), y in zip(rows, ys):
+        d.text(LABEL_W / 2.0, y + h / 2.0, name, u"BOKI Cuadro 3mm" if h < 10 else u"BOKI Cuadro 2mm")
+    for item, x, w in zip(items, xs, widths):
+        mid = x + w / 2.0
+        d.text(mid, ys[0] + TIPO_H / 2.0, item.mark, u"BOKI Cuadro 3mm")
+        d.text(mid, ys[1] + BXH_H / 2.0, shape_text(item.polygon) if item.polygon else u"-", u"BOKI Cuadro 3mm")
+        dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
+        diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
+        count = len(item.design.get("stirrups", [])) if item.design else 0
+        if dist:
+            for k, level in enumerate(item.levels):
+                yl = ys[2] + 2.0 + LEVEL_LINE_H * (k + 0.5)
+                d.text(x + 2.0, yl, u"{}:".format(level), u"BOKI Cuadro 2mm", align=u"left")
+                d.text(x + 31.0, yl, u"{}".format(max(count, 1)), u"BOKI Cuadro 2mm", align=u"left")
+                draw_stirrup_icon(d, x + 34.0, yl)
+                d.text(x + 38.5, yl, u"Ø {}: {}".format(diam, dist), u"BOKI Cuadro 2mm", align=u"left")
+        else:
+            d.text(mid, ys[2] + rows[2][1] / 2.0, u"(sin estribos configurados)", u"BOKI Cuadro 2mm")
+        bars = item.design["bars"] if item.design else []
+        d.text(mid, ys[3] + DIAM_H / 2.0, bars_text(bars, diameters_mm) if bars else u"-", u"BOKI Cuadro 3mm")
+        draw_section(d, item, x, x + w, ys[4], ys[5], scale, detail, diameters_mm)
+    return total, bottom
