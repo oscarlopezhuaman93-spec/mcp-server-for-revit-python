@@ -1613,10 +1613,16 @@ class AceroWindow(forms.WPFWindow):
             try:
                 geo = rf.Foundation(wall)
                 x0, x1 = geo.extent[0], geo.extent[1]
-                self._cut_cache[key] = (geo, geo.section(rf.SIDE, (x0 + x1) / 2.0))
+                at = (x0 + x1) / 2.0
+                try:
+                    others = geo.neighbor_sections(rf.SIDE, at)
+                except Exception:
+                    others = []
+                self._cut_cache[key] = (geo, geo.section(rf.SIDE, at), others)
             except Exception:
-                self._cut_cache[key] = (None, [])
-        geo, outlines = self._cut_cache[key]
+                self._cut_cache[key] = (None, [], [])
+        geo, outlines, others = self._cut_cache[key]
+        self._cut_others = others
         try:
             cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
         except ValueError:
@@ -1636,14 +1642,25 @@ class AceroWindow(forms.WPFWindow):
             rv._text(canvas, rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, -1, -1, 1, 1), 0, 0,
                      u"No se pudo cortar este muro", size=11)
             return
-        us = [p[0] for pts, _ in outlines for p in pts]
-        zs = [p[1] for pts, _ in outlines for p in pts]
+        others = getattr(self, "_cut_others", [])
+        us = [p[0] for pts, _ in outlines for p in pts] + [p[0] for _, pts in others for p in pts]
+        zs = [p[1] for pts, _ in outlines for p in pts] + [p[1] for _, pts in others for p in pts]
         self._cut_fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight,
-                                        min(us) - 0.3, min(zs) - 0.3, max(us) + 0.3, max(zs) + 0.3)
+                                        min(us) - 0.2, min(zs) - 0.2, max(us) + 0.2, max(zs) + 0.3)
         frame = self.cut_nav.resolve(self._cut_fitted)
         self._cut_frame = frame
         gray = brush(225, 228, 232)
         dark = brush(60, 60, 60)
+        labelled = set()
+        for label, pts in others:  # the elements touching the wall, behind it
+            rv._polygon(canvas, frame, pts, brush(205, 210, 218))
+            for i in range(len(pts)):
+                rv._line(canvas, frame, pts[i], pts[(i + 1) % len(pts)], brush(140, 145, 155), 1)
+            if label not in labelled:
+                labelled.add(label)
+                cu = sum(q[0] for q in pts) / len(pts)
+                cz = sum(q[1] for q in pts) / len(pts)
+                rv._text(canvas, frame, cu, cz, label, brush=brush(110, 115, 125), size=10, bold=True)
         for pts, inner in outlines:
             rv._polygon(canvas, frame, pts, gray)
             for i in range(len(pts)):
@@ -1651,7 +1668,7 @@ class AceroWindow(forms.WPFWindow):
             for i in range(len(inner)):
                 rv._line(canvas, frame, inner[i], inner[(i + 1) % len(inner)], brush(90, 90, 90), 1, dash=True)
         rv._text(canvas, frame, (min(us) + max(us)) / 2.0, max(zs) + 0.15,
-                 u"Espesor {:.2f} m (abajo {:.2f})".format(max(us) - min(us), self._width_at(outlines, min(zs) + 0.01)),
+                 u"Espesor arriba {:.2f} m, abajo {:.2f} m".format(self._width_at(outlines, max([q[1] for pts, _ in outlines for q in pts]) - 0.01), self._width_at(outlines, min([q[1] for pts, _ in outlines for q in pts]) + 0.01)),
                  brush=brush(31, 78, 160), size=10)
         blue = brush(31, 78, 160)
         for item in self.cut_items:
@@ -1670,7 +1687,7 @@ class AceroWindow(forms.WPFWindow):
     @staticmethod
     def _width_at(outlines, z):
         spans = [s for pts, _ in outlines for s in rf.polygon_spans(pts, z)]
-        return sum(b - a for a, b in spans)
+        return float(sum(b - a for a, b in spans))
 
     def _cut_point(self, args):
         """The clicked point on the cut: snapped to the cover line (its
@@ -1683,6 +1700,18 @@ class AceroWindow(forms.WPFWindow):
         geo, outlines = self._cut_geometry()
         if not outlines:
             return None
+        try:
+            cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+        except ValueError:
+            cover = 0.04
+        # the bars may go on into the touching elements (a footing, a beam):
+        # their outlines, with the foundation cover, count too
+        for label, pts in getattr(self, "_cut_others", []):
+            c = rf.DEFAULT_COVER_CM / 100.0 if label == u"ZAPATA" else cover
+            try:
+                outlines = outlines + [(pts, rf.inner_outline(pts, [c] * len(pts)))]
+            except Exception:
+                pass
         tol = 12.0 / scale
         targets = []
         for outer, inner in outlines:
@@ -2529,8 +2558,14 @@ def cut_bars(wall, item):
         cover_cm = 4.0
     planner = rf.BarPlanner(geo, dict((f.number, cover_cm) for f in geo.faces), rs.BAR_DIAMETERS_MM)
     bars = []
+    # each drawn bar repeated along the wall as drawn: it may run on into
+    # the footing or beam it was drawn into (no "inside the wall" check)
     for sketch in sketches:
-        bars += planner.sketch(sketch)
+        key = sketch["d"]
+        lo, hi = planner._range(rf.SIDE, rs.BAR_DIAMETERS_MM[key] / 1000.0)
+        pts = [tuple(q) for q in sketch["pts"]]
+        for pos in rf.distribute(lo, hi, sketch.get("m", rf.SPACING), float(sketch["s"]), sketch.get("n", 1)):
+            bars.append((rf.SIDE, pos, pts, key, sketch.get("t") or u""))
     made = []
     for view, key, path, first, count, spacing, tname in rf.bar_sets(bars):
         pts = [geo.world(first, -u, z) for u, z in path]

@@ -41,6 +41,15 @@ def _solids(element):
     return found
 
 
+NEIGHBOR_CATEGORIES = (
+    (DB.BuiltInCategory.OST_StructuralColumns, u"COLUMNA"),
+    (DB.BuiltInCategory.OST_Walls, u"MURO"),
+    (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
+    (DB.BuiltInCategory.OST_StructuralFoundation, u"ZAPATA"),
+    (DB.BuiltInCategory.OST_Floors, u"LOSA"),
+) if hasattr(DB, "BuiltInCategory") else ()
+
+
 class Face(object):
     def __init__(self, number, normal, offset, label):
         self.number = number
@@ -136,13 +145,37 @@ class Foundation(object):
                 best = (d, f)
         return best[1] if best else None
 
-    def section(self, view, at=0.0):
+    def touching(self, contact_m=0.05):
+        """[(label, element)] of the elements touching this one (columns,
+        walls, beams, slabs, foundations)."""
+        bb = self.element.get_BoundingBox(None)
+        touch = contact_m / FT
+        near = DB.Outline(DB.XYZ(bb.Min.X - touch, bb.Min.Y - touch, bb.Min.Z - touch),
+                          DB.XYZ(bb.Max.X + touch, bb.Max.Y + touch, bb.Max.Z + touch))
+        found = []
+        for bic, label in NEIGHBOR_CATEGORIES:
+            for other in (DB.FilteredElementCollector(self.element.Document).OfCategory(bic)
+                          .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(near))):
+                if other.Id != self.element.Id:
+                    found.append((label, other))
+        return found
+
+    def neighbor_sections(self, view, at=0.0, reach_m=0.8):
+        """[(label, points [(u, z)])] of the touching elements cut by the
+        same plane, kept to `reach_m` around this element."""
+        out = []
+        for label, other in self.touching():
+            for pts, _ in self.section(view, at, _solids(other), pad=reach_m):
+                out.append((label, pts))
+        return out
+
+    def section(self, view, at=0.0, solids=None, pad=0.5):
         """[(points [(u, z)...], [face number per edge])] outlines of the
-        element cut by the plane through `at` (m, along y for FRONT, along
-        x for SIDE): u is x for FRONT and -y for SIDE (seen from +x... the
-        right side), z up."""
+        element (or of `solids`, another element's, then untagged) cut by
+        the plane through `at` (m, along y for FRONT, along x for SIDE): u
+        is x for FRONT and -y for SIDE, z up; `pad` m around the element."""
         x0, x1, y0, y1, z0, z1 = self.extent
-        pad, thin = 0.5, 0.001
+        thin = 0.001
         if view == FRONT:
             a, b = (x0 - pad, at - thin), (x1 + pad, at + thin)
         else:
@@ -156,7 +189,8 @@ class Foundation(object):
             List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, (z1 - z0 + 2 * pad) / FT)
         axis = (0.0, 1.0, 0.0) if view == FRONT else (1.0, 0.0, 0.0)
         outlines = []
-        for solid in self.solids:
+        own = solids is None
+        for solid in (self.solids if own else solids):
             try:
                 cut = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
                     solid, slab, DB.BooleanOperationsType.Intersect)
@@ -179,7 +213,7 @@ class Foundation(object):
                         pts.append((u, p[2]))
                         mid = tuple((s + t) / 2.0 for s, t in zip(p, q))
                         # the cut face itself is thin: test against the element's faces
-                        f = self.face_at(mid)
+                        f = self.face_at(mid) if own else None
                         tags.append(f.number if f else None)
                     outlines.append((pts, tags))
         return outlines
@@ -505,13 +539,7 @@ def clamp_inside(p, inner):
 
 
 # --- Elements touching the foundation (Revit geometry) -------------------------
-NEIGHBOR_CATEGORIES = (
-    (DB.BuiltInCategory.OST_StructuralColumns, u"COLUMNA"),
-    (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
-    (DB.BuiltInCategory.OST_StructuralFoundation, u"CIMENTACION"),
-    (DB.BuiltInCategory.OST_Walls, u"MURO"),
-    (DB.BuiltInCategory.OST_Floors, u"LOSA"),
-) if hasattr(DB, "BuiltInCategory") else ()
+# NEIGHBOR_CATEGORIES: see the top of the module
 
 
 def neighbors(foundation, reach_m=0.6, contact_m=0.05):

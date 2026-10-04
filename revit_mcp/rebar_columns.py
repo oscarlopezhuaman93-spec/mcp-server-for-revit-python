@@ -1265,6 +1265,8 @@ NEIGHBOR_CATEGORIES = (
     (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
     (DB.BuiltInCategory.OST_Floors, u"LOSA"),
     (DB.BuiltInCategory.OST_StructuralFoundation, u"ZAPATA"),
+    (DB.BuiltInCategory.OST_StructuralColumns, u"COLUMNA"),
+    (DB.BuiltInCategory.OST_Walls, u"MURO"),
 )
 
 
