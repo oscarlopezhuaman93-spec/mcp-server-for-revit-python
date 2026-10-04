@@ -29,6 +29,12 @@
                         <ComboBox x:Name="cbo_detail" Width="110" SelectionChanged="options_changed"
                                   ToolTip="Alto: cada barra y estribo por su contorno, con dobleces y ganchos (como Revit en detalle fino). Medio: barras rellenas de color. Bajo: una l&#237;nea por estribo y un punto por barra."/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Transparencia de bandas:" VerticalAlignment="Center" Width="150"/>
+                        <ComboBox x:Name="cbo_alpha" Width="60" SelectionChanged="options_changed"
+                                  ToolTip="Transparencia (%) de las bandas de color: t&#237;tulo, fila de tipos y columna de nombres."/>
+                        <TextBlock Text=" %" VerticalAlignment="Center"/>
+                    </StackPanel>
                     <TextBlock Text="Tipos de columna a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
                         <Button Content="Con armado" Padding="6,1" Click="check_with_steel"/>

@@ -47,7 +47,10 @@ C_BAR = (230, 0, 230)
 C_GRID = (160, 160, 160)
 
 TEXTS = {  # text types made for the table: name -> (paper mm, color)
-    u"BOKI Cuadro Titulo": (5.0, C_TEXT),
+    # on the bands: black bold, as the project legend (Revit's dark theme
+    # shows it white; it prints black on the light bands)
+    u"BOKI Cuadro Titulo": (5.0, (0, 0, 0)),
+    u"BOKI Cuadro Cabecera": (3.0, (0, 0, 0)),
     u"BOKI Cuadro 3mm": (3.0, C_TEXT),
     u"BOKI Cuadro 2mm": (2.0, C_TEXT),
     u"BOKI Cuadro Escala": (2.2, C_SCALE),
@@ -65,8 +68,17 @@ REGIONS = {  # solid fills: name -> color
     u"BOKI Cuadro Barra": C_BAR,
     u"BOKI Cuadro Estribo": C_STIRRUP,
 }
+REGIONS.update(ct.BAND_COLORS)
+BOLD = (u"BOKI Cuadro Titulo", u"BOKI Cuadro Cabecera")
+TRANSPARENCIES = (0, 10, 20, 30, 40, 50)  # % of the bands
 PREVIEW_COLORS = dict([(k, v[1]) for k, v in TEXTS.items()] + [(k, v[0]) for k, v in LINES.items()])
 PREVIEW_COLORS[u"BOKI Cuadro Acero Fino"] = (225, 225, 225)
+# the preview shows the legend as Revit's dark theme does (measured on an
+# exported legend): black text white, the light bands slate
+PREVIEW_COLORS[u"BOKI Cuadro Titulo"] = (245, 245, 245)
+PREVIEW_COLORS[u"BOKI Cuadro Cabecera"] = (245, 245, 245)
+PREVIEW_BANDS = {ct.BAND_TITLE: (85, 108, 118), ct.BAND_TYPES: (72, 96, 109), ct.BAND_SIDE: (112, 129, 158)}
+PREVIEW_BG = (33, 40, 48)
 
 
 def _name(element):
@@ -133,6 +145,9 @@ def ensure_styles():
         t = texts.get(name) or base.Duplicate(name)
         t.get_Parameter(DB.BuiltInParameter.TEXT_SIZE).Set(size / 304.8)
         t.get_Parameter(DB.BuiltInParameter.LINE_COLOR).Set(rgb[0] + rgb[1] * 256 + rgb[2] * 65536)
+        bold = t.get_Parameter(DB.BuiltInParameter.TEXT_STYLE_BOLD)
+        if bold is not None and not bold.IsReadOnly:
+            bold.Set(1 if name in BOLD else 0)
         bg = t.get_Parameter(DB.BuiltInParameter.TEXT_BACKGROUND)
         if bg is not None and not bg.IsReadOnly:
             bg.Set(1)  # transparent
@@ -154,8 +169,9 @@ class RevitDrawer(object):
     """The drawer (column_table) on a legend: detail lines, filled regions,
     text notes."""
 
-    def __init__(self, view):
+    def __init__(self, view, transparency=0):
         self.view = view
+        self.transparency = transparency  # % for the colored bands
         self.f = view.Scale / 304.8  # paper mm -> feet in the view
         styles = doc.Settings.Categories.get_Item(DB.BuiltInCategory.OST_Lines).SubCategories
         self.styles = dict((s.Name, s.GetGraphicsStyle(DB.GraphicsStyleType.Projection)) for s in styles)
@@ -204,6 +220,12 @@ class RevitDrawer(object):
         try:
             r = DB.FilledRegion.Create(doc, rtype.Id, self.view.Id, List[DB.CurveLoop]([self._loop(l) for l in loops]))
             self._edge(r, fill)
+            if fill in ct.BAND_COLORS:
+                self._edge(r, u"BOKI Cuadro Grilla")
+                if self.transparency:
+                    ogs = DB.OverrideGraphicSettings()
+                    ogs.SetSurfaceTransparency(int(self.transparency))
+                    self.view.SetElementOverrides(r.Id, ogs)
         except Exception:
             pass  # a degenerate piece: left out rather than failing the table
 
@@ -254,7 +276,7 @@ def new_legend(name, scale):
     return view
 
 
-def make(items, title, scale, detail):
+def make(items, title, scale, detail, transparency=20):
     t = DB.Transaction(doc, "Cuadro de columnas")
     t.Start()
     try:
@@ -265,7 +287,7 @@ def make(items, title, scale, detail):
                         title="Cuadro de columnas")
             return None
         ensure_styles()
-        ct.draw_table(RevitDrawer(view), items, title, scale, detail, MM)
+        ct.draw_table(RevitDrawer(view, transparency), items, title, scale, detail, MM)
         t.Commit()
     except Exception:
         t.RollBack()
@@ -282,9 +304,10 @@ class CanvasDrawer(object):
     """The same drawer on a WPF canvas: the preview shows what the legend
     will hold."""
 
-    def __init__(self, canvas, zoom):
+    def __init__(self, canvas, zoom, transparency=0):
         self.canvas = canvas
         self.z = zoom  # pixels per paper mm
+        self.transparency = transparency
 
     def _color(self, name):
         return _brush(PREVIEW_COLORS.get(name) or REGIONS.get(name) or (200, 200, 200))
@@ -322,6 +345,10 @@ class CanvasDrawer(object):
         path = Path()
         path.Data = geo
         path.Fill = self._color(fill)
+        if fill in PREVIEW_BANDS:
+            # on screen a transparent band mixes with the dark background
+            k = self.transparency / 100.0
+            path.Fill = _brush(tuple(int(c * (1 - k) + b * k) for c, b in zip(PREVIEW_BANDS[fill], PREVIEW_BG)))
         self.canvas.Children.Add(path)
 
     def _ellipse(self, cx, cy, r):
@@ -346,6 +373,8 @@ class CanvasDrawer(object):
         tb.Text = text
         tb.FontSize = max(6.0, size * self.z * 1.35)
         tb.Foreground = self._color(kind)
+        if kind in BOLD:
+            tb.FontWeight = FontWeights.Bold
         tb.TextAlignment = TextAlignment.Center if align == u"center" else TextAlignment.Left
         tb.Measure(Size(1e5, 1e5))
         w, h = tb.DesiredSize.Width, tb.DesiredSize.Height
@@ -366,6 +395,8 @@ class CuadroWindow(forms.WPFWindow):
         self.cbo_scale.SelectedItem = u"10"
         self.cbo_detail.ItemsSource = list(ct.DETAILS)
         self.cbo_detail.SelectedItem = ct.DETAIL_HIGH
+        self.cbo_alpha.ItemsSource = [str(v) for v in TRANSPARENCIES]
+        self.cbo_alpha.SelectedItem = u"20"
         self.boxes = []
         for t in types:
             cb = CheckBox()
@@ -384,12 +415,13 @@ class CuadroWindow(forms.WPFWindow):
 
     def options(self):
         return (self.chosen(), (self.txt_title.Text or u"").strip() or TITLE,
-                int(self.cbo_scale.SelectedItem or 10), self.cbo_detail.SelectedItem or ct.DETAIL_HIGH)
+                int(self.cbo_scale.SelectedItem or 10), self.cbo_detail.SelectedItem or ct.DETAIL_HIGH,
+                int(self.cbo_alpha.SelectedItem or 20))
 
     def draw(self):
         canvas = self.canvas_preview
         canvas.Children.Clear()
-        items, title, scale, detail = self.options()
+        items, title, scale, detail, alpha = self.options()
         if not items:
             self.txt_status.Text = u"Marca al menos un tipo."
             return
@@ -400,7 +432,7 @@ class CuadroWindow(forms.WPFWindow):
         w, h = ct.draw_table(_Size(), items, title, scale, detail, MM)
         avail = max(300.0, (self.scroll_preview.ActualWidth or 1000.0) - 30.0)
         zoom = max(2.0, min(6.0, avail / w))
-        ct.draw_table(CanvasDrawer(canvas, zoom), items, title, scale, detail, MM)
+        ct.draw_table(CanvasDrawer(canvas, zoom, alpha), items, title, scale, detail, MM)
         canvas.Width, canvas.Height = w * zoom + 2, h * zoom + 2
         self.txt_status.Text = u"{} tipo(s) - escala 1:{} - detalle {} - {:.0f} x {:.0f} mm en papel".format(
             len(items), scale, detail.lower(), w, h)
@@ -427,11 +459,11 @@ class CuadroWindow(forms.WPFWindow):
         self.Close()
 
     def create_click(self, sender, args):
-        items, title, scale, detail = self.options()
+        items, title, scale, detail, alpha = self.options()
         if not items:
             forms.alert(u"Marca al menos un tipo.", title="Cuadro de columnas")
             return
-        self.result = (items, title, scale, detail)
+        self.result = (items, title, scale, detail, alpha)
         self.Close()
 
 

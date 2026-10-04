@@ -120,6 +120,10 @@ def test_table_detail_levels_and_no_annotations(detail, bar, steel):
     assert steel in styles
     assert "BOKI Cuadro Cota" not in styles  # no dimensions nor bar labels
     assert ("text", "ESC. 1/ 10") in d.calls
+    # the three colored bands, drawn before the grid and the texts
+    bands = [c for c in d.calls if c[0] == "region" and c[1].startswith("BOKI Cuadro Banda")]
+    assert [c[1] for c in bands] == [ct.BAND_TITLE, ct.BAND_TYPES, ct.BAND_SIDE]
+    assert d.calls.index(bands[-1]) < d.calls.index(("polyline", "BOKI Cuadro Grilla"))
     assert w == pytest.approx(ct.LABEL_W + ct.MIN_TYPE_W)
 
 

@@ -267,6 +267,13 @@ def section_row_height(polygons, scale=None):
 # text(x, y, text, kind, rotate=False, align="center"); positions in paper mm
 # from the table's top-left corner, y down. Style / fill / kind names are
 # the Revit ones (made by the button); the preview maps them to colors.
+BAND_TITLE = u"BOKI Cuadro Banda Titulo"
+BAND_TYPES = u"BOKI Cuadro Banda Tipos"
+BAND_SIDE = u"BOKI Cuadro Banda Lateral"
+# the bands' colors (r, g, b) as printed: the project legend's own fills
+# ("Leyenda", "Leyenda 2") and a third shade - light blues that Revit's dark
+# theme shows as slate, as in the project legend
+BAND_COLORS = {BAND_TITLE: (153, 222, 255), BAND_TYPES: (213, 241, 255), BAND_SIDE: (232, 238, 250)}
 DETAIL_LOW, DETAIL_MEDIUM, DETAIL_HIGH = u"Bajo", u"Medio", u"Alto"
 DETAILS = (DETAIL_LOW, DETAIL_MEDIUM, DETAIL_HIGH)
 SCALES = (10, 15, 20, 25, 50)
@@ -374,6 +381,11 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
     for _, h in rows:
         ys.append(ys[-1] + h)
     bottom = ys[-1]
+    # colored bands first (under the grid and the texts): the title row, the
+    # types' row and the row names' column, each its own shade
+    d.region([[(0, 0), (total, 0), (total, TITLE_H), (0, TITLE_H)]], BAND_TITLE)
+    d.region([[(LABEL_W, ys[0]), (total, ys[0]), (total, ys[1]), (LABEL_W, ys[1])]], BAND_TYPES)
+    d.region([[(0, ys[0]), (LABEL_W, ys[0]), (LABEL_W, bottom), (0, bottom)]], BAND_SIDE)
     d.polyline([(0, 0), (total, 0), (total, bottom), (0, bottom)], True, u"BOKI Cuadro Grilla")
     for y in ys[:-1]:
         d.line((0, y), (total, y), u"BOKI Cuadro Grilla")
@@ -381,10 +393,10 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
         d.line((x, TITLE_H), (x, bottom), u"BOKI Cuadro Grilla")
     d.text(total / 2.0, TITLE_H / 2.0, title, u"BOKI Cuadro Titulo")
     for (name, h), y in zip(rows, ys):
-        d.text(LABEL_W / 2.0, y + h / 2.0, name, u"BOKI Cuadro 3mm" if h < 10 else u"BOKI Cuadro 2mm")
+        d.text(LABEL_W / 2.0, y + h / 2.0, name, u"BOKI Cuadro Cabecera")
     for item, x, w in zip(items, xs, widths):
         mid = x + w / 2.0
-        d.text(mid, ys[0] + TIPO_H / 2.0, item.mark, u"BOKI Cuadro 3mm")
+        d.text(mid, ys[0] + TIPO_H / 2.0, item.mark, u"BOKI Cuadro Cabecera")
         d.text(mid, ys[1] + BXH_H / 2.0, shape_text(item.polygon) if item.polygon else u"-", u"BOKI Cuadro 3mm")
         dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
         diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
