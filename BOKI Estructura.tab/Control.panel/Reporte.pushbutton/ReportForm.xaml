@@ -1,0 +1,45 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reporte del acero"
+        Height="720" Width="1200" MinWidth="900" MinHeight="460"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock FontSize="16" FontWeight="Bold" Text="Reporte del acero del modelo"/>
+            <TextBlock x:Name="txt_project" Foreground="Gray" Margin="0,2,0,10"/>
+            <WrapPanel Margin="0,0,0,10">
+                <Border Background="#FFF3F6F9" CornerRadius="6" Padding="14,6" Margin="0,0,10,0">
+                    <StackPanel><TextBlock x:Name="txt_weight" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Peso total de acero" Foreground="Gray" FontSize="11"/></StackPanel>
+                </Border>
+                <Border Background="#FFF3F6F9" CornerRadius="6" Padding="14,6" Margin="0,0,10,0">
+                    <StackPanel><TextBlock x:Name="txt_length" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Longitud total" Foreground="Gray" FontSize="11"/></StackPanel>
+                </Border>
+                <Border Background="#FFF3F6F9" CornerRadius="6" Padding="14,6" Margin="0,0,10,0">
+                    <StackPanel><TextBlock x:Name="txt_count" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Barras" Foreground="Gray" FontSize="11"/></StackPanel>
+                </Border>
+                <Border Background="#FFF3F6F9" CornerRadius="6" Padding="14,6" Margin="0,0,10,0">
+                    <StackPanel><TextBlock x:Name="txt_ratio" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Cuant&#237;a global (kg/m3 de concreto con acero)" Foreground="Gray" FontSize="11"/></StackPanel>
+                </Border>
+            </WrapPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="Ver: " VerticalAlignment="Center"/>
+                <ComboBox x:Name="cbo_view" Width="200" SelectionChanged="view_changed"/>
+                <CheckBox x:Name="chk_checks" Content="Incluir en el reporte la Revisi&#243;n E.060 y las Interferencias"
+                          Margin="20,0,0,0" VerticalAlignment="Center" IsChecked="True"/>
+            </StackPanel>
+        </StackPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Cerrar" Width="110" Height="36" Click="close_click"/>
+            <Button DockPanel.Dock="Right" Content="Exportar a Excel (CSV)..." Width="190" Height="36" Margin="0,0,8,0" Click="csv_click"/>
+            <Button DockPanel.Dock="Right" Content="Guardar reporte (HTML / PDF)..." Width="220" Height="36" Margin="0,0,8,0" Click="html_click"
+                    ToolTip="Guarda un reporte para imprimir; se abre en el navegador (Imprimir &gt; Guardar como PDF)."/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center"/>
+        </DockPanel>
+        <DataGrid x:Name="grid" AutoGenerateColumns="True" IsReadOnly="True" CanUserAddRows="False"
+                  HeadersVisibility="Column" GridLinesVisibility="Horizontal" AutoGeneratingColumn="grid_column"/>
+    </DockPanel>
+</Window>
