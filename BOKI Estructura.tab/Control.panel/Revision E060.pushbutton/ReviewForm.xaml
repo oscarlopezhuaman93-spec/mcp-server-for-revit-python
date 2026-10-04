@@ -1,0 +1,38 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Revisi&#243;n E.060 - Concreto Armado"
+        Height="780" Width="1400" MinWidth="900" MinHeight="500"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock FontSize="16" FontWeight="Bold" Text="Revisi&#243;n del acero configurado seg&#250;n la Norma E.060 (RNE)"/>
+            <TextBlock Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,8"
+                       Text="Verifica los l&#237;mites prescriptivos de la norma (cuant&#237;as, recubrimientos, espaciados, confinamiento) con lo guardado en Acero Columna, Muro, Cimentaci&#243;n y Escalera. No reemplaza el dise&#241;o por resistencia: el ingeniero revisa las fuerzas."/>
+            <WrapPanel Margin="0,0,0,8">
+                <Border Background="#FFFCEBEB" BorderBrush="#FFE24B4A" BorderThickness="1" CornerRadius="4" Padding="10,4" Margin="0,0,8,0">
+                    <TextBlock x:Name="txt_fail" FontWeight="Bold" Foreground="#FFA32D2D" Text="NO CUMPLE: 0"/>
+                </Border>
+                <Border Background="#FFFAEEDA" BorderBrush="#FFBA7517" BorderThickness="1" CornerRadius="4" Padding="10,4" Margin="0,0,8,0">
+                    <TextBlock x:Name="txt_warn" FontWeight="Bold" Foreground="#FF854F0B" Text="AVISO: 0"/>
+                </Border>
+                <Border Background="#FFEAF3DE" BorderBrush="#FF639922" BorderThickness="1" CornerRadius="4" Padding="10,4" Margin="0,0,16,0">
+                    <TextBlock x:Name="txt_ok" FontWeight="Bold" Foreground="#FF3B6D11" Text="CUMPLE: 0"/>
+                </Border>
+                <TextBlock Text="Estado: " VerticalAlignment="Center"/>
+                <ComboBox x:Name="cbo_status" Width="130" SelectionChanged="filter_changed"/>
+                <TextBlock Text="   Categor&#237;a: " VerticalAlignment="Center"/>
+                <ComboBox x:Name="cbo_category" Width="140" SelectionChanged="filter_changed"/>
+            </WrapPanel>
+        </StackPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Cerrar" Width="110" Height="36" Click="close_click"/>
+            <Button DockPanel.Dock="Right" Content="Exportar a Excel (CSV)..." Width="190" Height="36" Margin="0,0,8,0" Click="export_click"/>
+            <Button DockPanel.Dock="Right" Content="Seleccionar en el modelo" Width="190" Height="36" Margin="0,0,8,0" Click="select_click"
+                    ToolTip="Selecciona en Revit los elementos de la fila elegida."/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center"/>
+        </DockPanel>
+        <DataGrid x:Name="grid" AutoGenerateColumns="True" IsReadOnly="True" SelectionMode="Single"
+                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  LoadingRow="grid_loading_row" AutoGeneratingColumn="grid_column"/>
+    </DockPanel>
+</Window>
