@@ -734,6 +734,14 @@ class Scene3D(object):
                 for x, y, radius in data["bars"]:
                     _add_tube(meshes["longitudinal"], (x + s["x"], y + s["y"], s["z"]),
                               (x + s["x"], y + s["y"], s["z"] + s["height"]), radius if solid else thin, sides)
+        for s in segments:  # a wall's horizontal bars, into the end columns
+            horiz = s.get("horiz") or {}
+            r = horiz.get("radius", 0.005) if solid else thin * 0.8
+            for path in horiz.get("paths") or []:
+                for z in horiz.get("levels") or []:
+                    for a, b in zip(path, path[1:]):
+                        _add_tube(meshes["borde"], (a[0] + s["x"], a[1] + s["y"], s["z"] + z),
+                                  (b[0] + s["x"], b[1] + s["y"], s["z"] + z), r, sides)
         for kind, pts, closed, zs, radius in data["loops"]:
             r = radius if solid else thin * 0.8
             count = len(pts) if closed else len(pts) - 1
