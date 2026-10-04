@@ -1,0 +1,143 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Acero - Escalera"
+        Height="880" Width="1560" MinWidth="1200" MinHeight="640"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
+                    FontWeight="Bold" Click="run_click"
+                    ToolTip="Guarda la configuraci&#243;n en la escalera y genera sus barras (reemplaza las generadas antes)."/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="900"/>
+        </DockPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="370"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: stairs + configuration -->
+            <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
+                           Text="1. Selecciona la escalera (escalera moldeada in situ de Revit)."/>
+                <Button x:Name="button_pick" Content="SELECCIONAR ESCALERA" Height="34" FontWeight="Bold" Click="pick_click"/>
+                <TextBlock x:Name="txt_picked" Foreground="Gray" HorizontalAlignment="Center" Margin="0,4,0,6"
+                           Text="No hay escaleras seleccionadas."/>
+                <ListBox x:Name="list_elements" MaxHeight="110" SelectionChanged="element_selected"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+
+                <Expander Header="2. Configuraci&#243;n de acero" Margin="0,8,0,0" IsExpanded="True">
+                    <StackPanel Margin="6,4,6,4">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <TextBlock Text="Recubrimiento: " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_cover" Width="44" TextChanged="form_changed"/>
+                            <TextBlock Text=" cm   Garganta: " VerticalAlignment="Center"/>
+                            <TextBlock x:Name="txt_waist" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+
+                        <CheckBox x:Name="chk_inf" Content="Acero inferior (positivo)" FontWeight="Bold" Margin="0,4,0,2" Click="form_changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_inf}">
+                            <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_inf_d" Width="58" SelectionChanged="form_changed"/>
+                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_inf_s" Width="44" TextChanged="form_changed"/>
+                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="16,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_inf}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_inf_t" Width="270" SelectionChanged="type_changed"/>
+                        </StackPanel>
+
+                        <CheckBox x:Name="chk_sup" Content="Acero superior (negativo, bastones)" FontWeight="Bold" Margin="0,6,0,2" Click="form_changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sup}">
+                            <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_sup_d" Width="58" SelectionChanged="form_changed"/>
+                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_sup_s" Width="44" TextChanged="form_changed"/>
+                            <TextBlock Text=" m   Bast&#243;n " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_sup_neg" Width="44" TextChanged="form_changed"
+                                     ToolTip="Largo del bast&#243;n a cada lado del apoyo o quiebre (m). Vac&#237;o: autom&#225;tico, un cuarto del tramo (m&#237;nimo 0.60 m)."/>
+                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="16,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_sup}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_sup_t" Width="270" SelectionChanged="type_changed"/>
+                        </StackPanel>
+
+                        <CheckBox x:Name="chk_temp" Content="Acero de temperatura (transversal)" FontWeight="Bold" Margin="0,6,0,2" Click="form_changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_temp}">
+                            <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_temp_d" Width="58" SelectionChanged="form_changed"/>
+                            <TextBlock Text="  @ " VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_temp_s" Width="44" TextChanged="form_changed"/>
+                            <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="16,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_temp}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_temp_t" Width="270" SelectionChanged="type_changed"/>
+                        </StackPanel>
+
+                        <CheckBox x:Name="chk_step" Content="Acero en los pasos (una barra en cada nariz)" FontWeight="Bold" Margin="0,6,0,2" Click="form_changed"/>
+                        <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_step}">
+                            <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_step_d" Width="58" SelectionChanged="form_changed"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="16,0,0,2" IsEnabled="{Binding IsChecked, ElementName=chk_step}">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_step_t" Width="270" SelectionChanged="type_changed"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
+                <Expander Header="3. Tramos" Margin="0,8,0,0" IsExpanded="True">
+                    <StackPanel Margin="6,4,6,4">
+                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,4"
+                                   Text="Cada tramo es un tramo recto del recorrido de la escalera (sus descansos entran en el corte). Desmarca los que no llevan acero; haz clic en uno (o en su eje en la planta) para ver su corte."/>
+                        <StackPanel x:Name="panel_tramos"/>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+            </ScrollViewer>
+
+            <!-- Center: plan + steel 3D -->
+            <Grid Grid.Column="1" Margin="0,0,6,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="PLANTA (clic en el eje de un tramo para ver su corte)"/>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
+                        <Canvas x:Name="canvas_plan" Background="White" ClipToBounds="True" SizeChanged="views_resized"
+                                MouseLeftButtonDown="plan_left" MouseWheel="plan_wheel" MouseDown="plan_down" MouseUp="plan_up" MouseMove="plan_move"/>
+                    </Border>
+                </DockPanel>
+                <DockPanel Grid.Row="1">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                        <TextBlock FontWeight="Bold" Text="VISTA 3D - ACERO (con los elementos conectados)   " VerticalAlignment="Center"/>
+                        <Button Content="Ajustar" Padding="8,0" Click="fit_3d"/>
+                    </StackPanel>
+                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
+                        <Viewport3D x:Name="view3d" ClipToBounds="True"
+                                    MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
+                                    MouseMove="view3d_mouse_move"/>
+                    </Border>
+                </DockPanel>
+            </Grid>
+
+            <!-- Right: the cut of the chosen tramo -->
+            <DockPanel Grid.Column="2">
+                <TextBlock DockPanel.Dock="Top" x:Name="txt_cut_title" FontWeight="Bold" Margin="0,0,0,4" Text="CORTE DEL TRAMO"/>
+                <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="10" TextWrapping="Wrap" Margin="0,3,0,0"
+                           Text="Rojo: acero inferior. Azul: superior (bastones). Puntos verdes: temperatura. Puntos naranjas: pasos. Clic en una cota amarilla para cambiar el anclaje y la pata de ese extremo, o el largo del bast&#243;n. Rueda: zoom, bot&#243;n central: mover, doble clic central: ajustar."/>
+                <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
+                    <Canvas x:Name="canvas_cut" Background="White" ClipToBounds="True" SizeChanged="views_resized"
+                            MouseLeftButtonDown="cut_left" MouseWheel="cut_wheel" MouseDown="cut_down" MouseUp="cut_up" MouseMove="cut_move"/>
+                </Border>
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>
