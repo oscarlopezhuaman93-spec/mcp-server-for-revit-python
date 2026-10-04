@@ -38,7 +38,7 @@ from pyrevit import revit, DB, forms, script
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
-from System.Windows import Thickness, VerticalAlignment, TextWrapping
+from System.Windows import Thickness, VerticalAlignment, TextWrapping, Visibility, FontWeights
 from System.Windows.Controls import DockPanel, Dock, ListBoxItem, StackPanel, TextBlock, TextBox, Orientation
 from System.Windows.Input import MouseButton
 from System.Windows.Media import Color, SolidColorBrush
@@ -55,6 +55,7 @@ COVERS_PARAM = "EA_Cim_Recubrimientos"  # JSON {face number: cm} on the type
 STEEL_PARAM = "EA_Cim_Acero"  # JSON meshes + sketched bars on the type (rf.default_steel)
 BAR_KEYS = [k for k in rs.bar_diameter_keys() if 6 <= rs.BAR_DIAMETERS_MM[k] <= 36]
 AUTO_TYPE = u"(automatico)"
+PLAN = u"planta"  # the plan view's key (navigation, frames)
 PALETTE = [(231, 76, 60), (52, 152, 219), (46, 204, 113), (241, 196, 15), (155, 89, 182),
            (230, 126, 34), (26, 188, 156), (233, 30, 99), (121, 85, 72), (0, 150, 136),
            (63, 81, 181), (205, 220, 57)]
@@ -122,7 +123,10 @@ class CimentacionWindow(forms.WPFWindow):
         self.highlight = None
         self.scene = rv.Scene3D(self.view3d)
         self.scene_steel = rv.Scene3D(self.view3d_steel)
-        self.navs = {rf.FRONT: rv.Nav2D(), rf.SIDE: rv.Nav2D()}
+        self.navs = {rf.FRONT: rv.Nav2D(), rf.SIDE: rv.Nav2D(), PLAN: rv.Nav2D()}
+        self.cuts = {}  # element id -> {FRONT: y, SIDE: x} of the elevation cuts
+        self._plan_drag = None
+        self._planners = {}
         self._steel_sig = None
         self.selected_sketch = None
         self._cache = {}
@@ -142,6 +146,10 @@ class CimentacionWindow(forms.WPFWindow):
             combo.ItemsSource = names
             combo.SelectedItem = AUTO_TYPE
         self.cbo_sketch_m.SelectedItem = rf.SPACING
+        self.cbo_plan_layer.ItemsSource = [u"Inferior", u"Superior"]
+        self.cbo_plan_layer.SelectedIndex = 0
+        self.cbo_plan_dir.ItemsSource = [u"X", u"Y"]
+        self.cbo_plan_dir.SelectedIndex = 0
         self.cbo_sketch_d.SelectedItem = u'1/2"'
         self._filling = False
         self._fill_splice()
@@ -182,7 +190,7 @@ class CimentacionWindow(forms.WPFWindow):
             self.state.covers[item.Tag] = dict(
                 (f.number, saved.get(f.number, default_cover(f))) for f in self.foundation.faces)
         x0, x1, y0, y1, z0, z1 = self.foundation.extent
-        self.txt_title.Text = u"VISTA 3D - {}  ({:.2f} x {:.2f} x {:.2f} m)".format(
+        self.txt_title.Text = u"{}  ({:.2f} x {:.2f} x {:.2f} m)".format(
             element.Name, x1 - x0, y1 - y0, z1 - z0)
         self._fill_covers()
         self.highlight = None
@@ -379,7 +387,7 @@ class CimentacionWindow(forms.WPFWindow):
         return best[1]
 
     def _sketch_click(self, view, canvas, args):
-        if not self._drawing() or (view == rf.SIDE and self.rb_plan.IsChecked):
+        if not self._drawing():
             return
         p = self._to_model(view, canvas, args)
         if p is None:
@@ -758,27 +766,259 @@ class CimentacionWindow(forms.WPFWindow):
     def _draw_elevations(self):
         for canvas, view in ((self.canvas_front, rf.FRONT), (self.canvas_side, rf.SIDE)):
             self._draw_elevation(canvas, view)
+        self._draw_plan()
 
     def lower_view_changed(self, sender, args):
         if hasattr(self, "navs"):
             self.navs[rf.SIDE].reset()
             self._draw_elevation(self.canvas_side, rf.SIDE)
 
-    def _draw_plan(self, canvas):
+    # -- plan: zones and cuts ----------------------------------------------
+    def top_view_changed(self, sender, args):
+        if not hasattr(self, "border_plan"):
+            return
+        plan = bool(self.rb_top_plan.IsChecked)
+        self.border_plan.Visibility = Visibility.Visible if plan else Visibility.Collapsed
+        self.txt_plan_hint.Visibility = self.border_plan.Visibility
+        self.panel_plan_tools.Visibility = self.border_plan.Visibility
+        self.border_3d.Visibility = Visibility.Collapsed if plan else Visibility.Visible
+        if plan:
+            self.UpdateLayout()
+            self._draw_plan()
+        else:
+            self.UpdateLayout()
+            self.scene._extent = None
+            self._build_3d()
+
+    def plan_tools_changed(self, sender, args):
+        if hasattr(self, "canvas_plan"):
+            self._draw_plan()
+
+    def _plan_sel(self):
+        """(layer, settings, axis, lo, hi) of the mesh direction edited in
+        plan: axis "x" = the X bars, spread along y (lo..hi of the
+        element), "y" = the Y bars, spread along x."""
+        layer = rf.BOTTOM if self.cbo_plan_layer.SelectedIndex != 1 else rf.TOP
+        axis = u"x" if self.cbo_plan_dir.SelectedIndex != 1 else u"y"
+        x0, x1, y0, y1, _, _ = self.foundation.extent
+        lo, hi = (y0, y1) if axis == u"x" else (x0, x1)
+        return layer, self.state.steel[self.state.active][layer], axis, lo, hi
+
+    def _planner(self):
+        covers = self.state.covers.get(self.state.active, {})
+        key = (self.state.active, json.dumps(sorted(covers.items())))
+        if key not in self._planners:
+            self._planners[key] = rf.BarPlanner(self.foundation, covers, rs.BAR_DIAMETERS_MM)
+        return self._planners[key]
+
+    def _steel_refresh(self):
+        self._draw_elevations()
+        self._build_steel_3d()
+
+    def _plan_point(self, args):
+        frame = self._frames.get(PLAN)
+        if frame is None:
+            return None
+        pt = args.GetPosition(self.canvas_plan)
+        scale, ox, oy = frame
+        return ((pt.X - ox) / scale, (oy - pt.Y) / scale), scale
+
+    def _plan_hit(self, p, scale):
+        """What is under the cursor in plan: ("limit", k), ("cut", view) or None."""
+        tol = 8.0 / scale
+        layer, m, axis, lo, hi = self._plan_sel()
+        zones = m.get("z" + axis) or []
+        coord = p[1] if axis == u"x" else p[0]
+        found = [(abs(coord - zones[k]["b"]), ("limit", k)) for k in range(len(zones) - 1)]
+        found += [(abs(p[1] - self._center(rf.FRONT)), ("cut", rf.FRONT)),
+                  (abs(p[0] - self._center(rf.SIDE)), ("cut", rf.SIDE))]
+        found = [f for f in found if f[0] < tol]
+        return min(found)[1] if found else None  # the nearest line
+
+    def plan_left(self, sender, args):
+        if self.foundation is None:
+            return
+        tag = getattr(args.OriginalSource, "Tag", None)
+        if isinstance(tag, basestring) and tag.startswith(u"zone:"):
+            self._zone_edit(int(tag[5:]))
+            args.Handled = True
+            return
+        found = self._plan_point(args)
+        if found is None:
+            return
+        p, scale = found
+        layer, m, axis, lo, hi = self._plan_sel()
+        if self.btn_zone_split.IsChecked:
+            coord = round(p[1] if axis == u"x" else p[0], 2)
+            m["z" + axis] = rf.split_zone(m.get("z" + axis), coord, m, axis, lo, hi)
+            self._steel_refresh()
+            return
+        hit = self._plan_hit(p, scale)
+        if hit:
+            self._plan_drag = hit
+            self.canvas_plan.CaptureMouse()
+
+    def plan_right(self, sender, args):
+        found = self._plan_point(args)
+        if found is None:
+            return
+        hit = self._plan_hit(*found)
+        if hit and hit[0] == "limit":
+            layer, m, axis, lo, hi = self._plan_sel()
+            m["z" + axis] = rf.remove_limit(m["z" + axis], hit[1])
+            self._steel_refresh()
+
+    def plan_move(self, sender, args):
+        from System.Windows.Input import Cursors
+        if self.navs[PLAN].pan(args.GetPosition(self.canvas_plan)):
+            self._draw_plan()
+            return
+        found = self._plan_point(args)
+        if found is None:
+            return
+        p, scale = found
+        x0, x1, y0, y1, _, _ = self.foundation.extent
+        drag = self._plan_drag
+        if drag is None:
+            hit = self._plan_hit(p, scale)
+            horizontal = hit and ((hit[0] == "cut" and hit[1] == rf.FRONT) or
+                                  (hit[0] == "limit" and self._plan_sel()[2] == u"x"))
+            self.canvas_plan.Cursor = (Cursors.Cross if self.btn_zone_split.IsChecked else
+                                       Cursors.SizeNS if horizontal else Cursors.SizeWE if hit else Cursors.Arrow)
+            return
+        if drag[0] == "cut":
+            view = drag[1]
+            v = round(p[1], 2) if view == rf.FRONT else round(p[0], 2)
+            lo, hi = (y0, y1) if view == rf.FRONT else (x0, x1)
+            self.cuts.setdefault(self.state.active, {})[view] = max(lo + 0.01, min(hi - 0.01, v))
+            self._draw_plan()
+            canvas = self.canvas_front if view == rf.FRONT else self.canvas_side
+            self._draw_elevation(canvas, view)
+        else:
+            layer, m, axis, lo, hi = self._plan_sel()
+            v = round(p[1] if axis == u"x" else p[0], 2)
+            m["z" + axis] = rf.move_limit(m["z" + axis], drag[1], v)
+            self._draw_plan()
+
+    def plan_up(self, sender, args):
+        if args.ChangedButton == MouseButton.Middle:
+            self.navs[PLAN].end_pan()
+            self.canvas_plan.ReleaseMouseCapture()
+            return
+        if args.ChangedButton == MouseButton.Left and self._plan_drag:
+            drag, self._plan_drag = self._plan_drag, None
+            self.canvas_plan.ReleaseMouseCapture()
+            if drag[0] == "limit":
+                self._steel_refresh()
+            else:
+                self._build_steel_3d()
+
+    def plan_wheel(self, sender, args):
+        self._wheel(PLAN, self.canvas_plan, args)
+
+    def plan_down(self, sender, args):
+        self._down(PLAN, self.canvas_plan, args)
+
+    def zones_auto(self, sender, args):
+        if self.foundation is None:
+            return
+        layer, m, axis, lo, hi = self._plan_sel()
+        k = 1 if axis == u"x" else 0
+        breaks = [q[k] for e in rf.plan_outline(self.foundation) for q in e]
+        m["z" + axis] = rf.auto_zones(breaks, lo, hi, m, axis)
+        if len(m["z" + axis]) < 2:
+            m["z" + axis] = []
+            forms.alert(u"La planta no cambia de forma en esa direccion: basta una sola distribucion.",
+                        title="Acero")
+        self._steel_refresh()
+
+    def zones_clear(self, sender, args):
+        if self.foundation is None:
+            return
+        layer, m, axis, lo, hi = self._plan_sel()
+        m["z" + axis] = []
+        self._steel_refresh()
+
+    def _zone_edit(self, k):
+        """A click on a zone's text: its new quantity / spacing (k = -1: the
+        single distribution, written back to the configuration boxes)."""
+        layer, m, axis, lo, hi = self._plan_sel()
+        zones = m.get("z" + axis) or []
+        if k < 0:
+            current = rf.zone_text(m.get("m" + axis, rf.SPACING), m.get("n" + axis, 1), float(m.get("s" + axis) or 0.2))
+            where = u"toda la cimentacion"
+        else:
+            z = zones[k]
+            current = rf.zone_text(z["m"], z["n"], z["s"])
+            where = u"la zona {} ({:.2f} a {:.2f} m)".format(k + 1, z["a"], z["b"])
+        value = forms.ask_for_string(
+            default=current, title="Acero",
+            prompt=u"Barras {} de {}: escribe la cantidad (15), el espaciado (@0.20) o ambos (15@0.20):".format(
+                axis.upper(), where))
+        if value is None:
+            return
+        try:
+            mode, count, spacing = rf.parse_zone_text(value)
+        except ValueError:
+            forms.alert(u"No entiendo '{}'. Ejemplos: 15, @0.20, 15@0.20.".format(value), title="Acero")
+            return
+        if k < 0:
+            c = self._mesh_controls(u"bot" if layer == rf.BOTTOM else u"top")
+            self._filling = True
+            c["m" + axis].SelectedItem = mode
+            c["n" + axis].Text = u"{}".format(count)
+            c["s" + axis].Text = u"{:g}".format(spacing)
+            self._filling = False
+            self.steel_changed(None, None)
+            return
+        zones[k].update({"m": mode, "n": count, "s": spacing})
+        self._steel_refresh()
+
+    def _plan_label(self, canvas, frame, x, y, text, tag, anchor="left"):
+        """A zone's clickable text."""
+        from System.Windows.Input import Cursors
+        from System.Windows.Controls import Canvas
+        from System.Windows import Size
+        tb = TextBlock()
+        tb.Text = text + u"  \u270e"
+        tb.FontSize = 10
+        tb.FontWeight = FontWeights.Bold
+        tb.Foreground = SolidColorBrush(Color.FromRgb(20, 110, 60))
+        tb.Background = SolidColorBrush(Color.FromRgb(255, 246, 200))
+        tb.Tag = tag
+        tb.Cursor = Cursors.Hand
+        tb.ToolTip = u"Clic para cambiar la cantidad / el espaciado"
+        tb.Measure(Size(1e4, 1e4))
+        px, py = rv._px(frame, x, y)
+        if anchor == "center":
+            px -= tb.DesiredSize.Width / 2.0
+        Canvas.SetLeft(tb, px)
+        Canvas.SetTop(tb, py - tb.DesiredSize.Height / 2.0)
+        canvas.Children.Add(tb)
+
+    def _draw_plan(self, canvas=None):
         """The foundation in plan: its outline with each edge's length, the
-        overall sizes, and the two cuts the elevations show."""
+        overall sizes, the bars of the chosen mesh with its zones, and the
+        two cuts (A, B) the elevations show, which can be dragged."""
+        canvas = self.canvas_plan
+        canvas.Children.Clear()
         f = self.foundation
+        if f is None or canvas.ActualWidth < 10 or not self.rb_top_plan.IsChecked:
+            return
         edges = rf.plan_outline(f)
         if not edges:
             return
         xs = [p[0] for e in edges for p in e]
         ys = [p[1] for e in edges for p in e]
         x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 0.45, y0 - 0.45, x1 + 0.45, y1 + 0.45)
+        layer, m, axis, zlo, zhi = self._plan_sel()
+        right = 1.7 if axis == u"x" else 2.3
+        bottom = 0.8 if axis == u"y" else 0.5
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 0.5, y0 - bottom, x1 + right, y1 + 0.5)
         self._fitted = getattr(self, "_fitted", {})
-        self._fitted[rf.SIDE] = fitted
-        frame = self.navs[rf.SIDE].resolve(fitted)
-        self._frames[rf.SIDE] = frame
+        self._fitted[PLAN] = fitted
+        frame = self.navs[PLAN].resolve(fitted)
+        self._frames[PLAN] = frame
         dark = SolidColorBrush(Color.FromRgb(40, 40, 40))
         dim = SolidColorBrush(Color.FromRgb(31, 78, 160))
         red = SolidColorBrush(Color.FromRgb(200, 50, 40))
@@ -803,21 +1043,72 @@ class CimentacionWindow(forms.WPFWindow):
         rv._text(canvas, frame, cx, y0 - 0.38, u"{:.2f} m".format(x1 - x0), brush=dim, size=11, bold=True)
         rv._line(canvas, frame, (x0 - 0.3, y0), (x0 - 0.3, y1), dim, 1)
         rv._text(canvas, frame, x0 - 0.42, cy, u"{:.2f}".format(y1 - y0), brush=dim, size=11, bold=True)
-        # the cuts of the elevations
+        # the bars of the chosen mesh (as generated: cut to the shape)
+        try:
+            bars = self._planner().mesh(layer, dict(m, on=True))
+        except Exception:
+            bars = []
+        for view, pos, path, key, _ in bars:
+            us = [q[0] for q in path]
+            if view == rf.FRONT:
+                a, b = (min(us), pos), (max(us), pos)
+            else:
+                a, b = (pos, -max(us)), (pos, -min(us))
+            mine = (view == rf.FRONT) == (axis == u"x")
+            color = (Color.FromArgb(255 if mine else 70, 200, 70, 40) if view == rf.FRONT
+                     else Color.FromArgb(255 if mine else 70, 40, 90, 200))
+            rv._line(canvas, frame, a, b, SolidColorBrush(color), 1.6 if mine else 1)
+        lo_c, hi_c = self._planner()._range(rf.FRONT if axis == u"x" else rf.SIDE,
+                                            rs.BAR_DIAMETERS_MM[m["d" + axis]] / 1000.0)
+        per_zone = {}
+        for _, k in rf.zone_positions(lo_c, hi_c, m, axis):
+            per_zone[k] = per_zone.get(k, 0) + 1
+        # the zones of the chosen direction, their limits and clickable texts
+        green = SolidColorBrush(Color.FromRgb(20, 140, 70))
+        zones = m.get("z" + axis) or []
+        shown = zones or [rf.zone_from(m, axis, zlo, zhi)]
+        for k, z in enumerate(shown):
+            n = per_zone.get(k, 0)
+            text = u"{}{}  ({} barras)".format(u"Z{}: ".format(k + 1) if zones else u"Toda: ",
+                                               rf.zone_text(z["m"], z["n"], z["s"]), n)
+            tag = u"zone:{}".format(k if zones else -1)
+            mid = (z["a"] + z["b"]) / 2.0
+            if axis == u"x":
+                rv._line(canvas, frame, (x1 + 0.1, z["a"] + 0.02), (x1 + 0.1, z["b"] - 0.02), green, 3)
+                self._plan_label(canvas, frame, x1 + 0.16, mid, text, tag)
+            else:
+                rv._line(canvas, frame, (z["a"] + 0.02, y0 - 0.55), (z["b"] - 0.02, y0 - 0.55), green, 3)
+                # the texts in a column on the right, each with its x range
+                rv._text(canvas, frame, mid, y0 - 0.67, u"Z{}".format(k + 1) if zones else u"", brush=green,
+                         size=10, bold=True)
+                self._plan_label(canvas, frame, x1 + 0.16, y1 - 0.1 - k * 20.0 / frame[0],
+                                 text + (u"  x {:.2f} a {:.2f}".format(z["a"], z["b"]) if zones else u""), tag)
+        for k in range(len(zones) - 1):
+            v = zones[k]["b"]
+            if axis == u"x":
+                rv._line(canvas, frame, (x0 - 0.15, v), (x1 + 0.15, v), green, 1.5, dash=True)
+                rv._text(canvas, frame, x1 + 0.16, v, u"{:.2f}".format(v), brush=green, size=10, bold=True, anchor="left")
+            else:
+                rv._line(canvas, frame, (v, y0 - 0.15), (v, y1 + 0.15), green, 1.5, dash=True)
+                rv._text(canvas, frame, v, y1 + 0.24, u"{:.2f}".format(v), brush=green, size=10, bold=True)
+        # the cuts of the elevations (drag them)
         yc = self._center(rf.FRONT)
         xc = self._center(rf.SIDE)
-        rv._line(canvas, frame, (x0 - 0.2, yc), (x1 + 0.2, yc), red, 1.5, dash=True)
-        rv._text(canvas, frame, x1 + 0.3, yc + 0.08, u"A  Alzado frontal", brush=red, size=11, anchor="left", bold=True)
-        rv._line(canvas, frame, (xc, y0 - 0.2), (xc, y1 + 0.2), red, 1.5, dash=True)
-        rv._text(canvas, frame, xc + 0.05, y1 + 0.3, u"B  Alzado lateral", brush=red, size=11, anchor="left", bold=True)
-        rv._text(canvas, frame, x1 + 0.1, y1 + 0.3, u"X \u2192   Y \u2191", brush=dark, size=10)
+        rv._line(canvas, frame, (x0 - 0.25, yc), (x1 + 0.25, yc), red, 2, dash=True)
+        rv._text(canvas, frame, x0 - 0.14, yc + 0.13, u"A", brush=red, size=13, bold=True)
+        rv._line(canvas, frame, (xc, y0 - 0.25), (xc, y1 + 0.25), red, 2, dash=True)
+        rv._text(canvas, frame, xc, y1 + 0.38, u"B", brush=red, size=13, bold=True)
+        rv._text(canvas, frame, x1 + 0.1, y1 + 0.38, u"X \u2192   Y \u2191", brush=dark, size=10, anchor="left")
 
     def _center(self, view):
+        """Where the elevation's cut is: y of A (FRONT), x of B (SIDE) -
+        the middle until it is dragged in plan."""
         x0, x1, y0, y1, _, _ = self.foundation.extent
-        return (y0 + y1) / 2.0 if view == rf.FRONT else (x0 + x1) / 2.0
+        mid = (y0 + y1) / 2.0 if view == rf.FRONT else (x0 + x1) / 2.0
+        return self.cuts.get(self.state.active, {}).get(view, mid)
 
     def _section(self, view):
-        key = (self.state.active, view)
+        key = (self.state.active, view, round(self._center(view), 3))
         if key not in self._cache:
             try:
                 self._cache[key] = self.foundation.section(view, self._center(view))
@@ -852,8 +1143,7 @@ class CimentacionWindow(forms.WPFWindow):
         self._dots = getattr(self, "_dots", {})
         self._dots[view] = []
         mm = rs.BAR_DIAMETERS_MM
-        planner = rf.BarPlanner(self.foundation, self.state.covers.get(self.state.active, {}), mm)
-        planner._sections[(view, round(self._center(view), 4))] = self._center_outlines(view)
+        planner = self._planner()
         blue = SolidColorBrush(Color.FromRgb(31, 78, 160))
         dark = SolidColorBrush(Color.FromRgb(40, 40, 40))
         other = rf.SIDE if view == rf.FRONT else rf.FRONT
@@ -880,7 +1170,7 @@ class CimentacionWindow(forms.WPFWindow):
                 z = (min(zs) + d / 2.0 + lvl * d_first) if layer == rf.BOTTOM else (max(zs) - d / 2.0 - lvl * d_first)
                 lo, hi = planner._range(other, d)
                 a = "y" if view == rf.FRONT else "x"
-                for pos in rf.distribute(lo, hi, m.get("m" + a, rf.SPACING), float(m["s" + a]), m.get("n" + a, 1)):
+                for pos in rf.mesh_positions(lo, hi, m, a):
                     u = -pos if view == rf.SIDE else pos
                     if rf.point_inside(inner, (u, z)):
                         self._dot(canvas, frame, u, z, max(2.5, d * frame[0] / 2.0), dark)
@@ -911,17 +1201,23 @@ class CimentacionWindow(forms.WPFWindow):
                 rv._line(canvas, frame, a, b, SolidColorBrush(Color.FromRgb(230, 80, 30)), 2, dash=True)
 
     def _draw_elevation(self, canvas, view):
+        if view == PLAN:
+            self._draw_plan()
+            return
         canvas.Children.Clear()
         f = self.foundation
         if f is None or canvas.ActualWidth < 10:
             return
-        if view == rf.SIDE and self.rb_plan.IsChecked:
-            self._draw_plan(canvas)
-            return
+        at = self._center(view)
+        if view == rf.FRONT:
+            self.txt_front_title.Text = u"ALZADO FRONTAL - corte A en y = {:.2f} m (mirando hacia +Y)".format(at)
+        else:
+            self.txt_side_title.Text = u"ALZADO LATERAL - corte B en x = {:.2f} m (mirando hacia -X)".format(at)
         outlines = self._section(view)
         if not outlines:
             rv._text(canvas, rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, -1, -1, 1, 1),
-                     0, 0, u"El corte por el centro no pasa por el elemento", size=11)
+                     0, 0, u"El corte {} no pasa por el elemento: muevelo en la planta".format(
+                         u"A" if view == rf.FRONT else u"B"), size=11)
             return
         us = [p[0] for pts, _ in outlines for p in pts]
         zs = [p[1] for pts, _ in outlines for p in pts]

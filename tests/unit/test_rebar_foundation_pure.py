@@ -73,3 +73,54 @@ def test_split_path_and_segment_length():
 def test_merge_collinear_edges():
     edges = [((0, 0), (1, 0)), ((1, 0), (3, 0)), ((3, 0), (3, 2))]
     assert sorted(rf.merge_collinear(edges)) == sorted([((0, 0), (3, 0)), ((3, 0), (3, 2))])
+
+
+# --- zones -------------------------------------------------------------------
+MAIN = {"mx": rf.SPACING, "nx": 15, "sx": 0.20}
+
+
+def test_positions_without_zones_is_the_single_distribution():
+    assert rf.mesh_positions(0.0, 1.0, MAIN, "x") == rf.distribute(0.0, 1.0, rf.SPACING, 0.2, 15)
+
+
+def test_zones_each_with_its_distribution_and_shared_limit_once():
+    zones = [{"a": -1.0, "b": 1.0, "m": rf.QUANTITY, "n": 3, "s": 0.2},
+             {"a": 1.0, "b": 3.0, "m": rf.QUANTITY, "n": 5, "s": 0.2}]
+    pos = rf.mesh_positions(-0.9, 2.9, dict(MAIN, zx=zones), "x")
+    assert pos == pytest.approx([-0.9, 0.05, 1.0, 1.475, 1.95, 2.425, 2.9])
+    # the shared bar goes to the zone with a quantity: zone 2 keeps its 5
+    owners = [k for _, k in rf.zone_positions(-0.9, 2.9, dict(MAIN, zx=zones), "x")]
+    assert owners == [0, 0, 1, 1, 1, 1, 1]
+
+
+def test_auto_zones_split_at_the_shape_changes_with_the_same_density():
+    q = {"mx": rf.QUANTITY, "nx": 27, "sx": 0.2}
+    zones = rf.auto_zones([-2.6, -0.9, 1.1, 2.6], -2.6, 2.6, q, "x")
+    assert [(z["a"], z["b"]) for z in zones] == [(-2.6, -0.9), (-0.9, 1.1), (1.1, 2.6)]
+    assert all(z["m"] == rf.SPACING and z["s"] == pytest.approx(0.2) for z in zones)
+
+
+def test_split_move_and_remove_a_limit():
+    zones = rf.split_zone([], 0.5, MAIN, "x", 0.0, 2.0)
+    assert [(z["a"], z["b"]) for z in zones] == [(0.0, 0.5), (0.5, 2.0)]
+    zones = rf.split_zone(zones, 1.2, MAIN, "x", 0.0, 2.0)
+    zones = rf.move_limit(zones, 0, 0.9)
+    assert [(z["a"], z["b"]) for z in zones] == [(0.0, 0.9), (0.9, 1.2), (1.2, 2.0)]
+    assert rf.move_limit(zones, 0, 5.0)[0]["b"] == pytest.approx(1.15)
+    zones = rf.remove_limit(zones, 1)
+    assert [(z["a"], z["b"]) for z in zones] == [(0.0, 0.9), (0.9, 2.0)]
+    assert rf.remove_limit(zones, 0) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("15", (rf.QUANTITY, 15, 0.2)), ("@0.20", (rf.SPACING, 1, 0.2)), ("0,25", (rf.SPACING, 1, 0.25)),
+    ("15@0.20", (rf.BOTH, 15, 0.2)), ("15 barras", (rf.QUANTITY, 15, 0.2)),
+])
+def test_zone_text_round_trip(text, expected):
+    assert rf.parse_zone_text(text) == expected
+    assert rf.parse_zone_text(rf.zone_text(*expected)) == expected
+
+
+def test_zone_text_rejects_garbage():
+    with pytest.raises(ValueError):
+        rf.parse_zone_text("abc")

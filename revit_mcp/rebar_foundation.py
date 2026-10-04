@@ -336,6 +336,118 @@ def distribute(lo, hi, mode, spacing, count):
     return bar_positions(lo, hi, spacing)
 
 
+# --- Distribution zones (pure) ------------------------------------------------
+# A mesh direction may be split into zones along its distribution axis,
+# each with its own mode, quantity and spacing: {"a", "b", "m", "n", "s"}
+# (a..b in the element's local m). Kept in the mesh settings as "zx" (the
+# X bars, spread along y) and "zy" (the Y bars, spread along x).
+def mesh_positions(lo, hi, settings, axis):
+    """Bar positions of one mesh direction ("x" or "y") between lo and hi
+    (the cover range): its zones, or the single distribution."""
+    return [p for p, _ in zone_positions(lo, hi, settings, axis)]
+
+
+def zone_positions(lo, hi, settings, axis):
+    """[(position, zone index)] of one mesh direction (index 0 without
+    zones). A bar on a shared limit is laid once: it goes to the zone
+    with a quantity (its count is kept), else to the first one."""
+    zones = settings.get("z" + axis) or []
+    if not zones:
+        return [(p, 0) for p in distribute(lo, hi, settings.get("m" + axis, SPACING),
+                                           float(settings.get("s" + axis) or 0.2), settings.get("n" + axis, 1))]
+    out = []
+    for k, z in enumerate(sorted(zones, key=lambda z: z["a"])):
+        a, b = max(lo, z["a"]), min(hi, z["b"])
+        if b < a - 1e-6:
+            continue
+        counted = z.get("m", SPACING) != SPACING
+        for p in distribute(a, b, z.get("m", SPACING), float(z.get("s") or 0.2), z.get("n", 1)):
+            if out and p - out[-1][0] <= 0.03:
+                if counted:
+                    out[-1] = (p, k)
+                continue
+            out.append((p, k))
+    return out
+
+
+def zone_from(settings, axis, a, b):
+    """A zone a..b with the direction's single distribution."""
+    return {"a": round(a, 3), "b": round(b, 3), "m": settings.get("m" + axis, SPACING),
+            "n": int(settings.get("n" + axis) or 1), "s": float(settings.get("s" + axis) or 0.2)}
+
+
+def auto_zones(breaks, lo, hi, settings, axis):
+    """Zones split where the shape changes (`breaks`, e.g. the plan
+    corners along the axis), each with the single distribution; a
+    quantity becomes its spacing, so every zone keeps the same density."""
+    cuts = sorted(set(round(b, 3) for b in breaks if lo + 0.05 < b < hi - 0.05))
+    edges = [round(lo, 3)] + cuts + [round(hi, 3)]
+    template = zone_from(settings, axis, lo, hi)
+    if template["m"] != SPACING:
+        n = max(2, template["n"])
+        template["s"] = round((hi - lo) / (n - 1), 2) if template["m"] == QUANTITY else template["s"]
+        template["m"] = SPACING
+    return [dict(template, a=a, b=b) for a, b in zip(edges, edges[1:])]
+
+
+def split_zone(zones, at, settings, axis, lo, hi):
+    """Zones with the one holding `at` split there (both halves keep its
+    distribution); no zones yet: the whole lo..hi is the first one."""
+    zones = [dict(z) for z in (zones or [zone_from(settings, axis, lo, hi)])]
+    for k, z in enumerate(zones):
+        if z["a"] + 0.05 < at < z["b"] - 0.05:
+            zones[k:k + 1] = [dict(z, b=at), dict(z, a=at)]
+            break
+    return zones
+
+
+def move_limit(zones, k, to):
+    """The limit between zone k and k+1 moved to `to` (each keeps 5 cm)."""
+    zones = [dict(z) for z in zones]
+    to = max(zones[k]["a"] + 0.05, min(zones[k + 1]["b"] - 0.05, to))
+    zones[k]["b"] = zones[k + 1]["a"] = to
+    return zones
+
+
+def remove_limit(zones, k):
+    """The limit between zone k and k+1 taken away: zone k takes both."""
+    zones = [dict(z) for z in zones]
+    zones[k]["b"] = zones[k + 1]["b"]
+    del zones[k + 1]
+    return zones if len(zones) > 1 else []
+
+
+def parse_zone_text(text):
+    """(mode, count, spacing) from "15" (quantity), "@0.20" / "0.20"
+    (spacing) or "15@0.20" (both); ValueError otherwise."""
+    t = (text or u"").replace(u",", u".").replace(u" ", u"")
+    for word in (u"barras", u"barra", u"m"):
+        t = t.replace(word, u"")
+    if u"@" in t:
+        n, sp = t.split(u"@", 1)
+        spacing = float(sp)
+        if spacing <= 0.01:
+            raise ValueError(text)
+        if n:
+            return BOTH, max(1, int(n)), spacing
+        return SPACING, 1, spacing
+    if u"." in t:
+        spacing = float(t)
+        if spacing <= 0.01:
+            raise ValueError(text)
+        return SPACING, 1, spacing
+    return QUANTITY, max(1, int(t)), 0.2
+
+
+def zone_text(mode, count, spacing):
+    """The text parse_zone_text reads back."""
+    if mode == QUANTITY:
+        return u"{}".format(int(count))
+    if mode == BOTH:
+        return u"{}@{:g}".format(int(count), spacing)
+    return u"@{:g}".format(spacing)
+
+
 def snap_to_outline(p, outline, tol):
     """The point of the outline nearest to p when within tol (m), else p."""
     best = None
@@ -405,8 +517,7 @@ class BarPlanner(object):
             lo, hi = self._range(view, d)
             # the second direction lies on the first: one first-direction bar further in
             level_d = self.mm[settings["dx"]] / 1000.0 if level else 0.0
-            for pos in distribute(lo, hi, settings.get("m" + axis, SPACING), float(settings[skey]),
-                                  settings.get("n" + axis, 1)):
+            for pos in mesh_positions(lo, hi, settings, axis):
                 for _, inner in self.outlines(view, pos):
                     zs = [p[1] for p in inner]
                     ha = float(settings.get("hook_a", settings.get("hook")) or 0.0)

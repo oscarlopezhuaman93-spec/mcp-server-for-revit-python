@@ -188,12 +188,42 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                    <TextBlock DockPanel.Dock="Top" x:Name="txt_title" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D - CARAS"/>
-                    <Border BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White">
-                        <Viewport3D x:Name="view3d" ClipToBounds="True"
-                                    MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
-                                    MouseMove="view3d_mouse_move"/>
-                    </Border>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                        <RadioButton x:Name="rb_top_plan" GroupName="topview" IsChecked="True" Checked="top_view_changed"
+                                     FontWeight="Bold" Content="PLANTA (zonas y cortes)" Margin="0,0,14,0"/>
+                        <RadioButton x:Name="rb_top_3d" GroupName="topview" Checked="top_view_changed"
+                                     FontWeight="Bold" Content="VISTA 3D - CARAS"/>
+                    </StackPanel>
+                    <TextBlock DockPanel.Dock="Top" x:Name="txt_title" Foreground="Gray" FontSize="11" Margin="0,0,0,3"
+                               TextTrimming="CharacterEllipsis"/>
+                    <WrapPanel DockPanel.Dock="Top" x:Name="panel_plan_tools" Margin="0,0,0,4">
+                        <TextBlock Text="Malla " VerticalAlignment="Center"/>
+                        <ComboBox x:Name="cbo_plan_layer" Width="80" SelectionChanged="plan_tools_changed"
+                                  ToolTip="La malla que se ve y se edita en la planta."/>
+                        <TextBlock Text="  Barras " VerticalAlignment="Center"/>
+                        <ComboBox x:Name="cbo_plan_dir" Width="62" SelectionChanged="plan_tools_changed"
+                                  ToolTip="X: las barras que corren en X (se reparten a lo largo de Y). Y: las que corren en Y."/>
+                        <Button Content="Zonas autom&#225;ticas" Margin="6,0,0,0" Padding="6,1" Click="zones_auto"
+                                ToolTip="Divide el reparto donde cambia la forma de la planta (entrantes, quiebres). Cada zona toma la distribuci&#243;n de la configuraci&#243;n; una cantidad se convierte en su espaciado, para que todas tengan la misma densidad."/>
+                        <ToggleButton x:Name="btn_zone_split" Content="&#9986; Dividir zona" Margin="4,0,0,0" Padding="6,1"
+                                      ToolTip="Clic en la planta donde quieres cortar la zona: las dos partes conservan su distribuci&#243;n."/>
+                        <Button Content="Quitar zonas" Margin="4,0,0,0" Padding="6,1" Click="zones_clear"
+                                ToolTip="Vuelve a una sola distribuci&#243;n en toda la cimentaci&#243;n."/>
+                    </WrapPanel>
+                    <TextBlock DockPanel.Dock="Bottom" x:Name="txt_plan_hint" Foreground="Gray" FontSize="10" TextWrapping="Wrap" Margin="0,3,0,0"
+                               Text="Arrastra las l&#237;neas rojas A y B para mover los cortes de los alzados. Clic en el texto de una zona para cambiar su cantidad (15), espaciado (@0.20) o ambos (15@0.20). Arrastra un l&#237;mite verde para moverlo; clic derecho sobre &#233;l lo quita. Rueda: zoom, bot&#243;n central: mover, doble clic central: ajustar."/>
+                    <Grid>
+                        <Border x:Name="border_plan" BorderBrush="#FFBBBBBB" BorderThickness="1">
+                            <Canvas x:Name="canvas_plan" Background="White" ClipToBounds="True" SizeChanged="views_resized"
+                                    MouseLeftButtonDown="plan_left" MouseRightButtonDown="plan_right" MouseMove="plan_move"
+                                    MouseWheel="plan_wheel" MouseDown="plan_down" MouseUp="plan_up"/>
+                        </Border>
+                        <Border x:Name="border_3d" BorderBrush="#FFBBBBBB" BorderThickness="1" Background="White" Visibility="Collapsed">
+                            <Viewport3D x:Name="view3d" ClipToBounds="True"
+                                        MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
+                                        MouseMove="view3d_mouse_move"/>
+                        </Border>
+                    </Grid>
                 </DockPanel>
                 <DockPanel Grid.Row="1">
                     <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="VISTA 3D - ACERO (con los elementos conectados)"/>
@@ -212,7 +242,7 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                    <TextBlock DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO FRONTAL (corte por el centro, mirando hacia +Y) - rueda: zoom, bot&#243;n central: mover, doble clic central: ajustar"/>
+                    <TextBlock DockPanel.Dock="Top" x:Name="txt_front_title" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO FRONTAL - corte A (mirando hacia +Y)"/>
                     <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                         <Canvas x:Name="canvas_front" Background="White" ClipToBounds="True" SizeChanged="views_resized"
                                 MouseLeftButtonDown="front_left" MouseRightButtonDown="front_right" MouseMove="front_move"
@@ -220,12 +250,7 @@
                     </Border>
                 </DockPanel>
                 <DockPanel Grid.Row="1">
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
-                        <RadioButton x:Name="rb_side" GroupName="lowerview" IsChecked="True" Checked="lower_view_changed"
-                                     FontWeight="Bold" Content="ALZADO LATERAL (corte por el centro, mirando hacia -X)" Margin="0,0,14,0"/>
-                        <RadioButton x:Name="rb_plan" GroupName="lowerview" Checked="lower_view_changed"
-                                     FontWeight="Bold" Content="PLANTA (cotas y cortes)"/>
-                    </StackPanel>
+                    <TextBlock DockPanel.Dock="Top" x:Name="txt_side_title" FontWeight="Bold" Margin="0,0,0,4" Text="ALZADO LATERAL - corte B (mirando hacia -X)"/>
                     <Border BorderBrush="#FFBBBBBB" BorderThickness="1">
                         <Canvas x:Name="canvas_side" Background="White" ClipToBounds="True" SizeChanged="views_resized"
                                 MouseLeftButtonDown="side_left" MouseRightButtonDown="side_right" MouseMove="side_move"
