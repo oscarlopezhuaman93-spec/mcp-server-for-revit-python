@@ -1,0 +1,32 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Interferencias del acero"
+        Height="720" Width="1300" MinWidth="900" MinHeight="460"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock FontSize="16" FontWeight="Bold" Text="Interferencias del acero en el modelo"/>
+            <TextBlock Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,8"
+                       Text="Choques entre barras de distintos elementos (se cruzan ocupando el mismo espacio, con su di&#225;metro real) y avisos de Revit sobre el acero (barras fuera del anfitri&#243;n, formas sin resolver...)."/>
+            <WrapPanel Margin="0,0,0,8">
+                <Border Background="#FFFCEBEB" BorderBrush="#FFE24B4A" BorderThickness="1" CornerRadius="4" Padding="10,4" Margin="0,0,8,0">
+                    <TextBlock x:Name="txt_clash" FontWeight="Bold" Foreground="#FFA32D2D" Text="Choques: 0"/>
+                </Border>
+                <Border Background="#FFFAEEDA" BorderBrush="#FFBA7517" BorderThickness="1" CornerRadius="4" Padding="10,4" Margin="0,0,16,0">
+                    <TextBlock x:Name="txt_warn" FontWeight="Bold" Foreground="#FF854F0B" Text="Avisos de Revit: 0"/>
+                </Border>
+                <TextBlock x:Name="txt_scope" Foreground="Gray" VerticalAlignment="Center"/>
+            </WrapPanel>
+        </StackPanel>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Cerrar" Width="110" Height="36" Click="close_click"/>
+            <Button DockPanel.Dock="Right" Content="Exportar a Excel (CSV)..." Width="190" Height="36" Margin="0,0,8,0" Click="export_click"/>
+            <Button DockPanel.Dock="Right" Content="Mostrar en el modelo" Width="190" Height="36" Margin="0,0,8,0" Click="show_click"
+                    ToolTip="Selecciona y acerca la vista a las barras de la fila elegida."/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center"/>
+        </DockPanel>
+        <DataGrid x:Name="grid" AutoGenerateColumns="True" IsReadOnly="True" SelectionMode="Single"
+                  CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                  LoadingRow="grid_loading_row" AutoGeneratingColumn="grid_column"/>
+    </DockPanel>
+</Window>
