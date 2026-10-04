@@ -13,6 +13,7 @@ nunca debe cambiar lo que hace otra.
 | `rebar_foundation.py` (caras, cortes, mallas) | Cimentación, Muro, Escalera |
 | `rebar_stairs.py` | Escalera |
 | `column_table.py` | Cuadro Columnas |
+| `footing_table.py` (estilos propios "BOKI Zapatas ...") | Cuadro Zapatas |
 | `rebar_splice_ui.py` | Columna, Viga, Muro, Cimentación |
 
 ## Reglas

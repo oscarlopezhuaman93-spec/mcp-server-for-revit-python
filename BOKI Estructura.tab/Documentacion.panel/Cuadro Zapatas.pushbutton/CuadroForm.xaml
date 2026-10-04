@@ -1,0 +1,63 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cuadro de zapatas - vista previa"
+        Height="820" Width="1500" MinWidth="1000" MinHeight="560"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="12">
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Crear cuadro en Leyendas" Width="240" Height="40" FontWeight="Bold"
+                    Click="create_click" ToolTip="Crea una leyenda nueva con el cuadro tal como se ve en la vista previa."/>
+            <Button DockPanel.Dock="Right" Content="Cancelar" Width="110" Height="40" Margin="0,0,8,0" Click="cancel_click"/>
+            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center"/>
+        </DockPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="340"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0" Margin="0,0,10,0">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="T&#237;tulo (tambi&#233;n es el nombre de la leyenda):" Margin="0,0,0,3"/>
+                    <TextBox x:Name="txt_title" Height="24" TextChanged="options_changed"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="Escala  1 : " VerticalAlignment="Center" Width="150"/>
+                        <ComboBox x:Name="cbo_scale" Width="70" SelectionChanged="options_changed"
+                                  ToolTip="Escala de la leyenda (el cuadro es de textos: solo cambia su tama&#241;o en el modelo)."/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Transparencia de bandas:" VerticalAlignment="Center" Width="150"/>
+                        <ComboBox x:Name="cbo_alpha" Width="70" SelectionChanged="options_changed"/>
+                        <TextBlock Text=" %" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Solado (m):" VerticalAlignment="Center" Width="150"/>
+                        <TextBox x:Name="txt_solado" Width="70" TextChanged="options_changed"
+                                 ToolTip="Espesor del solado bajo la cimentaci&#243;n (m)."/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Df desde el nivel:" VerticalAlignment="Center" Width="150"/>
+                        <ComboBox x:Name="cbo_level" Width="170" SelectionChanged="options_changed"
+                                  ToolTip="ALTURA Df: desde este nivel (terreno) hasta el fondo de la cimentaci&#243;n."/>
+                    </StackPanel>
+                    <TextBlock Text="Tipos de cimentaci&#243;n a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                        <Button Content="Zapatas" Padding="6,1" Click="check_footings"/>
+                        <Button Content="Con acero" Padding="6,1" Margin="4,0,0,0" Click="check_with_steel"/>
+                        <Button Content="Todos" Padding="6,1" Margin="4,0,0,0" Click="check_all"/>
+                        <Button Content="Ninguno" Padding="6,1" Margin="4,0,0,0" Click="check_none"/>
+                    </StackPanel>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
+                           Text="b y L: lados de la planta (b el menor). Acero b: barras repartidas a lo ancho de b; Acero L: a lo largo de L. El acero sale de lo guardado en Acero Cimentaci&#243;n para cada tipo (sin acero: '-')."/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="panel_types"/>
+                </ScrollViewer>
+            </DockPanel>
+            <Border Grid.Column="1" BorderBrush="#FFBBBBBB" BorderThickness="1" Background="#FF212830">
+                <ScrollViewer x:Name="scroll_preview" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                    <Canvas x:Name="canvas_preview" Background="#FF212830"/>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
