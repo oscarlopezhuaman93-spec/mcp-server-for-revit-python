@@ -3,7 +3,7 @@
 columnas, vigas, losas, muros y cimentacion de concreto, evitando doble
 conteo en caras de contacto entre elementos estructurales."""
 
-__title__ = "Encofrado"
+__title__ = "Generar\nEncofrado"
 __author__ = "Revit MCP"
 
 import os

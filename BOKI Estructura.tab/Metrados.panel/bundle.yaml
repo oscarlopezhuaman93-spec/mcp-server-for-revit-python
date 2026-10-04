@@ -1,0 +1,7 @@
+background:
+  panel: "#33378ADD"
+  title: "#FF378ADD"
+  slideout: "#33378ADD"
+layout:
+  - Metrados
+  - Tablas Revit

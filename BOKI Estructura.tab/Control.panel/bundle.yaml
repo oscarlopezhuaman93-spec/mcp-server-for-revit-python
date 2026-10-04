@@ -1,0 +1,8 @@
+background:
+  panel: "#33D85A5A"
+  title: "#FFD85A5A"
+  slideout: "#33D85A5A"
+layout:
+  - Revision E060
+  - Interferencias
+  - Reporte

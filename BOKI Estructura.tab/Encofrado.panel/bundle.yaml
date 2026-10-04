@@ -1,0 +1,6 @@
+background:
+  panel: "#331D9E75"
+  title: "#FF1D9E75"
+  slideout: "#331D9E75"
+layout:
+  - Generar Encofrado

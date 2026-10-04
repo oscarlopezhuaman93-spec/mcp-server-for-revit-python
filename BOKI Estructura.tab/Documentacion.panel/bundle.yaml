@@ -1,0 +1,9 @@
+background:
+  panel: "#33D9A015"
+  title: "#FFD9A015"
+  slideout: "#33D9A015"
+layout:
+  - Etiquetar
+  - Cuadro Zapatas
+  - Cuadro Columnas
+  - Laminas

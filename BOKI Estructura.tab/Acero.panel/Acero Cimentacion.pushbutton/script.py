@@ -4,7 +4,7 @@ cimentacion). Paso 1: el elemento con sus caras numeradas en 3D, los
 alzados frontal y lateral (corte real por su centro, tambien en formas
 irregulares) y un recubrimiento por cara, guardado en su tipo."""
 
-__title__ = "Acero\nCimentacion"
+__title__ = "Acero\nCimentación"
 __author__ = "Revit MCP"
 
 import io
