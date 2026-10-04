@@ -48,6 +48,22 @@ def test_end_piece_kinds():
     assert flat(rst.end_piece((2.0, 0.6), (1.0, 0.0), "free", 0.0, 0.08, False)) == pytest.approx(flat([(2.0, 0.52)]))
 
 
+def test_end_piece_hooks():
+    # straight: only the anchorage; 180: out, across, back 4 db (>= 0.065)
+    assert flat(rst.end_piece((2.0, 0.6), (1.0, 0.0), "beyond", 0.3, 0.1, True, rst.HOOK_STRAIGHT)) == \
+        pytest.approx(flat([(2.3, 0.6)]))
+    pts = rst.end_piece((2.0, 0.6), (1.0, 0.0), "beyond", 0.3, 0.1, True, rst.HOOK_180, 0.0127)
+    assert flat(pts) == pytest.approx(flat([(2.3, 0.6), (2.3, 0.6 + 0.1016), (2.3 - 0.065, 0.6 + 0.1016)]))
+    # into a footing: down, then the foot going out
+    assert flat(rst.end_piece((0.0, 0.1), (-1.0, 0.0), "down", 0.3, 0.15, True, rst.HOOK_STRAIGHT)) == \
+        pytest.approx(flat([(0.0, -0.2)]))
+
+
+def test_ray_exit_through_a_slab():
+    slab = [(2.15, 3.2), (3.4, 3.2), (3.4, 3.35), (2.15, 3.35)]
+    assert rst.ray_exit(slab, (2.125, 3.3), (1.0, 0.0), 0.05) == pytest.approx(1.275)
+
+
 def test_end_kind_finds_a_footing_below_and_a_wall_beyond():
     footing = ("ZAPATA", [(-0.5, -0.4), (0.5, -0.4), (0.5, 0.0), (-0.5, 0.0)])
     wall = ("MURO", [(2.0, -1.0), (2.2, -1.0), (2.2, 3.0), (2.0, 3.0)])

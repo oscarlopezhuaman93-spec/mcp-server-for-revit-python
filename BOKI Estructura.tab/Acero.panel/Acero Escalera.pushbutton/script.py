@@ -345,13 +345,14 @@ class EscaleraWindow(forms.WPFWindow):
             return
         ss = [p[0] for p in t.profile]
         zs = [p[1] for p in t.profile]
-        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, min(ss) - 0.6, min(zs) - 0.6,
-                              max(ss) + 0.6, max(zs) + 0.4)
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, min(ss) - 1.0, min(zs) - 0.6,
+                              max(ss) + 1.0, max(zs) + 0.5)
         self._fitted[CUT] = fitted
         frame = self.navs[CUT].resolve(fitted)
         self._frames[CUT] = frame
         labelled = set()
-        lo_s, hi_s, lo_z, hi_z = min(ss) - 0.6, max(ss) + 0.6, min(zs) - 0.6, max(zs) + 0.4
+        # the neighbors shown 1.2 m around the tramo: the slab or beam it arrives at reads clearly
+        lo_s, hi_s, lo_z, hi_z = min(ss) - 1.2, max(ss) + 1.2, min(zs) - 0.8, max(zs) + 0.6
         for label, pts in t.neighbors:
             # only what lies around the tramo (a wall may run far)
             clipped = [(max(lo_s, min(hi_s, s)), max(lo_z, min(hi_z, z))) for s, z in pts]
@@ -405,10 +406,12 @@ class EscaleraWindow(forms.WPFWindow):
                     if not real or tag not in plan["ends"] or tag in shown:
                         continue
                     shown.add(tag)
-                    kind, label, anc, leg = plan["ends"][tag]
+                    kind, label, anc, leg, hook = plan["ends"][tag]
                     what = {"down": u"en {}".format(label), "beyond": u"en {}".format(label), "free": u"libre"}[kind]
-                    text = u"{} {}: anclaje {:.2f}, pata {:.2f}".format(
-                        u"Inf" if group == rst.INF else u"Sup", what, anc, leg)
+                    shape = {rst.HOOK_STRAIGHT: u"recto", rst.HOOK_90: u"pata {:.2f}".format(leg),
+                             rst.HOOK_180: u"gancho 180°"}[hook]
+                    text = u"{} {}: {}{}".format(u"Inf" if group == rst.INF else u"Sup", what,
+                                                 u"anclaje {:.2f}, ".format(anc) if kind != "free" else u"", shape)
                     dz = -0.18 if group == rst.INF else 0.18
                     self._edit_label(canvas, frame, pt[0], pt[1] + dz, text, u"end:" + tag,
                                      anchor="left" if which == "start" else "right")
@@ -575,27 +578,51 @@ class EscaleraWindow(forms.WPFWindow):
             return
         if tag.startswith(u"end:"):
             key = tag[4:]
-            kind, label, anc, leg = plan["ends"][key]
-            value = forms.ask_for_string(
-                default=u"{:.2f}, {:.2f}".format(anc, leg), title="Acero",
-                prompt=u"Extremo {} ({}): anclaje y pata en m, separados por coma "
-                       u"(anclaje: lo que entra en el apoyo; pata: el gancho final). "
-                       u"Escribe 'auto' para volver al valor propuesto:".format(
-                           key.split(u":")[-1], label or u"libre"))
+            self.edit_end(key, plan["ends"][key])
+        args.Handled = True
+
+    def edit_end(self, key, current):
+        """A bar end: its shape (straight, 90-degree leg, 180-degree hook or
+        the proposed one) and its lengths."""
+        kind, label, anc, leg, hook = current
+        names = [u"Automático (lo propuesto)"] + [n for _, n in rst.HOOK_NAMES]
+        where = {"down": u"baja a {}".format(label), "beyond": u"entra en {}".format(label),
+                 "free": u"extremo libre"}[kind]
+        group = u"inferior" if u":inferior:" in key else u"superior"
+        choice = forms.SelectFromList.show(
+            names, title=u"Acero {} - {} ({})".format(group, u"inicio" if key.endswith(u"start") else u"llegada", where),
+            button_name=u"Elegir", multiselect=False)
+        if not choice:
+            return
+        ends = self._settings().setdefault("ends", {})
+        if choice == names[0]:
+            ends.pop(key, None)
+            self.redraw()
+            return
+        hook = [h for h, n in rst.HOOK_NAMES if n == choice][0]
+        new = {"hook": hook, "anc": anc, "leg": leg}
+        if kind != "free":
+            value = forms.ask_for_string(default=u"{:.2f}".format(anc), title="Acero",
+                                         prompt=u"Longitud que entra (m) en {}:".format(label))
             if value is None:
                 return
-            ends = st.setdefault("ends", {})
-            if value.strip().lower() == u"auto":
-                ends.pop(key, None)
-            else:
-                try:
-                    parts = [float(v.strip().replace(u",", u".")) for v in value.replace(u";", u" ").replace(u", ", u" ").split()]
-                    ends[key] = {"anc": max(0.0, parts[0]), "leg": max(0.0, parts[1] if len(parts) > 1 else leg)}
-                except (ValueError, IndexError):
-                    forms.alert(u"Escribe dos numeros, por ejemplo: 0.30, 0.15", title="Acero")
-                    return
-            self.redraw()
-        args.Handled = True
+            try:
+                new["anc"] = max(0.0, float(value.strip().replace(u",", u".")))
+            except ValueError:
+                forms.alert(u"Escribe un numero, por ejemplo 0.30", title="Acero")
+                return
+        if hook == rst.HOOK_90:
+            value = forms.ask_for_string(default=u"{:.2f}".format(leg if leg > 0.01 else 0.15), title="Acero",
+                                         prompt=u"Largo de la pata (m):")
+            if value is None:
+                return
+            try:
+                new["leg"] = max(0.0, float(value.strip().replace(u",", u".")))
+            except ValueError:
+                forms.alert(u"Escribe un numero, por ejemplo 0.15", title="Acero")
+                return
+        ends[key] = new
+        self.redraw()
 
     def view3d_wheel(self, sender, args):
         self.scene.wheel(args.Delta)

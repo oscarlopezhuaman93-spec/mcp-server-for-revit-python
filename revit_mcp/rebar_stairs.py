@@ -218,26 +218,48 @@ def with_ends(path, start=None, end=None):
     return merge_straight(pts)
 
 
-def end_piece(point, out_dir, kind, anchor, leg, up):
+HOOK_STRAIGHT = u"recto"
+HOOK_90 = u"90"
+HOOK_180 = u"180"
+HOOK_NAMES = ((HOOK_STRAIGHT, u"Recto (solo longitud)"), (HOOK_90, u"Doblez 90° (pata)"),
+              (HOOK_180, u"Gancho 180°"))
+
+
+def hook_180(diameter_m):
+    """(bend diameter, straight return) of a 180-degree hook, E.060 7.1 /
+    7.2: return 4 db, at least 0.065 m; bend 8 db here (room for Revit's
+    own bend radius)."""
+    return 8 * diameter_m, max(0.065, 4 * diameter_m)
+
+
+def end_piece(point, out_dir, kind, anchor, leg, up, hook=HOOK_90, diameter=0.0127):
     """Points added beyond a bar end. kind: "down" - into a support below
-    (anchor m down, then a foot of `leg` m going out), "beyond" - straight
-    on into what it meets (anchor m) then a 90 degree leg towards the
-    other face, "free" - only the leg towards the other face. `up`: the
-    other face is above (an inferior bar)."""
+    (anchor m down, then the hook going out), "beyond" - straight on into
+    what it meets (anchor m) then the hook towards the other face,
+    "free" - only the hook towards the other face. hook: HOOK_STRAIGHT
+    (none), HOOK_90 (a leg of `leg` m) or HOOK_180 (turned back). `up`:
+    the other face is above (an inferior bar)."""
     x, z = point
-    side = 1.0 if up else -1.0
     pts = []
     if kind == "down":
-        if anchor > 0.01:
-            pts.append((x, z - anchor))
-            if leg > 0.01:
-                pts.append((x + (1.0 if out_dir[0] >= 0 else -1.0) * leg, z - anchor))
-        return pts
-    if kind == "beyond" and anchor > 0.01:
-        x, z = x + out_dir[0] * anchor, z + out_dir[1] * anchor
+        if anchor <= 0.01:
+            return pts
+        x, z = x, z - anchor
         pts.append((x, z))
-    if leg > 0.01:
-        pts.append((x, z + side * leg))
+        last = (0.0, -1.0)
+        side = (1.0 if out_dir[0] >= 0 else -1.0, 0.0)  # the foot goes out
+    else:
+        if kind == "beyond" and anchor > 0.01:
+            x, z = x + out_dir[0] * anchor, z + out_dir[1] * anchor
+            pts.append((x, z))
+        last = out_dir
+        side = (0.0, 1.0 if up else -1.0)
+    if hook == HOOK_90 and leg > 0.01:
+        pts.append((x + side[0] * leg, z + side[1] * leg))
+    elif hook == HOOK_180:
+        bend, back = hook_180(diameter)
+        a = (x + side[0] * bend, z + side[1] * bend)
+        pts += [a, (a[0] - last[0] * back, a[1] - last[1] * back)]
     return pts
 
 
@@ -301,12 +323,28 @@ def end_kind(point, out_dir, neighbors, probe=0.06):
     ahead = (x + out_dir[0] * probe * 2, z + out_dir[1] * probe * 2)
     for label, pts in neighbors:
         if point_inside(pts, ahead):
-            room, step = 0.0, 0.02
-            while room < 2.0 and point_inside(pts, (x + out_dir[0] * (room + step + probe),
-                                                    z + out_dir[1] * (room + step + probe))):
-                room += step
-            return "beyond", label, room + probe
+            return "beyond", label, ray_exit(pts, point, out_dir, probe * 2)
     return "free", None, 0.0
+
+
+def ray_exit(poly, point, direction, past=0.0):
+    """Distance from `point` along `direction` to where the ray leaves the
+    polygon (its first edge crossing beyond `past` m)."""
+    x, z = point
+    best = None
+    n = len(poly)
+    for i in range(n):
+        (a, b), (c, d) = poly[i], poly[(i + 1) % n]
+        ex, ez = c - a, d - b
+        det = direction[0] * (-ez) - direction[1] * (-ex)
+        if abs(det) < 1e-12:
+            continue
+        rx, rz = a - x, b - z
+        t = (rx * (-ez) - rz * (-ex)) / det  # along the ray
+        u = (direction[0] * rz - direction[1] * rx) / det  # along the edge
+        if -1e-9 <= u <= 1 + 1e-9 and t > past and (best is None or t < best):
+            best = t
+    return best or past
 
 
 def end_defaults(kind, room, diameter_m, thickness, cover):
@@ -338,14 +376,29 @@ def plan_tramo(profile, neighbors, settings, thickness, diameters_mm, edits=None
         up = group == INF
         pieces = []
         for which, (pt, out_dir) in zip(("start", "end"), ends_of(path)):
-            kind, label, room = end_kind(pt, out_dir, neighbors)
+            # into a slab, beam or wall the bar goes on level (bent at the
+            # end of a slope), as on site
+            # - unless only going on along the slope reaches it (an
+            # inferior bar arriving under the slab)
+            level = (1.0 if out_dir[0] >= 0 else -1.0, 0.0)
+            kind, label, room = end_kind(pt, level, neighbors)
+            if kind == "free" and abs(out_dir[1]) > 0.05:
+                kind, label, room = end_kind(pt, out_dir, neighbors)
+            else:
+                out_dir = level
             anc, leg = end_defaults(kind, room, d, thickness, cover)
             tag = u"{}:{}:{}".format(key, group, which)
             e = edits.get(tag) or {}
             anc = float(e.get("anc", anc))
             leg = float(e.get("leg", leg))
-            out["ends"][tag] = (kind, label, anc, leg)
-            pieces.append(end_piece(pt, out_dir, kind, anc, leg, up))
+            # never out of the concrete it goes into
+            if kind == "beyond":
+                anc = min(anc, max(0.0, round(room - cover, 2)))
+            elif kind == "down":
+                anc = min(anc, max(0.0, round(room - 0.075, 2)))
+            hook = e.get("hook") or (HOOK_90 if leg > 0.01 else HOOK_STRAIGHT)
+            out["ends"][tag] = (kind, label, anc, leg, hook)
+            pieces.append(end_piece(pt, out_dir, kind, anc, leg, up, hook, d))
         return pieces
 
     inf = settings.get(INF, {})
