@@ -1061,11 +1061,15 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         hook = hooks.get(family.key)
         # In the joint the edge stirrups take EA_Nucleo_cm; the confinement
         # stirrups and ties keep their own rest spacing ("rto") there too.
+        # (Rule changed with the user 2026-10-15.) The joint always has edge
+        # stirrups - at EA_Nucleo_cm, else at their rest spacing ("rto") -,
+        # modeled apart or inside the column alike; the confinement ones go
+        # on into it at their "rto" when EA_Nucleo_cm is set.
         joint_m = column_spec.joint_spacing_m
-        if joint_m and kind == CONFINEMENT:
-            joint_m = family.rest
-        if not joint_m and z_clear_top <= section.z_bottom + 1e-6:
-            joint_m = family.rest  # a joint modeled apart always has its stirrups
+        if kind == CONFINEMENT:
+            joint_m = family.rest if joint_m else None
+        else:
+            joint_m = joint_m or family.rest
         for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]

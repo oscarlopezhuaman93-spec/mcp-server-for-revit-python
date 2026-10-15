@@ -1689,8 +1689,9 @@ class AceroWindow(forms.WPFWindow):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
             joint = []
-            nucleus = clear < 0.05  # a joint modeled apart (rc.is_nucleus): all of it is joint
-            if (f["nucleo"] or nucleus) and height - clear > 0.1:
+            # the joint always has edge stirrups: at "Estribo en nucleo", else
+            # at the edge "rto" (rc.generate_column), apart or inside the column
+            if height - clear > 0.1:
                 try:
                     spacing = (float(f["nucleo"].replace(u",", u".")) / 100.0 if f["nucleo"]
                                else (edge or {}).get("rest"))
@@ -1703,7 +1704,7 @@ class AceroWindow(forms.WPFWindow):
             if edge is None and not edge_msg:
                 messages.append(u"Falta la distribucion del estribo de borde")
             # confinement stirrups/ties keep their "rto" in the joint (rc.generate_column)
-            joint_conf = rs.joint_positions(height - clear, conf["rest"]) if joint and conf else []
+            joint_conf = rs.joint_positions(height - clear, conf["rest"]) if joint and conf and f["nucleo"] else []
             segments.append(dict({"x": dx, "y": dy, "z": dz, "height": height, "clear": clear,
                                   "edge": edge, "conf": conf, "joint": joint, "joint_conf": joint_conf}, **extra))
             for n in touching:
