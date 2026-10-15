@@ -1598,7 +1598,13 @@ class AceroWindow(forms.WPFWindow):
 
     def _level_name(self, column):
         level = doc.GetElement(column.LevelId)
-        return level.Name if level else u"sin nivel"
+        name = level.Name if level else u"sin nivel"
+        try:
+            if rc.is_nucleus(doc, column):
+                name += u" (núcleo)"
+        except Exception:
+            pass
+        return name
 
     def view_column_changed(self, sender, args):
         if getattr(self, "_filling_columns", True):
@@ -1627,8 +1633,9 @@ class AceroWindow(forms.WPFWindow):
             zones, rest = rs.parse_distribution(dist_text)
         except rs.SpecError as e:
             return None, u"{}".format(e)
-        return {"key": key, "zones": zones, "rest": rest,
-                "tagged": rs.stirrup_zone_positions(clear, zones, rest)}, None
+        # a joint modeled apart (clear 0) has no distribution of its own
+        tagged = rs.stirrup_zone_positions(clear, zones, rest) if clear >= 0.05 else []
+        return {"key": key, "zones": zones, "rest": rest, "tagged": tagged}, None
 
     def _views_data(self):
         """(elevation data, 3D data) of the active type as configured and
@@ -1682,9 +1689,13 @@ class AceroWindow(forms.WPFWindow):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
             joint = []
-            if f["nucleo"] and height - clear > 0.1:
+            nucleus = clear < 0.05  # a joint modeled apart (rc.is_nucleus): all of it is joint
+            if (f["nucleo"] or nucleus) and height - clear > 0.1:
                 try:
-                    joint = rs.joint_positions(height - clear, float(f["nucleo"].replace(u",", u".")) / 100.0)
+                    spacing = (float(f["nucleo"].replace(u",", u".")) / 100.0 if f["nucleo"]
+                               else (edge or {}).get("rest"))
+                    if spacing:
+                        joint = rs.joint_positions(height - clear, spacing)
                 except ValueError:
                     pass
             messages += [m for m in (edge_msg and u"Borde: " + edge_msg,

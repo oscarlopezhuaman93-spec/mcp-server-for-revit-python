@@ -702,13 +702,56 @@ class Section(object):
         return DB.XYZ(p.X, p.Y, z_world)
 
 
+NUCLEUS_WORDS = (u"NUDO", u"NUCLEO", u"NÚCLEO")
+NUCLEUS_MAX_M = 1.0  # a column piece this short standing on a column is its joint
+
+
+def is_nucleus(doc, column, section=None):
+    """True when the element is a column's joint ("nucleo" / "nudo")
+    modeled apart, over the column: its ELEMENTO (or Comentarios) parameter
+    says so, or - without that - it is a column piece of at most
+    NUCLEUS_MAX_M standing on another column. Its whole height is joint:
+    no clear height of its own (see clear_top)."""
+    if column.Category is None or column.Category.Id.IntegerValue != int(DB.BuiltInCategory.OST_StructuralColumns):
+        return False
+    said = None
+    for name in (u"ELEMENTO", u"Comentarios", u"Comments"):
+        p = column.LookupParameter(name)
+        text = (p.AsString() or u"") if p is not None and p.StorageType == DB.StorageType.String else u""
+        if text.strip():
+            upper = text.upper()
+            if any(w in upper for w in NUCLEUS_WORDS):
+                return True
+            if name == u"ELEMENTO":
+                said = text  # it names what it is, and is no joint
+    if said is not None:
+        return False
+    try:
+        section = section or Section(column)
+    except Exception:
+        return False
+    if (section.z_top - section.z_bottom) * FT > NUCLEUS_MAX_M + 1e-6:
+        return False
+    base = section.point_m(0.0, 0.0, section.z_bottom - 0.05 / FT)
+    outline = DB.Outline(DB.XYZ(base.X - 0.05, base.Y - 0.05, base.Z - 0.02),
+                         DB.XYZ(base.X + 0.05, base.Y + 0.05, base.Z + 0.02))
+    for e in (DB.FilteredElementCollector(doc).OfCategoryId(column.Category.Id)
+              .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        if e.Id != column.Id:
+            return True
+    return False
+
+
 def clear_top(doc, column, section):
     """(Rule agreed with the user, see Acero.pushbutton/REGLAS_ACERO.md.)
     Top of the column's clear height, where its stirrup distribution
     ends: the underside of the deepest beam framing into its top (where
     beams of different depth meet, always the deepest one), else the
     underside of the slab over it, else the column top. From there up to
-    the column top is the joint."""
+    the column top is the joint. A joint modeled apart (is_nucleus) is all
+    joint: its clear height ends at its base."""
+    if is_nucleus(doc, column, section):
+        return section.z_bottom
     bb = column.get_BoundingBox(None)
     if bb is None:
         return section.z_top
@@ -894,7 +937,7 @@ def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None):
     from each end)."""
     z_start = section.z_bottom if z_start is None else z_start
     clear_m = (z_clear_top - z_start) * FT
-    runs = [
+    runs = [] if clear_m < 0.05 else [  # a joint modeled apart has no clear height
         (z_start + start / FT, n, spacing / FT, side)
         for start, n, spacing, _, side in spec.stirrup_sets(clear_m, family.zones, family.rest)
     ]
@@ -1021,6 +1064,8 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         joint_m = column_spec.joint_spacing_m
         if joint_m and kind == CONFINEMENT:
             joint_m = family.rest
+        if not joint_m and z_clear_top <= section.z_bottom + 1e-6:
+            joint_m = family.rest  # a joint modeled apart always has its stirrups
         for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]
@@ -1142,6 +1187,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     z0_ft = base.z_bottom
     total = (sections[-1].z_top - z0_ft) * FT
     stories = [((s.z_bottom - z0_ft) * FT, (clear_top(doc, c, s) - z0_ft) * FT) for c, s in zip(stack, sections)]
+    stories = [st for st in stories if st[1] - st[0] > 0.05]  # joints modeled apart: no lap there
     tops = [(s.z_top - z0_ft) * FT for s in sections]
     warnings = []
     for x, y, key in column_spec.design["bars"]:
