@@ -924,8 +924,22 @@ def beam_elevation_extent(data):
     ys = [p[1] * k for p in data["polygon"]]
     ss = [0.0, data["length"]] + [f["s0"] for f in data["supports"]] + [f["s1"] for f in data["supports"]]
     ss += [p[2] for pts, _ in data["bar_paths"] for p in pts]
-    room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0  # Acero Viga's labels and cuts
-    return min(ss) - 2 * u, min(ys) - 9 * u - room, max(ss) + 2 * u, max(ys) + 6 * u + room
+    top_rows, bottom_rows = data.get("cota_rows") or (0, 0)  # Acero Viga's extra bars' dimension rows
+    room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0
+    return (min(ss) - 2 * u, min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
+            max(ss) + 2 * u, max(ys) + 6 * u + room + 1.1 * u * top_rows)
+
+
+def beam_cota_y(data, face, row):
+    """Drawing height of the dimension line of an extra bar (Acero Viga):
+    over the beam for the top ones, under the span dimensions for the
+    bottom ones, one row each."""
+    u = _beam_unit(data)
+    k = _beam_deepen(data)
+    ys = [p[1] * k for p in data["polygon"]]
+    if face == u"sup":
+        return max(ys) + (1.4 + 1.1 * row) * u
+    return min(ys) - (7.4 + 1.1 * row) * u  # under the span dimensions and their caption
 
 
 def draw_beam_elevation(canvas, data, frame):
@@ -951,7 +965,8 @@ def draw_beam_elevation(canvas, data, frame):
     for index, f in enumerate(sorted(data["supports"], key=lambda f: f["s0"])):
         reach = 0.0 if f["label"] == u"VIGA" else 2.5 * u
         _rect(canvas, frame, f["s0"], y0 - reach, f["s1"], y1 + reach, C_NEIGHBOR, C_NEIGHBOR_EDGE)
-        _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + (index % 2) * 1.2 * u, f["label"],
+        lift = 1.1 * u * (data.get("cota_rows") or (0, 0))[0]  # over the extra bars' dimensions
+        _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + lift + (index % 2) * 1.2 * u, f["label"],
               brush=C_NEIGHBOR_TEXT, size=9, bold=True)
     if data.get("outlines"):  # the real outline, a haunch included
         for outline in data["outlines"]:
@@ -1000,10 +1015,28 @@ def draw_beam_elevation(canvas, data, frame):
         pts = extra["path"]
         for p, q in zip(pts, pts[1:]):
             _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), color, 3)
-        ls, _ = extra["label_at"]
-        # inside the beam, by its face: clear of the zone bands and the names
-        _edit_text(canvas, frame, ls, (y1 - 0.9 * u) if extra["face"] == u"sup" else (y0 + 0.9 * u),
-                   extra["label"], extra["tag"])
+        # its own dimension line, as on a drawing: ticks at both ends (drag
+        # them), the length (click to change it) and the bars (click to edit)
+        yc = beam_cota_y(data, extra["face"], extra["row"])
+        s0, s1 = extra["s0"], extra["s1"]
+        dim = _brush(150, 150, 30)
+        _line(canvas, frame, (s0, yc), (s1, yc), dim, 1)
+        for s in (s0, s1):
+            _line(canvas, frame, (s, yc + 0.45 * u), (s, yc - 0.45 * u), dim, 1)
+            _line(canvas, frame, (s - 0.25 * u, yc - 0.25 * u), (s + 0.25 * u, yc + 0.25 * u), dim, 2)
+            # an extension line down / up to the bar
+            yb = (y1 + 0.1 * u) if extra["face"] == u"sup" else (y0 - 0.1 * u)
+            _line(canvas, frame, (s, yc), (s, yb), _brush(200, 200, 160), 0.6, dash=True)
+        _edit_text(canvas, frame, (s0 + s1) / 2.0 - 0.6 * u, yc + 0.55 * u, u"{:.2f}".format(s1 - s0),
+                   extra["len_tag"])
+        _edit_text(canvas, frame, s1 + 0.3 * u, yc, extra["label"], extra["tag"])
+    draft = data.get("draft")
+    if draft:  # an extra being drawn: from its first click to the mouse
+        s0, s1, face = draft
+        yb = (y1 - (data.get("cover") or 0.04) * k * 1.6) if face == u"sup" else (y0 + (data.get("cover") or 0.04) * k * 1.6)
+        _line(canvas, frame, (s0, yb), (s1, yb), _brush(230, 80, 30), 3, dash=True)
+        _text(canvas, frame, (s0 + s1) / 2.0, yb + (1.0 * u if face == u"sup" else -1.0 * u),
+              u"{:.2f} m".format(abs(s1 - s0)), brush=_brush(230, 80, 30), size=10, bold=True)
     for a, b, text, tag in data.get("span_labels") or []:
         _edit_text(canvas, frame, a + 0.2 * u, y0 - 2.25 * u, text, tag)
     for s, number in data.get("cuts") or []:
@@ -1021,5 +1054,6 @@ def draw_beam_elevation(canvas, data, frame):
     _text(canvas, frame, data["length"] / 2.0, ydim - 2.6 * u,
           u"Luces libres entre caras de apoyo (m)", brush=C_DIM, size=10)
     if data.get("message"):
-        _text(canvas, frame, data["length"] / 2.0, ydim - 4.2 * u, data["message"],
+        _text(canvas, frame, data["length"] / 2.0,
+              ydim - 4.2 * u - (1.1 * u * (data.get("cota_rows") or (0, 0))[1] + (2.2 * u if (data.get("cota_rows") or (0, 0))[1] else 0.0)), data["message"],
               brush=_brush(192, 57, 43), size=10)

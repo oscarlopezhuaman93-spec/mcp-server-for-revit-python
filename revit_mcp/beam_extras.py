@@ -204,6 +204,88 @@ def steel_at(s, main_bars, extras, diameters_mm, face):
     return u" + ".join(parts) or u"-", area
 
 
+SNAP_STEP_M = 0.05
+
+
+def snap_s(s, faces, tol, step=SNAP_STEP_M):
+    """s snapped to a support face / beam end within tol, else to step."""
+    near = [f for f in faces if abs(f - s) <= tol]
+    if near:
+        return min(near, key=lambda f: abs(f - s))
+    return round(round(s / step) * step, 3)
+
+
+def faces_of(spans, start_face, end_face):
+    """Every support face and the beam ends (where bars stop or anchor)."""
+    out = [start_face, end_face]
+    for a, b in spans:
+        out += [a, b]
+    return sorted(set(round(f, 3) for f in out))
+
+
+def drawn_extra(s_a, s_b, face, n, key):
+    """An extra drawn by hand from s_a to s_b on a face: top = baston,
+    bottom = balancin."""
+    s0, s1 = sorted((s_a, s_b))
+    return {"kind": BASTON if face == TOP else BALANCIN, "face": face, "n": n, "d": key,
+            "s0": round(s0, 3), "s1": round(s1, 3)}
+
+
+def cota_rows(extras, face, gap=0.15):
+    """{extra index: row} of the extras of a face: overlapping ones (or
+    closer than `gap`) on different rows, the fewest rows (the dimension
+    lines stacked as on a drawing)."""
+    order = sorted((e["s0"], e["s1"], i) for i, e in enumerate(extras) if e["face"] == face)
+    rows_end = []
+    out = {}
+    for s0, s1, i in order:
+        for r, end in enumerate(rows_end):
+            if s0 >= end + gap:
+                rows_end[r] = s1
+                out[i] = r
+                break
+        else:
+            rows_end.append(s1)
+            out[i] = len(rows_end) - 1
+    return out
+
+
+def set_length(extra, length, faces):
+    """A new length, keeping the end that sits on a support face / beam
+    end (else the start) where it is."""
+    length = max(0.10, float(length))
+    d0 = min(abs(extra["s0"] - f) for f in faces) if faces else 0.0
+    d1 = min(abs(extra["s1"] - f) for f in faces) if faces else 1.0
+    if d1 < d0 - 1e-6:
+        extra["s0"] = round(extra["s1"] - length, 3)
+    else:
+        extra["s1"] = round(extra["s0"] + length, 3)
+    return extra
+
+
+def auto_cuts(spans, extras, min_len=0.10):
+    """One cut in every stretch of each span where the steel is the same:
+    the span cut at every extra's ends, neighbouring stretches with the
+    same extras merged; the cut in the middle of each."""
+    out = []
+    for a, b in spans:
+        stops = sorted(set([a, b] + [e[k] for e in extras for k in ("s0", "s1") if a < e[k] < b]))
+        pieces = []
+        for lo, hi in zip(stops, stops[1:]):
+            if hi - lo < 1e-6:
+                continue
+            mid = (lo + hi) / 2.0
+            holding = tuple(sorted(i for i, e in enumerate(extras) if e["s0"] - 1e-6 <= mid <= e["s1"] + 1e-6))
+            if pieces and pieces[-1][2] == holding:
+                pieces[-1][1] = hi
+            else:
+                pieces.append([lo, hi, holding])
+        for lo, hi, _ in pieces:
+            if hi - lo >= min_len:
+                out.append(round((lo + hi) / 2.0, 3))
+    return out
+
+
 def extra_ends(extra, bar_start, bar_end, tol=0.02):
     """(s0, s1, hooked at start, hooked at end): the extra clipped to the
     main bars' reach; it takes their anchorage where it reaches a beam end."""

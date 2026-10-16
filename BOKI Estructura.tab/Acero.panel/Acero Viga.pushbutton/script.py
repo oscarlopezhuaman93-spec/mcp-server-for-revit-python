@@ -753,7 +753,11 @@ class AceroWindow(forms.WPFWindow):
     def window_key(self, sender, args):
         """Esc cancels the stroke being drawn instead of closing the window;
         Supr deletes the selected stirrup (unless a box is being typed in)."""
-        if args.Key == Key.Escape and getattr(self, "draft", None):
+        if args.Key == Key.Escape and getattr(self, "_draft", None) is not None:
+            self._draft, self._draft_view = None, None  # an extra bar being drawn
+            self._changed()
+            args.Handled = True
+        elif args.Key == Key.Escape and getattr(self, "draft", None):
             self.draft = []
             self._status()
             self.redraw()
@@ -1747,9 +1751,18 @@ class AceroWindow(forms.WPFWindow):
                 if k_pos == 0:
                     extras_view.append({
                         "face": extra["face"], "path": path, "tag": u"extra:{}".format(index),
-                        "label": bx.extra_label(extra, spans, start_face, end_face) if spans else u"",
-                        "label_at": ((s0 + s1) / 2.0 - 0.6, y)})
-        cuts = settings["cuts"] or (bx.default_cuts(spans) if spans else [])
+                        "len_tag": u"len:{}".format(index), "index": index,
+                        "label": u"{}\u00d8{}".format(int(extra["n"]), extra["d"]),
+                        "s0": extra["s0"], "s1": extra["s1"]})
+        rows = {}
+        for face in (bx.TOP, bx.BOTTOM):
+            rows.update(bx.cota_rows(settings["extras"], face))
+        for item in extras_view:
+            item["row"] = rows.get(item["index"], 0)
+        top_rows = 1 + max([rows[i] for i, e in enumerate(settings["extras"]) if e["face"] == bx.TOP and i in rows] + [-1])
+        bottom_rows = 1 + max([rows[i] for i, e in enumerate(settings["extras"]) if e["face"] == bx.BOTTOM and i in rows] + [-1])
+        # the cuts: automatic (one per stretch of the same steel) until moved
+        cuts = settings["cuts"] or (bx.auto_cuts(spans, settings["extras"]) if spans else [])
         self._beam_now = (line, spans, start_face, end_face, bars, settings, cuts)
         if missing_legs:
             messages.append(u"Falta la pata del gancho de 90 de " + u", ".join(sorted(missing_legs)))
@@ -1780,6 +1793,8 @@ class AceroWindow(forms.WPFWindow):
             "bottom": line.bottom_points,
             "top": line.top_points,
             "extras": extras_view,
+            "cota_rows": (top_rows, bottom_rows),
+            "draft": getattr(self, "_draft_view", None),
             "span_labels": span_labels,
             "cuts": [(c, k + 1) for k, c in enumerate(cuts)],
         }
@@ -1916,9 +1931,51 @@ class AceroWindow(forms.WPFWindow):
         canvas.Children.Add(e)
 
     def elev_tool_click(self, sender, args):
-        for b in (self.tool_baston, self.tool_balancin, self.tool_cut):
+        for b in (self.tool_draw, self.tool_cut):
             if b is not sender:
                 b.IsChecked = False
+        self._draft = None
+        self._draft_view = None
+
+    def auto_cuts_click(self, sender, args):
+        if getattr(self, "_view_line", None) is None:
+            return
+        self._edit_settings()["cuts"] = []  # empty: automatic
+        self._changed()
+
+    def _elev_y(self, args):
+        """Drawing height under the mouse (the elevation's frame)."""
+        fitted = self._elev_fitted()
+        scale, ox, oy = self.elev_nav.resolve(fitted)
+        return (oy - args.GetPosition(self.canvas_elev).Y) / scale
+
+    def _face_at(self, args):
+        """bx.TOP over the middle of the beam's drawn depth, else bx.BOTTOM."""
+        data = self._elev_data
+        k = rv._beam_deepen(data)
+        ys = [q[1] * k for q in data["polygon"]]
+        return bx.TOP if self._elev_y(args) >= (min(ys) + max(ys)) / 2.0 else bx.BOTTOM
+
+    def _snap(self, s, scale):
+        now = self._beam_now
+        line, spans, start_face, end_face = now[0], now[1], now[2], now[3]
+        return bx.snap_s(max(start_face, min(end_face, s)), bx.faces_of(spans, start_face, end_face), 10.0 / scale)
+
+    def _end_near(self, args, scale):
+        """(extra index, 0 / 1) of the dimension tick under the mouse."""
+        data = self._elev_data
+        if not data:
+            return None
+        s, _ = self._elev_s(args)
+        y = self._elev_y(args)
+        best = None
+        for item in data.get("extras") or []:
+            yc = rv.beam_cota_y(data, item["face"], item["row"])
+            for end, se in ((0, item["s0"]), (1, item["s1"])):
+                d = max(abs(se - s), abs(yc - y)) * scale
+                if d < 9 and (best is None or d < best[0]):
+                    best = (d, (item["index"], end))
+        return best[1] if best else None
 
     def _elev_s(self, args):
         """s (m along the beam) under the mouse, and the frame's scale."""
@@ -1962,6 +2019,21 @@ class AceroWindow(forms.WPFWindow):
                     forms.alert(u"{}".format(e), title=u"Acero Viga")
                     return
             bx.set_span_text(st, index, "edge", value if value.strip() != f["edge_dist"].strip() else u"")
+            self._changed()
+        elif tag.startswith(u"len:"):
+            index = int(tag[4:])
+            st = self._edit_settings()
+            extra = st["extras"][index]
+            value = forms.ask_for_string(default=u"{:.2f}".format(extra["s1"] - extra["s0"]), title=u"Acero Viga",
+                                         prompt=u"Longitud (m) del {} (queda fijo su extremo en el apoyo):".format(
+                                             u"baston" if extra["kind"] == bx.BASTON else u"balancin"))
+            if value is None:
+                return
+            try:
+                bx.set_length(extra, float(value.replace(u",", u".")), bx.faces_of(spans, start_face, end_face))
+            except ValueError:
+                forms.alert(u"Escribe un numero, por ejemplo 1.20", title=u"Acero Viga")
+                return
             self._changed()
         elif tag.startswith(u"extra:"):
             index = int(tag[6:])
@@ -2017,26 +2089,29 @@ class AceroWindow(forms.WPFWindow):
         now = getattr(self, "_beam_now", None)
         if args.ChangedButton == MouseButton.Left and now:
             tag = getattr(args.OriginalSource, "Tag", None)
-            if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")):
+            if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
+                                                 or tag.startswith(u"len:")):
                 self._edit_tag(tag)
                 args.Handled = True
                 return
             s, scale = self._elev_s(args)
             line, spans, start_face, end_face, bars, _, cuts = now
-            if self.tool_baston.IsChecked and spans:
-                st = self._edit_settings()
-                n, key = self._main_face(bx.TOP)
-                st["extras"].append(bx.default_baston(bx.nearest_gap(s, spans, start_face, end_face),
-                                                      spans, start_face, end_face, n, key))
+            if self.tool_draw.IsChecked:
+                s = self._snap(s, scale)
+                if getattr(self, "_draft", None) is None:
+                    self._draft = (s, self._face_at(args))  # the first click: where it starts
+                    return
+                s_a, face = self._draft
+                self._draft, self._draft_view = None, None
+                if abs(s - s_a) >= 0.10:
+                    n, key = self._main_face(face)
+                    self._edit_settings()["extras"].append(bx.drawn_extra(s_a, s, face, n, key))
                 self._changed()
                 return
-            if self.tool_balancin.IsChecked and spans:
-                k = bx.span_at(s, spans)
-                if k is not None:
-                    st = self._edit_settings()
-                    n, key = self._main_face(bx.BOTTOM)
-                    st["extras"].append(bx.default_balancin(k, spans, n, key))
-                    self._changed()
+            end = self._end_near(args, scale)
+            if end is not None:
+                self._drag_end = end
+                self.canvas_elev.CaptureMouse()
                 return
             if self.tool_cut.IsChecked:
                 st = self._edit_settings()
@@ -2078,6 +2153,25 @@ class AceroWindow(forms.WPFWindow):
         args.Handled = True
 
     def elev_mouse_move(self, sender, args):
+        if getattr(self, "_draft", None) is not None and self._elev_data:
+            s, scale = self._elev_s(args)
+            s_a, face = self._draft
+            self._draft_view = (s_a, self._snap(s, scale), face)
+            self._elev_data["draft"] = self._draft_view
+            self._draw_elevation()
+            return
+        drag_end = getattr(self, "_drag_end", None)
+        if drag_end is not None:
+            s, scale = self._elev_s(args)
+            index, end = drag_end
+            extra = self._edit_settings()["extras"][index]
+            s = self._snap(s, scale)
+            if end == 0 and s < extra["s1"] - 0.1:
+                extra["s0"] = s
+            elif end == 1 and s > extra["s0"] + 0.1:
+                extra["s1"] = s
+            self._changed()
+            return
         drag = getattr(self, "_drag_cut", None)
         if drag is not None:
             s, _ = self._elev_s(args)
@@ -2091,6 +2185,10 @@ class AceroWindow(forms.WPFWindow):
             self._draw_elevation()
 
     def elev_mouse_up(self, sender, args):
+        if getattr(self, "_drag_end", None) is not None:
+            self._drag_end = None
+            self.canvas_elev.ReleaseMouseCapture()
+            return
         if getattr(self, "_drag_cut", None) is not None:
             st = self._edit_settings()
             st["cuts"] = sorted(st["cuts"])

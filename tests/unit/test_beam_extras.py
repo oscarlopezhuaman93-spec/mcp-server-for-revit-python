@@ -59,6 +59,26 @@ def test_extra_positions_same_layer_then_second():
     assert len(pts) == 4 and all(y > -0.1396 + 0.02 for _, y in pts)
 
 
+def test_hand_drawn_extras_rows_lengths_and_auto_cuts():
+    faces = be.faces_of(SPANS, START, END)
+    assert be.snap_s(3.86, faces, 0.08) == 3.87  # onto the support face
+    assert be.snap_s(2.03, faces, 0.08) == 2.05  # else to 5 cm
+    e = be.drawn_extra(5.2, 3.87, be.TOP, 2, '5/8"')
+    assert e["kind"] == be.BASTON and (e["s0"], e["s1"]) == (3.87, 5.2)
+    assert be.drawn_extra(1, 2, be.BOTTOM, 2, '5/8"')["kind"] == be.BALANCIN
+    extras = [be.drawn_extra(0.0, 1.0, be.TOP, 2, '5/8"'), be.drawn_extra(0.5, 1.5, be.TOP, 2, '1/2"'),
+              be.drawn_extra(2.0, 3.0, be.TOP, 2, '5/8"'), be.drawn_extra(1.0, 2.0, be.BOTTOM, 2, '5/8"')]
+    rows = be.cota_rows(extras, be.TOP)
+    assert rows == {0: 0, 1: 1, 2: 0}
+    be.set_length(extras[1], 2.0, faces)  # neither end on a face: the start stays
+    assert (extras[1]["s0"], extras[1]["s1"]) == (0.5, 2.5)
+    end_bar = be.drawn_extra(3.0, 3.87, be.TOP, 2, '5/8"')
+    be.set_length(end_bar, 1.2, faces)  # its end on the support face stays
+    assert (end_bar["s0"], end_bar["s1"]) == (2.67, 3.87)
+    cuts = be.auto_cuts([(0.25, 3.87)], [be.drawn_extra(0.25, 1.25, be.TOP, 2, '5/8"')])
+    assert cuts == [0.75, 2.56]
+
+
 def test_steel_at_cuts_and_ends():
     extras = [be.default_baston(1, SPANS, START, END, 2, '5/8"')]
     text, area = be.steel_at(4.0, MAIN, extras, MM, be.TOP)
