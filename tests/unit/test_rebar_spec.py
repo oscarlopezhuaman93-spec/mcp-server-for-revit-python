@@ -37,6 +37,10 @@ class TestParsing:
 
     def test_distribution_meters_and_cm(self):
         assert parse_distribution("1@.05, 10@.10, rto@.20") == ([(1, 0.05), (10, 0.10)], 0.20)
+        # the @ forgotten after "rto"
+        assert parse_distribution("1@0.05, rto 0.10") == ([(1, 0.05)], 0.10)
+        assert parse_distribution("1@0.05, 6 @.10, rto 0.15") == ([(1, 0.05), (6, 0.10)], 0.15)
+        assert parse_distribution("1@5cm 6@10cm rto0.20") == ([(1, 0.05), (6, 0.10)], 0.20)
         zones, rest = parse_distribution("1@5, 10@10, R@20")
         assert zones == [(1, pytest.approx(0.05)), (10, pytest.approx(0.10))]
         assert rest == pytest.approx(0.20)

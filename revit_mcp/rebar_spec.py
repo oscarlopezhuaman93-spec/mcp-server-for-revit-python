@@ -467,6 +467,8 @@ def parse_distribution(text, need_rest=True):
     rest = None
     # Tokens like "10@.10" / "rto@20cm", separated by commas, semicolons
     # or just spaces ("1@5 6@10 Rto@25").
+    # "rto 0.10" / "rto0.10" read as "rto@0.10" (the @ forgotten after the word)
+    t = re.sub(r"(?<![\d.a-z])([a-z]+)\s*(?=\.?\d)", r"\1@", t)
     token_re = re.compile(r"([a-z]+|\d+)\s*@\s*(\d*\.?\d+)\s*(cm|m)?(?![a-z0-9])")
     leftover = token_re.sub(u"", t)
     if re.sub(r"[\s,;]", u"", leftover):
