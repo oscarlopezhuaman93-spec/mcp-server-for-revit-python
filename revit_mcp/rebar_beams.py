@@ -30,10 +30,12 @@ from System.Collections.Generic import List
 import formwork_params as fw_params
 import rebar_columns as rc
 import rebar_spec as spec
+import beam_extras as bx
 from utils import element_id_value
 
 FT = rc.FT
 ANCHOR_PARAM = "EA_Anclaje"
+LINE_PARAM = "EA_Viga_Linea"  # per beam line (on its elements): spans' own stirrups, extra bars, cuts (bx)
 ANCHOR_HOOK = u"Gancho 90"
 ANCHOR_STRAIGHT = u"Recto"
 ANCHORS = (ANCHOR_HOOK, ANCHOR_STRAIGHT)
@@ -53,6 +55,7 @@ def ensure_parameters(doc):
     warnings = rc.ensure_parameters(doc)
     specs = [(name, True, FRAMING, False) for name in rc.TYPE_PARAMS + (ANCHOR_PARAM,)]
     specs.append((rc.WEIGHT_PARAM, False, FRAMING, True))
+    specs.append((LINE_PARAM, True, FRAMING, True))
     return warnings + fw_params.ensure_parameters(doc, rc.GROUP_NAME, specs)
 
 
@@ -376,6 +379,32 @@ def spans_and_ends(line, supports):
     return spans, start_face, end_face
 
 
+def read_line_settings(line):
+    """The beam line's own settings (bx): from its first element that has them."""
+    for e in line.elements:
+        p = e.LookupParameter(LINE_PARAM)
+        if p is not None and (p.AsString() or u"").strip():
+            return bx.read(p.AsString())
+    return bx.default_settings()
+
+
+def write_line_settings(line, settings):
+    text = bx.write(settings)
+    for e in line.elements:
+        p = e.LookupParameter(LINE_PARAM)
+        if p is not None and not p.IsReadOnly:
+            p.Set(text)
+
+
+class _SpanFamily(object):
+    """A stirrup family with a span's own distribution."""
+
+    def __init__(self, family, text):
+        self.key = family.key
+        self.type_name = family.type_name
+        self.zones, self.rest = spec.parse_distribution(text)
+
+
 def delete_generated(doc, line):
     for element in line.elements:
         rc.delete_generated(doc, element)
@@ -399,7 +428,7 @@ def _share(line, created, rebar, key, kind, s_start, s_end):
 
 
 def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, splice=None, legs=None,
-                  supports=None):
+                  supports=None, line_settings=None):
     """Create a beam line's rebar (inside an active Transaction): per clear
     span the stirrups and ties of the drawing with the type's distribution
     from each support face; the longitudinal bars of the drawing along the
@@ -408,6 +437,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     {key: m}) or straight, cut past splice["max"] with splice["laps"]
     [key] laps (top bars in a span's central third, bottom bars in its
     end thirds outside the confinement zone).
+    `line_settings` (bx, optional): each span's own stirrup distribution
+    and the extra bars (bastones, balancines); None: the type's only.
     Returns ({element id: [(rebar, key, kind, share)]}, warnings)."""
     design = beam_spec.design
     supports = line_supports(doc, line) if supports is None else supports
@@ -440,9 +471,12 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         bar_type = (rc.named_bar_type(doc, family.type_name, family.key)
                     or rc._bar_type(bar_types, family.key, BEAM_MARK))
         hook = hooks.get(family.key)
-        for a, b in spans:
+        for span_index, (a, b) in enumerate(spans):
             host = line.element_at((a + b) / 2.0)
-            for start, n, spacing, _, side in spec.stirrup_sets(b - a, family.zones, family.rest):
+            own = bx.span_text(line_settings, span_index, u"edge" if kind == rc.EDGE else u"conf") \
+                if line_settings else u""
+            span_family = _SpanFamily(family, own) if own else family
+            for start, n, spacing, _, side in spec.stirrup_sets(b - a, span_family.zones, span_family.rest):
                 # On a haunch every stirrup has its own height: one by one
                 # (a rebar set holds identical bars), each fitted there.
                 runs = ([(start + k * spacing, 1) for k in range(n)] if line.variable else [(start, n)])
@@ -511,6 +545,29 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             path = spec.beam_bar_points(x, y, d, s0, s1, lap, not last,
                                         leg if index == 0 else 0.0, leg if last else 0.0)
             if line.variable:  # along the sloped face of a haunch
+                path = spec.follow_profile(path, line.shift_at(y), line.breaks)
+            world = [line.point(px, py, ps) for px, py, ps in path]
+            curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]
+            host = line.element_at((s0 + s1) / 2.0)
+            rebar = Rebar.CreateFromCurves(
+                doc, RebarStyle.Standard, beam_spec.bar_type(doc, bar_types, key, BEAM_MARK), None, None, host,
+                line.section.across, List[DB.Curve](curves),
+                RebarHookOrientation.Right, RebarHookOrientation.Right, True, True,
+            )
+            rc._tag(rebar, host)
+            _share(line, created, rebar, key, rc.LONGITUDINAL, s0, s1)
+    # extra bars: bastones over the supports (top), balancines in the spans
+    # (bottom); where one reaches a beam end it takes the main bars' anchorage
+    for extra in (line_settings or {}).get("extras", []):
+        key = extra["d"]
+        d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+        s0, s1, hook0, hook1 = bx.extra_ends(extra, bar_start, bar_end)
+        if s1 - s0 < 0.1:
+            continue
+        leg = (legs or {}).get(key, 0.0) if anchor == ANCHOR_HOOK else 0.0
+        for x, y in bx.extra_positions(design["bars"], extra["face"], int(extra["n"]), key, spec.BAR_DIAMETERS_MM):
+            path = spec.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg if hook0 else 0.0, leg if hook1 else 0.0)
+            if line.variable:
                 path = spec.follow_profile(path, line.shift_at(y), line.breaks)
             world = [line.point(px, py, ps) for px, py, ps in path]
             curves = [DB.Line.CreateBound(world[k], world[k + 1]) for k in range(len(world) - 1)]

@@ -24,6 +24,7 @@ if REVIT_MCP_DIR not in sys.path:
 import formwork_spatial as fw_spatial
 import formwork_params as fw_params
 import rebar_spec as rs
+import beam_extras as bx
 import rebar_columns as rc
 import rebar_beams as rb
 import rebar_views as rv
@@ -35,6 +36,7 @@ reload(fw_utils)
 reload(fw_spatial)
 reload(fw_params)
 reload(rs)
+reload(bx)
 reload(rc)
 reload(rb)
 reload(rv)
@@ -49,7 +51,7 @@ from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.DB.Structure import RebarShape, RebarStyle
 from System.Windows.Input import Key, Keyboard, MouseButton
 from System.Windows import GridLength, TextWrapping
-from System.Windows.Controls import Dock, DockPanel
+from System.Windows.Controls import Border, Dock, DockPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import Color, DoubleCollection, PointCollection, SolidColorBrush
@@ -288,6 +290,7 @@ class State(object):
         self.drafts = {}  # type id -> design being drawn (unsaved)
         self.form = None  # last form field values
         self.scope = "model"  # "pick" when beams were picked in the model
+        self.line_edits = {}  # beam line key (element ids) -> its own settings (bx), edited
 
 
 class _BeamFilter(ISelectionFilter):
@@ -633,6 +636,14 @@ class AceroWindow(forms.WPFWindow):
                     self.by_id[type_id].element,
                     self._config_from_form(type_id in same_section),
                 )
+            # each edited beam's own settings (spans' stirrups, extras, cuts)
+            for key, settings in self.state.line_edits.items():
+                text = bx.write(settings)
+                for eid in key:
+                    e = doc.GetElement(DB.ElementId(eid))
+                    q = e.LookupParameter(rb.LINE_PARAM) if e is not None else None
+                    if q is not None and not q.IsReadOnly:
+                        q.Set(text)
         for type_id in same_section:
             self.state.drafts.pop(type_id, None)
         self.dirty = False
@@ -1635,13 +1646,24 @@ class AceroWindow(forms.WPFWindow):
             messages.append(u"Falta la distribucion del estribo de borde")
         if not spans:
             messages.append(u"La viga no tiene luz libre entre apoyos")
-        span_data = []
-        for a, b in spans:
+        settings = self._line_settings(line)
+        span_data, span_fams, span_labels = [], [], []
+        for index, (a, b) in enumerate(spans):
             item = {"a": a, "b": b}
-            for name, family in (("edge", edge), ("conf", conf)):
+            fams = {}
+            for name, family, key_text in (("edge", edge, f["edge"]), ("conf", conf, f["conf"])):
+                own = bx.span_text(settings, index, name)
+                if own:
+                    family, msg = self._family_view(key_text, own)
+                    if msg:
+                        messages.append(u"Tramo {}: {}".format(index + 1, msg))
                 if family:
+                    fams[name] = family
                     item[name] = dict(family, tagged=rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]))
+            own = bx.span_text(settings, index, "edge")
+            span_labels.append((a, b, u"\u00d8{}: {}".format(f["edge"], own or u"(del tipo)"), u"span:{}".format(index)))
             span_data.append(item)
+            span_fams.append(fams)
         # stirrups and ties for the 3D view, stacked like they are generated
         families = {rs.KIND_EDGE: edge, rs.KIND_CONFINEMENT: conf}
         drawn = [(kind, poly, wrap, is_open) for kind, poly, wrap, is_open in self.design["stirrups"]]
@@ -1661,8 +1683,10 @@ class AceroWindow(forms.WPFWindow):
             except rs.SpecError:
                 continue
             ss = []
-            for a, b in spans:
-                for z, _ in rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]):
+            name = "edge" if kind == rs.KIND_EDGE else "conf"
+            for index, (a, b) in enumerate(spans):
+                fam = span_fams[index].get(name) or family
+                for z, _ in rs.stirrup_zone_positions(b - a, fam["zones"], fam["rest"]):
                     ss.append(a + z + (-lift if z > (b - a) / 2.0 + 1e-6 else lift))
             radius = rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0
             if line.variable:  # a haunch: each stirrup fitted to its section
@@ -1705,6 +1729,28 @@ class AceroWindow(forms.WPFWindow):
                 bar_paths.append((path, d / 2.0))
                 if not last:
                     laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
+        # the beam's extra bars (bastones, balancines), as rb.generate_line lays them
+        extras_view = []
+        for index, extra in enumerate(settings["extras"]):
+            key = extra["d"]
+            d = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            s0, s1, hook0, hook1 = bx.extra_ends(extra, bar_start, bar_end)
+            if s1 - s0 < 0.1:
+                continue
+            leg = legs.get(key, 0.0) if f["anchor"] == rb.ANCHOR_HOOK else 0.0
+            positions = bx.extra_positions(bars, extra["face"], int(extra["n"]), key, rs.BAR_DIAMETERS_MM)
+            for k_pos, (x, y) in enumerate(positions):
+                path = rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg if hook0 else 0.0, leg if hook1 else 0.0)
+                if line.variable:
+                    path = rs.follow_profile(path, line.shift_at(y), line.breaks)
+                bar_paths.append((path, d / 2.0))
+                if k_pos == 0:
+                    extras_view.append({
+                        "face": extra["face"], "path": path, "tag": u"extra:{}".format(index),
+                        "label": bx.extra_label(extra, spans, start_face, end_face) if spans else u"",
+                        "label_at": ((s0 + s1) / 2.0 - 0.6, y)})
+        cuts = settings["cuts"] or (bx.default_cuts(spans) if spans else [])
+        self._beam_now = (line, spans, start_face, end_face, bars, settings, cuts)
         if missing_legs:
             messages.append(u"Falta la pata del gancho de 90 de " + u", ".join(sorted(missing_legs)))
         if missing_laps:
@@ -1733,6 +1779,9 @@ class AceroWindow(forms.WPFWindow):
             "outlines": outlines,
             "bottom": line.bottom_points,
             "top": line.top_points,
+            "extras": extras_view,
+            "span_labels": span_labels,
+            "cuts": [(c, k + 1) for k, c in enumerate(cuts)],
         }
         scene = {
             "polygon": polygon,
@@ -1769,6 +1818,249 @@ class AceroWindow(forms.WPFWindow):
             self.canvas_elev.Children.Clear()
             return
         rv.draw_beam_elevation(self.canvas_elev, self._elev_data, self.elev_nav.resolve(fitted))
+        self._draw_cuts()
+
+    # -- the beam's own settings: spans' stirrups, extras, cuts -----------------
+    def _line_settings(self, line):
+        """The beam's settings (bx): edited here, else saved on it."""
+        key = self._line_key(line)
+        if key in self.state.line_edits:
+            return self.state.line_edits[key]
+        cache = self.__dict__.setdefault("_line_read", {})
+        if key not in cache:
+            try:
+                cache[key] = rb.read_line_settings(line)
+            except Exception:
+                cache[key] = bx.default_settings()
+        return cache[key]
+
+    def _edit_settings(self):
+        """The current beam's settings, to change (kept until saved)."""
+        line = self._view_line
+        key = self._line_key(line)
+        if key not in self.state.line_edits:
+            self.state.line_edits[key] = bx.read(bx.write(self._line_settings(line)))
+        return self.state.line_edits[key]
+
+    def _changed(self):
+        self._views_sig = None
+        self.redraw()
+
+    def _main_face(self, face):
+        """(count, key) of the main bars on a face: the defaults of an extra."""
+        keys = [k for x, y, k in self.design["bars"] if (y > 0) == (face == bx.TOP)]
+        if not keys:
+            return 2, u'5/8"'
+        return 2, max(set(keys), key=keys.count)
+
+    def _draw_cuts(self):
+        panel = self.panel_cuts
+        panel.Children.Clear()
+        now = getattr(self, "_beam_now", None)
+        if not now:
+            return
+        line, spans, start_face, end_face, bars, settings, cuts = now
+        poly = line.section.polygon_m
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        k = min(60.0 / max(max(xs) - min(xs), 1e-3), 70.0 / max(max(ys) - min(ys), 1e-3))
+        for number, s_cut in enumerate(cuts, 1):
+            box = Canvas()
+            box.Width, box.Height = 180, 136
+            cx, cy = 40.0, 50.0
+
+            def P(x, y):
+                return Point(cx + x * k, cy - y * k)
+            shape = Polygon()
+            pc = PointCollection()
+            for x, y in poly:
+                pc.Add(P(x, y))
+            shape.Points = pc
+            shape.Stroke = brush(60, 60, 60)
+            shape.Fill = brush(236, 238, 241)
+            box.Children.Add(shape)
+            for x, y, key in bars:
+                self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, brush(30, 30, 30))
+            for extra in settings["extras"]:
+                if extra["s0"] - 1e-6 <= s_cut <= extra["s1"] + 1e-6:
+                    color = brush(226, 75, 74) if extra["face"] == bx.TOP else brush(29, 158, 117)
+                    for x, y in bx.extra_positions(bars, extra["face"], int(extra["n"]), extra["d"],
+                                                   rs.BAR_DIAMETERS_MM):
+                        self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[extra["d"]] / 2000.0 * k, color)
+            lines = [u"{}-{}  (s = {:.2f} m)".format(number, number, s_cut)]
+            for face, name in ((bx.TOP, u"Sup"), (bx.BOTTOM, u"Inf")):
+                text, area = bx.steel_at(s_cut, bars, settings["extras"], rs.BAR_DIAMETERS_MM, face)
+                lines.append(u"{}: {}".format(name, text))
+                lines.append(u"      = {:.2f} cm\u00b2".format(area))
+            label = TextBlock()
+            label.Text = u"\n".join(lines)
+            label.FontSize = 10
+            Canvas.SetLeft(label, 78)
+            Canvas.SetTop(label, 6)
+            box.Children.Add(label)
+            frame = Border()
+            frame.BorderBrush = brush(200, 200, 210)
+            frame.BorderThickness = Thickness(1)
+            frame.Margin = Thickness(0, 0, 6, 0)
+            frame.Child = box
+            panel.Children.Add(frame)
+
+    @staticmethod
+    def _cut_dot(canvas, center, radius, fill):
+        from System.Windows.Shapes import Ellipse
+        e = Ellipse()
+        e.Width = e.Height = max(4.0, 2 * radius)
+        e.Fill = fill
+        Canvas.SetLeft(e, center.X - e.Width / 2.0)
+        Canvas.SetTop(e, center.Y - e.Height / 2.0)
+        canvas.Children.Add(e)
+
+    def elev_tool_click(self, sender, args):
+        for b in (self.tool_baston, self.tool_balancin, self.tool_cut):
+            if b is not sender:
+                b.IsChecked = False
+
+    def _elev_s(self, args):
+        """s (m along the beam) under the mouse, and the frame's scale."""
+        fitted = self._elev_fitted()
+        if fitted is None:
+            return None, None
+        scale, ox, oy = self.elev_nav.resolve(fitted)
+        return (args.GetPosition(self.canvas_elev).X - ox) / scale, scale
+
+    def _cut_near(self, s, scale):
+        now = getattr(self, "_beam_now", None)
+        if not now:
+            return None
+        cuts = now[6]
+        best = None
+        for i, c in enumerate(cuts):
+            d = abs(c - s) * scale
+            if d < 8 and (best is None or d < best[0]):
+                best = (d, i)
+        return best[1] if best else None
+
+    def _edit_tag(self, tag):
+        now = getattr(self, "_beam_now", None)
+        if not now:
+            return
+        line, spans, start_face, end_face, bars, _, cuts = now
+        if tag.startswith(u"span:"):
+            index = int(tag[5:])
+            st = self._edit_settings()
+            f = self._get_form()
+            value = forms.ask_for_string(
+                default=bx.span_text(st, index, "edge") or f["edge_dist"], title=u"Acero Viga",
+                prompt=u"Tramo {} ({:.2f} m): distribucion del estribo de borde, ej. 1@0.05, 10@0.10, rto@0.20 "
+                       u"(vacio: la del tipo):".format(index + 1, spans[index][1] - spans[index][0]))
+            if value is None:
+                return
+            if value.strip():
+                try:
+                    rs.parse_distribution(value)
+                except rs.SpecError as e:
+                    forms.alert(u"{}".format(e), title=u"Acero Viga")
+                    return
+            bx.set_span_text(st, index, "edge", value if value.strip() != f["edge_dist"].strip() else u"")
+            self._changed()
+        elif tag.startswith(u"extra:"):
+            index = int(tag[6:])
+            st = self._edit_settings()
+            extra = st["extras"][index]
+            choice = forms.SelectFromList.show(
+                [u"Cantidad y diametro", u"Largos", u"Borrar"], title=bx.extra_label(extra, spans, start_face, end_face),
+                button_name=u"Elegir", multiselect=False)
+            if choice == u"Borrar":
+                del st["extras"][index]
+            elif choice == u"Cantidad y diametro":
+                value = forms.ask_for_string(default=u"{} {}".format(int(extra["n"]), extra["d"].rstrip(u'"')),
+                                             title=u"Acero Viga", prompt=u"Cantidad y diametro, ej. 2 5/8:")
+                if value is None:
+                    return
+                try:
+                    extra["n"], extra["d"] = bx.parse_count_diameter(value, rs.BAR_DIAMETERS_MM)
+                except ValueError:
+                    forms.alert(u"Escribe, por ejemplo, 2 5/8", title=u"Acero Viga")
+                    return
+            elif choice == u"Largos":
+                if extra["kind"] == bx.BASTON:
+                    g = bx.gaps(spans, start_face, end_face)[bx.nearest_gap((extra["s0"] + extra["s1"]) / 2.0,
+                                                                            spans, start_face, end_face)]
+                    left, right = max(0.0, g[0] - extra["s0"]), max(0.0, extra["s1"] - g[1])
+                    prompt = u"Largo a cada lado de la cara del apoyo (m), izquierda|derecha:"
+                else:
+                    k = bx.span_at((extra["s0"] + extra["s1"]) / 2.0, spans)
+                    a, b = spans[k] if k is not None else (extra["s0"], extra["s1"])
+                    left, right = extra["s0"] - a, b - extra["s1"]
+                    prompt = u"Distancia libre a cada cara del tramo (m), izquierda|derecha:"
+                value = forms.ask_for_string(default=u"{:.2f}|{:.2f}".format(left, right), title=u"Acero Viga",
+                                             prompt=prompt)
+                if value is None:
+                    return
+                try:
+                    left, right = bx.parse_lengths(value)
+                except ValueError:
+                    forms.alert(u"Escribe, por ejemplo, 1.20|1.30", title=u"Acero Viga")
+                    return
+                if extra["kind"] == bx.BASTON:
+                    extra["s0"], extra["s1"] = round(g[0] - left, 3), round(g[1] + right, 3)
+                else:
+                    extra["s0"], extra["s1"] = round(a + left, 3), round(b - right, 3)
+            else:
+                return
+            self._changed()
+
+    def elev_mouse_down(self, sender, args):
+        fitted = self._elev_fitted()
+        if fitted is None:
+            return
+        now = getattr(self, "_beam_now", None)
+        if args.ChangedButton == MouseButton.Left and now:
+            tag = getattr(args.OriginalSource, "Tag", None)
+            if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")):
+                self._edit_tag(tag)
+                args.Handled = True
+                return
+            s, scale = self._elev_s(args)
+            line, spans, start_face, end_face, bars, _, cuts = now
+            if self.tool_baston.IsChecked and spans:
+                st = self._edit_settings()
+                n, key = self._main_face(bx.TOP)
+                st["extras"].append(bx.default_baston(bx.nearest_gap(s, spans, start_face, end_face),
+                                                      spans, start_face, end_face, n, key))
+                self._changed()
+                return
+            if self.tool_balancin.IsChecked and spans:
+                k = bx.span_at(s, spans)
+                if k is not None:
+                    st = self._edit_settings()
+                    n, key = self._main_face(bx.BOTTOM)
+                    st["extras"].append(bx.default_balancin(k, spans, n, key))
+                    self._changed()
+                return
+            if self.tool_cut.IsChecked:
+                st = self._edit_settings()
+                st["cuts"] = sorted(list(cuts) + [round(max(0.0, min(line.length, s)), 3)])
+                self._changed()
+                return
+            near = self._cut_near(s, scale)
+            if near is not None:
+                st = self._edit_settings()
+                st["cuts"] = list(cuts)
+                self._drag_cut = near
+                self.canvas_elev.CaptureMouse()
+                return
+        if args.ChangedButton == MouseButton.Right and now:
+            s, scale = self._elev_s(args)
+            near = self._cut_near(s, scale)
+            if near is not None:
+                st = self._edit_settings()
+                st["cuts"] = [c for i, c in enumerate(now[6]) if i != near]
+                self._changed()
+                return
+        if args.ChangedButton in (MouseButton.Middle, MouseButton.Left):
+            self.elev_nav.start_pan(fitted, args.GetPosition(self.canvas_elev))
+            self.canvas_elev.CaptureMouse()
 
     def _build_3d(self):
         rv.build_beam(self.scene, getattr(self, "_scene_data", None), self.cbo_detail.SelectedItem or u"Medio")
@@ -1785,17 +2077,25 @@ class AceroWindow(forms.WPFWindow):
         self._draw_elevation()
         args.Handled = True
 
-    def elev_mouse_down(self, sender, args):
-        fitted = self._elev_fitted()
-        if fitted is not None and args.ChangedButton in (MouseButton.Middle, MouseButton.Left):
-            self.elev_nav.start_pan(fitted, args.GetPosition(self.canvas_elev))
-            self.canvas_elev.CaptureMouse()
-
     def elev_mouse_move(self, sender, args):
+        drag = getattr(self, "_drag_cut", None)
+        if drag is not None:
+            s, _ = self._elev_s(args)
+            if s is not None:
+                st = self._edit_settings()
+                line = self._view_line
+                st["cuts"][drag] = round(max(0.0, min(line.length, s)), 3)
+                self._changed()
+            return
         if self.elev_nav.pan(args.GetPosition(self.canvas_elev)):
             self._draw_elevation()
 
     def elev_mouse_up(self, sender, args):
+        if getattr(self, "_drag_cut", None) is not None:
+            st = self._edit_settings()
+            st["cuts"] = sorted(st["cuts"])
+            self._drag_cut = None
+            self._changed()
         self.elev_nav.end_pan()
         self.canvas_elev.ReleaseMouseCapture()
 
@@ -2323,9 +2623,11 @@ try:
             sub = DB.SubTransaction(doc)
             sub.Start()
             try:
+                key = tuple(id_of(e.Id) for e in line.elements)
+                line_settings = state.line_edits.get(key) or rb.read_line_settings(line)
                 created, found = rb.generate_line(
                     doc, line, specs[bt.id], rb.anchor_of(bt.config()), bar_types, hooks,
-                    rebar_shapes, splice, legs)
+                    rebar_shapes, splice, legs, line_settings=line_settings)
                 sub.Commit()
                 done.append((line, bt.name, created))
                 warnings += [u"{} (viga {}): {}".format(bt.name, id_of(line.elements[0].Id), w) for w in found]

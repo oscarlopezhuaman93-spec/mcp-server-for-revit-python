@@ -924,7 +924,8 @@ def beam_elevation_extent(data):
     ys = [p[1] * k for p in data["polygon"]]
     ss = [0.0, data["length"]] + [f["s0"] for f in data["supports"]] + [f["s1"] for f in data["supports"]]
     ss += [p[2] for pts, _ in data["bar_paths"] for p in pts]
-    return min(ss) - 2 * u, min(ys) - 9 * u, max(ss) + 2 * u, max(ys) + 6 * u
+    room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0  # Acero Viga's labels and cuts
+    return min(ss) - 2 * u, min(ys) - 9 * u - room, max(ss) + 2 * u, max(ys) + 6 * u + room
 
 
 def draw_beam_elevation(canvas, data, frame):
@@ -992,6 +993,22 @@ def draw_beam_elevation(canvas, data, frame):
         _rect(canvas, frame, s0, yb, s1, yb + 0.6 * u, C_LAP)
         _text(canvas, frame, (s0 + s1) / 2.0, (yb + 1.5 * u) if top else (yb - 0.9 * u),
               u"Emp. Ø{} {:.2f}".format(key, s1 - s0), brush=C_LAP_TEXT, size=9)
+    # Acero Viga's per-beam settings (only when the data holds them): extra
+    # bars with their editable labels, each span's own stirrups, the cuts
+    for extra in data.get("extras") or []:
+        color = _brush(226, 75, 74) if extra["face"] == u"sup" else _brush(29, 158, 117)
+        pts = extra["path"]
+        for p, q in zip(pts, pts[1:]):
+            _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), color, 3)
+        ls, _ = extra["label_at"]
+        # inside the beam, by its face: clear of the zone bands and the names
+        _edit_text(canvas, frame, ls, (y1 - 0.9 * u) if extra["face"] == u"sup" else (y0 + 0.9 * u),
+                   extra["label"], extra["tag"])
+    for a, b, text, tag in data.get("span_labels") or []:
+        _edit_text(canvas, frame, a + 0.2 * u, y0 - 2.25 * u, text, tag)
+    for s, number in data.get("cuts") or []:
+        _line(canvas, frame, (s, y1 + 1.0 * u), (s, y0 - 1.0 * u), _brush(127, 119, 221), 1.5, dash=True)
+        _text(canvas, frame, s, y1 + 1.6 * u, u"{}".format(number), brush=_brush(83, 74, 183), size=10, bold=True)
     # clear spans dimensioned under everything
     ydim = y0 - 3.2 * u
     for span in data["spans"]:

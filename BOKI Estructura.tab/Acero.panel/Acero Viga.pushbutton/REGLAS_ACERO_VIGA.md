@@ -81,6 +81,21 @@ Código: `rebar_spec.py` → `beam_lap_zones`, `lap_pieces`, `beam_bar_points`;
 Código: `rebar_spec.py` → `haunch_polyline`, `follow_profile`;
 `rebar_beams.py` → `BeamLine._read_profile`, `polygon_at`.
 
-## 7. Pendiente (segunda etapa)
+## 7. Por viga: estribos de cada tramo, bastones, balancines y cortes (2026-10-16)
 
-- Bastones (barras adicionales en apoyos y al centro).
+- Se guardan **por viga** (parámetro de instancia `EA_Viga_Linea` en sus
+  elementos), no por tipo: cada viga tiene sus propios tramos.
+- **Estribos por tramo:** cada luz libre puede tener su propia distribución
+  (cota amarilla bajo el tramo en el ALZADO); vacía = la del tipo.
+- **Bastón** = acero adicional **superior** sobre un apoyo: por defecto Ln/3
+  a cada lado de las caras del apoyo (Ln del tramo de cada lado); en un apoyo
+  extremo empieza en el extremo de la viga con el anclaje de las corridas.
+- **Balancín** = acero adicional **inferior** en un tramo: por defecto su
+  centro, dejando 0.15 Ln libres en cada cara.
+- Los adicionales van en la capa de las corridas, en los espacios más anchos,
+  si caben con el espacio libre de la E.060 (>= db y 2.5 cm); si no, en una
+  segunda capa hacia adentro.
+- **Cortes:** 3 por tramo (0.10 Ln de cada cara y el centro), movibles; cada
+  uno muestra su sección con las barras que pasan y el área de acero.
+
+Código: `revit_mcp/beam_extras.py`; `rebar_beams.py` → `generate_line(line_settings=...)`.

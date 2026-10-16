@@ -276,8 +276,21 @@
                     <DockPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,6">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="elev_fit_click"/>
-                            <TextBlock Text="ALZADO" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <TextBlock Text="ALZADO   " FontWeight="Bold" VerticalAlignment="Center"/>
+                            <ToggleButton x:Name="tool_baston" Content="+ Bast&#243;n" Padding="6,0" Click="elev_tool_click"
+                                          ToolTip="Clic en un apoyo: acero adicional superior, Ln/3 a cada lado (en el extremo, con el anclaje de las corridas)."/>
+                            <ToggleButton x:Name="tool_balancin" Content="+ Balanc&#237;n" Padding="6,0" Margin="4,0,0,0" Click="elev_tool_click"
+                                          ToolTip="Clic en un tramo: acero adicional inferior en su centro (0.15 Ln libre de cada cara)."/>
+                            <ToggleButton x:Name="tool_cut" Content="+ Corte" Padding="6,0" Margin="4,0,0,0" Click="elev_tool_click"
+                                          ToolTip="Clic en la viga: un corte nuevo. Los cortes se arrastran; clic derecho sobre uno lo borra."/>
+                            <TextBlock x:Name="txt_elev_hint" Foreground="Gray" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       Text="Clic en una cota amarilla para editarla. Arrastra los cortes."/>
                         </DockPanel>
+                        <Border DockPanel.Dock="Bottom" BorderBrush="#FF9A9A9A" BorderThickness="1,0,1,1" Background="White" Height="150">
+                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="panel_cuts" Orientation="Horizontal" Margin="4"/>
+                            </ScrollViewer>
+                        </Border>
                         <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                             <Canvas x:Name="canvas_elev" Background="White" SizeChanged="elev_resized"
                                     MouseWheel="elev_wheel" MouseDown="elev_mouse_down" MouseUp="elev_mouse_up"
