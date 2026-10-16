@@ -2032,23 +2032,23 @@ class AceroWindow(forms.WPFWindow):
         line, spans, start_face, end_face, bars = now[0], now[1], now[2], now[3], now[4]
         extra = self._line_settings(line)["extras"][index]
         self.sel_bar.Visibility = Visibility.Visible
-        self.sel_title.Text = (u"Bast\u00f3n" if extra["kind"] == bx.BASTON else u"Balanc\u00edn") + u" (sup.)" \
-            if extra["face"] == bx.TOP else (u"Bast\u00f3n" if extra["kind"] == bx.BASTON else u"Balanc\u00edn") + u" (inf.)"
+        self._sel_filling = True
+        self.sel_title.Text = u"Bast\u00f3n:" if extra["face"] == bx.TOP else u"Balanc\u00edn:"
         self.sel_n.Text = u"{}".format(int(extra["n"]))
         if self.sel_d.Items.Count == 0:
             for key in sorted(rs.BAR_DIAMETERS_MM, key=lambda q: rs.BAR_DIAMETERS_MM[q]):
                 self.sel_d.Items.Add(key)
         self.sel_d.SelectedItem = extra["d"]
         cotas = dict((c["end"], c) for c in bx.extra_cotas(extra, spans, start_face, end_face))
-        for end, box, lbl in ((0, self.sel_c0, self.sel_lbl0), (1, self.sel_c1, self.sel_lbl1)):
+        both = len(cotas) == 2
+        for end, box, lbl, unit in ((0, self.sel_c0, self.sel_lbl0, self.sel_m0),
+                                    (1, self.sel_c1, self.sel_lbl1, self.sel_m1)):
             c = cotas.get(end)
-            box.IsEnabled = c is not None
+            shown = Visibility.Visible if c else Visibility.Collapsed
+            box.Visibility = lbl.Visibility = unit.Visibility = shown
             box.Text = u"{:.2f}".format(c["hi"] - c["lo"]) if c else u""
-            lbl.Opacity = 1.0 if c else 0.4
-        self.sel_lbl0.Text = u"Inicio desde cara (m)"
-        self.sel_lbl1.Text = u"Fin desde cara (m)"
-        pts = bx.placed_positions(extra, bars, rs.BAR_DIAMETERS_MM)
-        self.sel_pos.Text = bx.position_text(pts, line.section.polygon_m, extra["face"])
+            lbl.Text = (u"Izq. " if end == 0 else u"Der. ") if both else u"Largo "
+        self._sel_filling = False
 
     def sel_apply_click(self, sender, args):
         index = self._selected_index()
@@ -2075,15 +2075,20 @@ class AceroWindow(forms.WPFWindow):
             bx.set_cota(extra, cotas[end], value)
         if changed_n:
             extra.pop("pos", None)  # a new count: laid out again
-        else:
-            try:
-                pts = bx.parse_position_text(self.sel_pos.Text, line.section.polygon_m, extra["face"], n)
-                extra["pos"] = [[round(x, 4), round(y, 4)] for x, y in pts]
-            except (ValueError, IndexError):
-                forms.alert(u"Posici\u00f3n en la secci\u00f3n: x;y en cm por barra, separadas con |, "
-                            u"dentro de la secci\u00f3n. Ej. 7.5;6 | 17.5;6", title=u"Acero Viga")
-                return
         self._select(index)
+
+    def sel_key(self, sender, args):
+        if args.Key == Key.Enter:
+            self.sel_apply_click(sender, args)
+            args.Handled = True
+
+    def sel_lost_focus(self, sender, args):
+        if not getattr(self, "_sel_filling", False) and self._selected_index() is not None:
+            self.sel_apply_click(sender, args)
+
+    def sel_d_changed(self, sender, args):
+        if not getattr(self, "_sel_filling", False) and self._selected_index() is not None:
+            self.sel_apply_click(sender, args)
 
     def sel_auto_pos_click(self, sender, args):
         index = self._selected_index()
@@ -2337,8 +2342,6 @@ class AceroWindow(forms.WPFWindow):
                     extras = self._edit_settings()["extras"]
                     extras.append(bx.drawn_extra(s_a, s, face, n, key))
                     self.tool_draw.IsChecked = False
-                    self._select(len(extras) - 1)  # its measures, typed in the bar above
-                    return
                 self._changed()
                 return
             end = self._end_near(args, scale)
