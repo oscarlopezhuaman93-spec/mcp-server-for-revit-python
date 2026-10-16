@@ -280,13 +280,34 @@
                             <ToggleButton x:Name="tool_draw" Content="&#9998; Dibujar acero" Padding="6,0" Click="elev_tool_click"
                                           ToolTip="A mano alzada: clic en el inicio y en el final. En la mitad de arriba de la viga es bast&#243;n (superior), en la de abajo balanc&#237;n (inferior). Se ajusta a 5 cm y a las caras de los apoyos. Esc cancela."/>
                             <ToggleButton x:Name="tool_cut" Content="+ Corte" Padding="6,0" Margin="4,0,0,0" Click="elev_tool_click"
-                                          ToolTip="Clic en la viga: un corte nuevo. Los cortes se arrastran; clic derecho sobre uno lo borra."/>
+                                          ToolTip="Clic en la viga: agrega UN corte (luego se apaga). Los cortes se arrastran siempre; clic derecho sobre uno lo borra."/>
                             <Button Content="Cortes autom&#225;ticos" Padding="6,0" Margin="4,0,0,0" Click="auto_cuts_click"
                                     ToolTip="Un corte en cada zona de cada tramo donde cambia el acero (donde empieza o termina un bast&#243;n o balanc&#237;n)."/>
                             <TextBlock x:Name="txt_elev_hint" Foreground="Gray" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center"
-                                       Text="Cotas: clic en el n&#250;mero para la longitud, arrastra sus extremos; clic en 2&#216;5/8&quot; para cantidad, di&#225;metro o borrar."/>
+                                       Text="Clic en un acero para editarlo o eliminarlo. Cotas desde la cara de la columna: clic en el n&#250;mero."/>
                         </DockPanel>
-                        <Border DockPanel.Dock="Bottom" BorderBrush="#FF9A9A9A" BorderThickness="1,0,1,1" Background="White" Height="150">
+                        <Border x:Name="sel_bar" DockPanel.Dock="Top" Visibility="Collapsed" Background="#FFFFF4D6"
+                                BorderBrush="#FFE0B050" BorderThickness="1" Padding="4,3" Margin="0,0,0,2">
+                            <WrapPanel>
+                                <TextBlock x:Name="sel_title" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock Text="Cant." VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                <TextBox x:Name="sel_n" Width="30" Margin="0,0,8,0"/>
+                                <TextBlock Text="&#216;" VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                <ComboBox x:Name="sel_d" Width="62" Margin="0,0,10,0"/>
+                                <TextBlock x:Name="sel_lbl0" Text="Desde cara izq. (m)" VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                <TextBox x:Name="sel_c0" Width="42" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="sel_lbl1" Text="Desde cara der. (m)" VerticalAlignment="Center" Margin="0,0,3,0"/>
+                                <TextBox x:Name="sel_c1" Width="42" Margin="0,0,10,0"/>
+                                <TextBlock Text="En la secci&#243;n x;y (cm)" VerticalAlignment="Center" Margin="0,0,3,0"
+                                           ToolTip="Por barra, separadas con |: x desde la cara izquierda de la secci&#243;n; y desde la cara superior (bast&#243;n) o inferior (balanc&#237;n), al centro de la barra. Tambi&#233;n se arrastran en los cortes."/>
+                                <TextBox x:Name="sel_pos" Width="150" Margin="0,0,8,0"/>
+                                <Button Content="Aplicar" Padding="8,0" Click="sel_apply_click" IsDefault="False"/>
+                                <Button Content="Posici&#243;n autom&#225;tica" Padding="6,0" Margin="4,0,0,0" Click="sel_auto_pos_click"/>
+                                <Button Content="Eliminar" Padding="6,0" Margin="4,0,0,0" Foreground="#FFB02020" Click="sel_delete_click"/>
+                                <Button Content="&#10005;" Padding="6,0" Margin="4,0,0,0" Click="sel_close_click" ToolTip="Quitar la selecci&#243;n"/>
+                            </WrapPanel>
+                        </Border>
+                        <Border DockPanel.Dock="Bottom" BorderBrush="#FF9A9A9A" BorderThickness="1,0,1,1" Background="White" Height="176">
                             <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                                 <StackPanel x:Name="panel_cuts" Orientation="Horizontal" Margin="4"/>
                             </ScrollViewer>

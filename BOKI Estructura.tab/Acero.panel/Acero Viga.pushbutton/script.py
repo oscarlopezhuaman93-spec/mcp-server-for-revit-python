@@ -49,9 +49,9 @@ from System.Windows import (FontWeights, HorizontalAlignment, Point, Size, Thick
                             VerticalAlignment, Visibility)
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.DB.Structure import RebarShape, RebarStyle
-from System.Windows.Input import Key, Keyboard, MouseButton
+from System.Windows.Input import Cursors, Key, Keyboard, MouseButton
 from System.Windows import GridLength, TextWrapping
-from System.Windows.Controls import Border, Dock, DockPanel
+from System.Windows.Controls import Border, Dock, DockPanel, WrapPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import Color, DoubleCollection, PointCollection, SolidColorBrush
@@ -761,6 +761,10 @@ class AceroWindow(forms.WPFWindow):
             self.draft = []
             self._status()
             self.redraw()
+            args.Handled = True
+        elif (args.Key == Key.Delete and self._selected_index() is not None
+              and not isinstance(Keyboard.FocusedElement, TextBox)):
+            self.sel_delete_click(sender, args)
             args.Handled = True
         elif (args.Key == Key.Delete and getattr(self, "selected", None) is not None
               and not isinstance(Keyboard.FocusedElement, TextBox)):
@@ -1651,6 +1655,7 @@ class AceroWindow(forms.WPFWindow):
         if not spans:
             messages.append(u"La viga no tiene luz libre entre apoyos")
         settings = self._line_settings(line)
+        free = rs.free_ends(spans, [(sp["s0"], sp["s1"]) for sp in supports])  # cantilevers
         span_data, span_fams, span_labels = [], [], []
         for index, (a, b) in enumerate(spans):
             item = {"a": a, "b": b}
@@ -1663,9 +1668,12 @@ class AceroWindow(forms.WPFWindow):
                         messages.append(u"Tramo {}: {}".format(index + 1, msg))
                 if family:
                     fams[name] = family
-                    item[name] = dict(family, tagged=rs.stirrup_zone_positions(b - a, family["zones"], family["rest"]))
+                    item[name] = dict(family, tagged=rs.span_zone_positions(b - a, family["zones"], family["rest"],
+                                                                            free.get(index)))
             own = bx.span_text(settings, index, "edge")
-            span_labels.append((a, b, u"\u00d8{}: {}".format(f["edge"], own or u"(del tipo)"), u"span:{}".format(index)))
+            span_labels.append((a, b, u"\u00d8{}: {}{}".format(f["edge"], own or u"(del tipo)",
+                                                                 u"  (voladizo)" if index in free else u""),
+                                u"span:{}".format(index)))
             span_data.append(item)
             span_fams.append(fams)
         # stirrups and ties for the 3D view, stacked like they are generated
@@ -1690,8 +1698,9 @@ class AceroWindow(forms.WPFWindow):
             name = "edge" if kind == rs.KIND_EDGE else "conf"
             for index, (a, b) in enumerate(spans):
                 fam = span_fams[index].get(name) or family
-                for z, _ in rs.stirrup_zone_positions(b - a, fam["zones"], fam["rest"]):
-                    ss.append(a + z + (-lift if z > (b - a) / 2.0 + 1e-6 else lift))
+                for start, count, spacing, _, side in rs.span_stirrup_sets(b - a, fam["zones"], fam["rest"],
+                                                                           free.get(index)):
+                    ss += [a + start + j * spacing + side * lift for j in range(count)]
             radius = rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0
             if line.variable:  # a haunch: each stirrup fitted to its section
                 loops += [(kind, line.polygon_at(pts, s_), closed, [s_], radius) for s_ in ss]
@@ -1708,16 +1717,18 @@ class AceroWindow(forms.WPFWindow):
         confinement = rs.confinement_length(edge["zones"]) if edge else 0.0
         bar_paths, laps = [], []
         missing_legs, missing_laps = set(), set()
+        hooked = f["anchor"] == rb.ANCHOR_HOOK
+        hook_view = []
         for x, y, key in bars:
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             top = y > 0
-            leg = 0.0
-            if f["anchor"] == rb.ANCHOR_HOOK:
-                leg = legs.get(key, 0.0)
-                if not leg:
-                    missing_legs.add(key)
+            leg0 = bx.hook_leg(settings, 0, key, legs, rs.BAR_DIAMETERS_MM, hooked)
+            leg1 = bx.hook_leg(settings, 1, key, legs, rs.BAR_DIAMETERS_MM, hooked)
+            leg = max(leg0, leg1)
+            if not hook_view:
+                hook_view = [(bar_start, leg0, u"hook:0"), (bar_end, leg1, u"hook:1")]
             lap, pieces = 0.0, [(bar_start, bar_end)]
-            if splice is not None and bar_end - bar_start + 2 * leg > splice["max"] + 1e-6:
+            if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:
                 lap = splice["laps"].get(key, 0.0)
                 if not lap:
                     missing_laps.add(key)
@@ -1727,7 +1738,7 @@ class AceroWindow(forms.WPFWindow):
             for i, (s0, s1) in enumerate(pieces):
                 last = i == len(pieces) - 1
                 path = rs.beam_bar_points(x, y, d, s0, s1, lap, not last,
-                                          leg if i == 0 else 0.0, leg if last else 0.0)
+                                          leg0 if i == 0 else 0.0, leg1 if last else 0.0)
                 if line.variable:  # along the sloped face of a haunch
                     path = rs.follow_profile(path, line.shift_at(y), line.breaks)
                 bar_paths.append((path, d / 2.0))
@@ -1741,10 +1752,11 @@ class AceroWindow(forms.WPFWindow):
             s0, s1, hook0, hook1 = bx.extra_ends(extra, bar_start, bar_end)
             if s1 - s0 < 0.1:
                 continue
-            leg = legs.get(key, 0.0) if f["anchor"] == rb.ANCHOR_HOOK else 0.0
-            positions = bx.extra_positions(bars, extra["face"], int(extra["n"]), key, rs.BAR_DIAMETERS_MM)
+            leg0 = bx.hook_leg(settings, 0, key, legs, rs.BAR_DIAMETERS_MM, hooked) if hook0 else 0.0
+            leg1 = bx.hook_leg(settings, 1, key, legs, rs.BAR_DIAMETERS_MM, hooked) if hook1 else 0.0
+            positions = bx.placed_positions(extra, bars, rs.BAR_DIAMETERS_MM)
             for k_pos, (x, y) in enumerate(positions):
-                path = rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg if hook0 else 0.0, leg if hook1 else 0.0)
+                path = rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)
                 if line.variable:
                     path = rs.follow_profile(path, line.shift_at(y), line.breaks)
                 bar_paths.append((path, d / 2.0))
@@ -1769,8 +1781,6 @@ class AceroWindow(forms.WPFWindow):
         # the cuts: automatic (one per stretch of the same steel) until moved
         cuts = settings["cuts"] or (bx.auto_cuts(spans, settings["extras"]) if spans else [])
         self._beam_now = (line, spans, start_face, end_face, bars, settings, cuts)
-        if missing_legs:
-            messages.append(u"Falta la pata del gancho de 90 de " + u", ".join(sorted(missing_legs)))
         if missing_laps:
             messages.append(u"Sin empalme (diametro no marcado): barras de " + u", ".join(sorted(missing_laps)))
         polygon = line.section.polygon_m
@@ -1802,6 +1812,8 @@ class AceroWindow(forms.WPFWindow):
             "draft": getattr(self, "_draft_view", None),
             "span_labels": span_labels,
             "cuts": [(c, k + 1) for k, c in enumerate(cuts)],
+            "hooks": hook_view,
+            "selected": self._selected_index(),
         }
         scene = {
             "polygon": polygon,
@@ -1822,6 +1834,8 @@ class AceroWindow(forms.WPFWindow):
             self._status(u"No se pudieron dibujar el alzado y la vista 3D: {}".format(e))
         self._elev_data = elev
         self._scene_data = scene
+        if self._selected_index() is None and hasattr(self, "sel_bar"):
+            self.sel_bar.Visibility = Visibility.Collapsed  # another beam: nothing selected
         self._draw_elevation()
         self._build_3d()
 
@@ -1883,11 +1897,13 @@ class AceroWindow(forms.WPFWindow):
         poly = line.section.polygon_m
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
-        k = min(60.0 / max(max(xs) - min(xs), 1e-3), 70.0 / max(max(ys) - min(ys), 1e-3))
+        k = min(80.0 / max(max(xs) - min(xs), 1e-3), 110.0 / max(max(ys) - min(ys), 1e-3))
+        sel = self._selected_index()
         for number, s_cut in enumerate(cuts, 1):
             box = Canvas()
-            box.Width, box.Height = 180, 136
-            cx, cy = 40.0, 50.0
+            box.Width, box.Height = 250, 160
+            box.Background = brush(255, 255, 255)
+            cx, cy = 10.0 - min(xs) * k, 18.0 + max(ys) * k
 
             def P(x, y):
                 return Point(cx + x * k, cy - y * k)
@@ -1901,22 +1917,36 @@ class AceroWindow(forms.WPFWindow):
             box.Children.Add(shape)
             for x, y, key in bars:
                 self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, brush(30, 30, 30))
-            for extra in settings["extras"]:
+            placed = []
+            for i_extra, extra in enumerate(settings["extras"]):
                 if extra["s0"] - 1e-6 <= s_cut <= extra["s1"] + 1e-6:
                     color = brush(226, 75, 74) if extra["face"] == bx.TOP else brush(29, 158, 117)
-                    for x, y in bx.extra_positions(bars, extra["face"], int(extra["n"]), extra["d"],
-                                                   rs.BAR_DIAMETERS_MM):
-                        self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[extra["d"]] / 2000.0 * k, color)
+                    if i_extra == sel:
+                        color = brush(240, 140, 20)
+                    pts = bx.placed_positions(extra, bars, rs.BAR_DIAMETERS_MM)
+                    for k_bar, (x, y) in enumerate(pts):
+                        dot = self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[extra["d"]] / 2000.0 * k, color, 6.0)
+                        dot.Tag = u"dot:{}:{}".format(i_extra, k_bar)
+                        dot.Cursor = Cursors.SizeAll
+                    placed.append((extra, pts))
+            box.Tag = (k, cx, cy, poly)
+            box.MouseLeftButtonDown += self.cut_dot_down
+            box.MouseMove += self.cut_dot_move
+            box.MouseLeftButtonUp += self.cut_dot_up
             lines = [u"{}-{}  (s = {:.2f} m)".format(number, number, s_cut)]
             for face, name in ((bx.TOP, u"Sup"), (bx.BOTTOM, u"Inf")):
                 text, area = bx.steel_at(s_cut, bars, settings["extras"], rs.BAR_DIAMETERS_MM, face)
                 lines.append(u"{}: {}".format(name, text))
                 lines.append(u"      = {:.2f} cm\u00b2".format(area))
+            for extra, pts in placed:  # where the extras sit (x;y cm, see position_text)
+                lines.append(u"+{}\u00d8{} {}: {}".format(int(extra["n"]), extra["d"],
+                                                          u"sup" if extra["face"] == bx.TOP else u"inf",
+                                                          bx.position_text(pts, poly, extra["face"])))
             label = TextBlock()
             label.Text = u"\n".join(lines)
             label.FontSize = 10
-            Canvas.SetLeft(label, 78)
-            Canvas.SetTop(label, 6)
+            Canvas.SetLeft(label, 100)
+            Canvas.SetTop(label, 4)
             box.Children.Add(label)
             frame = Border()
             frame.BorderBrush = brush(200, 200, 210)
@@ -1926,14 +1956,170 @@ class AceroWindow(forms.WPFWindow):
             panel.Children.Add(frame)
 
     @staticmethod
-    def _cut_dot(canvas, center, radius, fill):
+    def _cut_dot(canvas, center, radius, fill, minimum=4.0):
         from System.Windows.Shapes import Ellipse
         e = Ellipse()
-        e.Width = e.Height = max(4.0, 2 * radius)
+        e.Width = e.Height = max(minimum, 2 * radius)
         e.Fill = fill
         Canvas.SetLeft(e, center.X - e.Width / 2.0)
         Canvas.SetTop(e, center.Y - e.Height / 2.0)
         canvas.Children.Add(e)
+        return e
+
+    # -- an extra's bars dragged in a cut: where they really go ----------------
+    def cut_dot_down(self, sender, args):
+        tag = getattr(args.OriginalSource, "Tag", None)
+        if not (isinstance(tag, basestring) and tag.startswith(u"dot:")):
+            return
+        i_extra, k_bar = [int(t) for t in tag[4:].split(u":")]
+        self._dot_drag = (sender, args.OriginalSource, i_extra, k_bar, args.GetPosition(sender), False)
+        sender.CaptureMouse()
+        args.Handled = True
+
+    def cut_dot_move(self, sender, args):
+        drag = getattr(self, "_dot_drag", None)
+        if drag is None or drag[0] is not sender:
+            return
+        box, dot, i_extra, k_bar, start, _ = drag
+        pt = args.GetPosition(box)
+        if abs(pt.X - start.X) + abs(pt.Y - start.Y) < 2:
+            return
+        Canvas.SetLeft(dot, pt.X - dot.Width / 2.0)
+        Canvas.SetTop(dot, pt.Y - dot.Height / 2.0)
+        self._dot_drag = (box, dot, i_extra, k_bar, start, True)
+
+    def cut_dot_up(self, sender, args):
+        drag = getattr(self, "_dot_drag", None)
+        if drag is None:
+            return
+        self._dot_drag = None
+        box, dot, i_extra, k_bar, start, moved = drag
+        box.ReleaseMouseCapture()
+        if moved:
+            k, cx, cy, poly = box.Tag
+            pt = args.GetPosition(box)
+            x = round(((pt.X - cx) / k) / 0.005) * 0.005  # to 5 mm
+            y = round(((cy - pt.Y) / k) / 0.005) * 0.005
+            xs = [q[0] for q in poly]
+            ys = [q[1] for q in poly]
+            x = max(min(xs) + 0.02, min(max(xs) - 0.02, x))
+            y = max(min(ys) + 0.02, min(max(ys) - 0.02, y))
+            extra = self._edit_settings()["extras"][i_extra]
+            bx.set_position(extra, self.design["bars"], rs.BAR_DIAMETERS_MM, k_bar, x, y)
+        self._select(i_extra)
+
+    # -- the selected extra: edited in the bar over the elevation -------------
+    def _selected_index(self):
+        sel = getattr(self, "_sel", None)
+        line = getattr(self, "_view_line", None)
+        if sel is None or line is None or sel[0] != self._line_key(line):
+            return None
+        extras = self._line_settings(line)["extras"]
+        return sel[1] if sel[1] < len(extras) else None
+
+    def _select(self, index):
+        line = getattr(self, "_view_line", None)
+        self._sel = (self._line_key(line), index) if (index is not None and line is not None) else None
+        self._changed()
+        self._show_sel()
+
+    def _show_sel(self):
+        index = self._selected_index()
+        now = getattr(self, "_beam_now", None)
+        if index is None or not now:
+            self.sel_bar.Visibility = Visibility.Collapsed
+            return
+        line, spans, start_face, end_face, bars = now[0], now[1], now[2], now[3], now[4]
+        extra = self._line_settings(line)["extras"][index]
+        self.sel_bar.Visibility = Visibility.Visible
+        self.sel_title.Text = (u"Bast\u00f3n" if extra["kind"] == bx.BASTON else u"Balanc\u00edn") + u" (sup.)" \
+            if extra["face"] == bx.TOP else (u"Bast\u00f3n" if extra["kind"] == bx.BASTON else u"Balanc\u00edn") + u" (inf.)"
+        self.sel_n.Text = u"{}".format(int(extra["n"]))
+        if self.sel_d.Items.Count == 0:
+            for key in sorted(rs.BAR_DIAMETERS_MM, key=lambda q: rs.BAR_DIAMETERS_MM[q]):
+                self.sel_d.Items.Add(key)
+        self.sel_d.SelectedItem = extra["d"]
+        cotas = dict((c["end"], c) for c in bx.extra_cotas(extra, spans, start_face, end_face))
+        for end, box, lbl in ((0, self.sel_c0, self.sel_lbl0), (1, self.sel_c1, self.sel_lbl1)):
+            c = cotas.get(end)
+            box.IsEnabled = c is not None
+            box.Text = u"{:.2f}".format(c["hi"] - c["lo"]) if c else u""
+            lbl.Opacity = 1.0 if c else 0.4
+        self.sel_lbl0.Text = u"Inicio desde cara (m)"
+        self.sel_lbl1.Text = u"Fin desde cara (m)"
+        pts = bx.placed_positions(extra, bars, rs.BAR_DIAMETERS_MM)
+        self.sel_pos.Text = bx.position_text(pts, line.section.polygon_m, extra["face"])
+
+    def sel_apply_click(self, sender, args):
+        index = self._selected_index()
+        now = getattr(self, "_beam_now", None)
+        if index is None or not now:
+            return
+        line, spans, start_face, end_face, bars = now[0], now[1], now[2], now[3], now[4]
+        extra = self._edit_settings()["extras"][index]
+        try:
+            n = int(self.sel_n.Text.strip())
+            if n < 1:
+                raise ValueError()
+            cotas = dict((c["end"], c) for c in bx.extra_cotas(extra, spans, start_face, end_face))
+            values = {}
+            for end, box in ((0, self.sel_c0), (1, self.sel_c1)):
+                if end in cotas and box.Text.strip():
+                    values[end] = float(box.Text.strip().replace(u",", u"."))
+        except ValueError:
+            forms.alert(u"Revisa la cantidad y las distancias (m), por ejemplo 2 y 1.20", title=u"Acero Viga")
+            return
+        changed_n = n != int(extra["n"]) or (self.sel_d.SelectedItem or extra["d"]) != extra["d"]
+        extra["n"], extra["d"] = n, self.sel_d.SelectedItem or extra["d"]
+        for end, value in values.items():
+            bx.set_cota(extra, cotas[end], value)
+        if changed_n:
+            extra.pop("pos", None)  # a new count: laid out again
+        else:
+            try:
+                pts = bx.parse_position_text(self.sel_pos.Text, line.section.polygon_m, extra["face"], n)
+                extra["pos"] = [[round(x, 4), round(y, 4)] for x, y in pts]
+            except (ValueError, IndexError):
+                forms.alert(u"Posici\u00f3n en la secci\u00f3n: x;y en cm por barra, separadas con |, "
+                            u"dentro de la secci\u00f3n. Ej. 7.5;6 | 17.5;6", title=u"Acero Viga")
+                return
+        self._select(index)
+
+    def sel_auto_pos_click(self, sender, args):
+        index = self._selected_index()
+        if index is None:
+            return
+        self._edit_settings()["extras"][index].pop("pos", None)
+        self._select(index)
+
+    def sel_delete_click(self, sender, args):
+        index = self._selected_index()
+        if index is None:
+            return
+        del self._edit_settings()["extras"][index]
+        self._select(None)
+
+    def sel_close_click(self, sender, args):
+        self._select(None)
+
+    def _extra_near(self, args, scale):
+        """Index of the extra bar drawn under the mouse (6 px)."""
+        data = self._elev_data
+        if not data:
+            return None
+        s, _ = self._elev_s(args)
+        y = self._elev_y(args)
+        k = rv._beam_deepen(data)
+        best = None
+        for item in data.get("extras") or []:
+            pts = [(p[2], p[1] * k) for p in item["path"]]
+            for (ax, ay), (bx_, by) in zip(pts, pts[1:]):
+                dx, dy = bx_ - ax, by - ay
+                t = 0.0 if dx * dx + dy * dy < 1e-12 else max(0.0, min(1.0, ((s - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)))
+                d = ((ax + t * dx - s) ** 2 + (ay + t * dy - y) ** 2) ** 0.5 * scale
+                if d < 6 and (best is None or d < best[0]):
+                    best = (d, item["index"])
+        return best[1] if best else None
 
     def elev_tool_click(self, sender, args):
         for b in (self.tool_draw, self.tool_cut):
@@ -2055,8 +2241,30 @@ class AceroWindow(forms.WPFWindow):
                 forms.alert(u"Escribe un numero, por ejemplo 1.20", title=u"Acero Viga")
                 return
             self._changed()
+        elif tag.startswith(u"hook:"):
+            end = int(tag[5:])
+            st = self._edit_settings()
+            current = (st.get("hooks") or {}).get(str(end))
+            value = forms.ask_for_string(
+                default=u"" if current is None else u"{:.2f}".format(current), title=u"Acero Viga",
+                prompt=u"Gancho de 90 de las barras al {} de la viga: largo de la pata (m); "
+                       u"0 = recto; vacio = el de la tabla (12 db si no esta):".format(u"inicio" if end == 0 else u"final"))
+            if value is None:
+                return
+            hooks = st.setdefault("hooks", {})
+            if not value.strip():
+                hooks.pop(str(end), None)
+            else:
+                try:
+                    hooks[str(end)] = max(0.0, float(value.replace(u",", u".")))
+                except ValueError:
+                    forms.alert(u"Escribe un numero, por ejemplo 0.25", title=u"Acero Viga")
+                    return
+            self._changed()
         elif tag.startswith(u"extra:"):
-            index = int(tag[6:])
+            self._select(int(tag[6:]))
+        elif tag.startswith(u"extra_old:"):
+            index = int(tag[10:])
             st = self._edit_settings()
             extra = st["extras"][index]
             choice = forms.SelectFromList.show(
@@ -2110,7 +2318,8 @@ class AceroWindow(forms.WPFWindow):
         if args.ChangedButton == MouseButton.Left and now:
             tag = getattr(args.OriginalSource, "Tag", None)
             if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
-                                                 or tag.startswith(u"len:") or tag.startswith(u"cota:")):
+                                                 or tag.startswith(u"len:") or tag.startswith(u"cota:")
+                                                 or tag.startswith(u"hook:")):
                 self._edit_tag(tag)
                 args.Handled = True
                 return
@@ -2125,7 +2334,11 @@ class AceroWindow(forms.WPFWindow):
                 self._draft, self._draft_view = None, None
                 if abs(s - s_a) >= 0.10:
                     n, key = self._main_face(face)
-                    self._edit_settings()["extras"].append(bx.drawn_extra(s_a, s, face, n, key))
+                    extras = self._edit_settings()["extras"]
+                    extras.append(bx.drawn_extra(s_a, s, face, n, key))
+                    self.tool_draw.IsChecked = False
+                    self._select(len(extras) - 1)  # its measures, typed in the bar above
+                    return
                 self._changed()
                 return
             end = self._end_near(args, scale)
@@ -2133,17 +2346,22 @@ class AceroWindow(forms.WPFWindow):
                 self._drag_end = end
                 self.canvas_elev.CaptureMouse()
                 return
-            if self.tool_cut.IsChecked:
-                st = self._edit_settings()
-                st["cuts"] = sorted(list(cuts) + [round(max(0.0, min(line.length, s)), 3)])
-                self._changed()
-                return
             near = self._cut_near(s, scale)
-            if near is not None:
+            if near is not None:  # a cut is moved, whatever tool is on (it fixes the cuts)
                 st = self._edit_settings()
                 st["cuts"] = list(cuts)
                 self._drag_cut = near
                 self.canvas_elev.CaptureMouse()
+                return
+            if self.tool_cut.IsChecked:
+                st = self._edit_settings()
+                st["cuts"] = sorted(list(cuts) + [round(max(0.0, min(line.length, s)), 3)])
+                self.tool_cut.IsChecked = False  # one cut per click on the button
+                self._changed()
+                return
+            hit = self._extra_near(args, scale)
+            if hit is not None:
+                self._select(hit)
                 return
         if args.ChangedButton == MouseButton.Right and now:
             s, scale = self._elev_s(args)
@@ -2706,18 +2924,7 @@ if not with_spec:
 
 splice = splice_for_generation(load_splice_settings())
 legs = dict((k, cm / 100.0) for k, cm in load_hook_legs().items())
-missing_legs, missing_laps = set(), set()
-for line in with_spec:
-    type_id = id_of(line.type_id)
-    keys = set(k for _, _, k in specs[type_id].design["bars"])
-    if rb.anchor_of(by_id[type_id].config()) == rb.ANCHOR_HOOK:
-        missing_legs |= set(k for k in keys if k not in legs)
-if missing_legs:
-    forms.alert(
-        u"Faltan datos en '3. Empalme y gancho' de la ventana Acero Viga:\n"
-        + u"\n- Pata del gancho de 90 de: {}".format(u", ".join(sorted(missing_legs))),
-        title="Acero")
-    script.exit()
+# a diameter without its hook leg in the table takes 12 db (bx.hook_leg)
 
 elements = sum(len(line.elements) for line in with_spec)
 dry_run = False  # straight to the model: no mode question

@@ -99,6 +99,24 @@ def test_cotas_from_the_column_faces():
     assert set(rows.values()) == {0}
 
 
+def test_hooks_and_bars_placed_by_hand():
+    st = be.read(be.write(dict(be.default_settings(), hooks={"0": 0.25})))
+    assert be.hook_leg(st, 0, '5/8"', {}, MM) == 0.25  # the beam's own
+    assert be.hook_leg(st, 1, '5/8"', {}, MM) == pytest.approx(0.20)  # 12 db = 0.19 -> 0.20
+    assert be.hook_leg(st, 1, '5/8"', {'5/8"': 0.30}, MM) == 0.30  # the diameter table
+    assert be.hook_leg(st, 1, '5/8"', {}, MM, hooked=False) == 0.0
+    poly = [(-0.125, -0.2), (0.125, -0.2), (0.125, 0.2), (-0.125, 0.2)]
+    e = be.drawn_extra(1.0, 2.0, be.TOP, 2, '5/8"')
+    be.set_position(e, MAIN, MM, 0, -0.05, 0.1396)
+    pts = be.placed_positions(e, MAIN, MM)
+    assert pts[0] == (-0.05, 0.1396) and len(pts) == 2
+    text = be.position_text(pts, poly, be.TOP)
+    assert text.startswith(u"7.5;6")
+    assert be.parse_position_text(text, poly, be.TOP, 2)[0] == pytest.approx((-0.05, 0.14))
+    with pytest.raises(ValueError):
+        be.parse_position_text(u"30;5", poly, be.TOP, 1)  # outside the section
+
+
 def test_steel_at_cuts_and_ends():
     extras = [be.default_baston(1, SPANS, START, END, 2, '5/8"')]
     text, area = be.steel_at(4.0, MAIN, extras, MM, be.TOP)

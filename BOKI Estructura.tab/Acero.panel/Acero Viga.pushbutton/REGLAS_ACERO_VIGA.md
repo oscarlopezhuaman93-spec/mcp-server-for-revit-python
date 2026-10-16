@@ -32,6 +32,10 @@ Código: `rebar_beams.py` → `line_supports`, `spans_and_ends`;
   las mismas reglas que en columnas: un conjunto por tramo y extremo
   (1@0.05 Individual, 10@0.10 Número con espaciado, resto @0.20 desde cada
   extremo), el sobrante al centro.
+- **Voladizo** (un tramo con un extremo libre, sin apoyo): la distribución
+  empieza **solo desde la cara de la columna** (sus zonas y luego el
+  resto) y sigue hasta el extremo libre (el último a 5 cm de él); no se
+  distribuye desde los dos lados. El tramo se rotula "(voladizo)".
 - **Dentro de los apoyos no van estribos de viga.**
 - Estribos a la misma cota: apilados un diámetro, juntos sin solaparse.
 
@@ -42,8 +46,10 @@ Código: `rebar_beams.py` → `line_supports`, `spans_and_ends`;
   extremo menos el recubrimiento, a la del otro extremo.
 - **Anclaje por tipo** ("Anclaje en extremos"):
   - **Gancho 90:** doblan 90° hacia la otra cara (las superiores hacia
-    abajo, las inferiores hacia arriba); la pata se escribe en cm por
-    diámetro en "3. Empalme y gancho".
+    abajo, las inferiores hacia arriba); la pata se toma de la tabla por
+    diámetro en "3. Empalme y gancho" o, si no está, **12 db** (redondeado
+    a 5 cm). En el alzado, el texto "Gancho 0.20" de cada extremo se
+    cambia con un clic, solo para esa viga (0 = recto).
   - **Recto:** terminan en el recubrimiento.
 
 ## 5. Empalmes

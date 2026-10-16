@@ -6,8 +6,10 @@ checked. Kept per beam line (JSON on its elements, EA_Viga_Linea), not
 per type: each beam has its own spans.
 
 Settings: {"spans": {"0": {"edge": text, "conf": text}}, "extras":
-[{"kind", "face" ("sup"/"inf"), "n", "d", "s0", "s1"}], "cuts": [s]}
-(m, along the beam line). Pure (tests/unit/test_beam_extras.py).
+[{"kind", "face" ("sup"/"inf"), "n", "d", "s0", "s1", "pos" (optional:
+[[x, y]] of each bar in the section, m from its center)}], "cuts": [s],
+"hooks": {"0": m, "1": m} (optional: the 90-degree hook leg at the
+start / end of the main bars, 0 = straight)} (m, along the beam line). Pure (tests/unit/test_beam_extras.py).
 """
 import json
 import math
@@ -19,7 +21,7 @@ MIN_CLEAR_M = 0.025  # E.060 7.6.1: clear space between parallel bars (>= db, 2.
 
 
 def default_settings():
-    return {"spans": {}, "extras": [], "cuts": []}
+    return {"spans": {}, "extras": [], "cuts": [], "hooks": {}}
 
 
 def read(text):
@@ -31,7 +33,77 @@ def read(text):
     out["spans"] = dict(data.get("spans") or {})
     out["extras"] = list(data.get("extras") or [])
     out["cuts"] = [float(c) for c in data.get("cuts") or []]
+    out["hooks"] = dict((str(k), float(v)) for k, v in (data.get("hooks") or {}).items())
     return out
+
+
+def default_leg(key, diameters_mm):
+    """The 90-degree hook leg of a bar (E.060 7.1.2: 12 db), up to 5 cm."""
+    m = 12.0 * diameters_mm[key] / 1000.0
+    return math.ceil(m / 0.05 - 1e-6) * 0.05
+
+
+def hook_leg(settings, end, key, legs, diameters_mm, hooked=True):
+    """The hook leg (m) at end 0 / 1 of the beam for bars of `key`: the
+    beam's own, else the diameter table's, else 12 db; 0 when straight."""
+    own = ((settings or {}).get("hooks") or {}).get(str(end))
+    if own is not None:
+        return max(0.0, float(own))
+    if not hooked:
+        return 0.0
+    return (legs or {}).get(key) or default_leg(key, diameters_mm)
+
+
+def placed_positions(extra, main_bars, diameters_mm):
+    """The section points of an extra's bars: where they were placed by
+    hand ("pos", one per bar), else laid out like extra_positions."""
+    auto = extra_positions(main_bars, extra["face"], int(extra["n"]), extra["d"], diameters_mm)
+    pos = extra.get("pos") or []
+    if len(pos) == len(auto):
+        return [(float(x), float(y)) for x, y in pos]
+    return auto
+
+
+def set_position(extra, main_bars, diameters_mm, k, x, y):
+    """Place bar k of an extra at (x, y) of the section (the others keep
+    where they are)."""
+    pts = [list(p) for p in placed_positions(extra, main_bars, diameters_mm)]
+    pts[k] = [round(x, 4), round(y, 4)]
+    extra["pos"] = pts
+    return extra
+
+
+def position_text(points, polygon, face):
+    """'x;y | x;y' in cm of bars: x from the section's left face, y from
+    its top face (top bars) or bottom face (bottom bars) to the center."""
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    out = []
+    for x, y in points:
+        dy = (max(ys) - y) if face == TOP else (y - min(ys))
+        out.append(u"{:g};{:g}".format(round((x - min(xs)) * 100.0, 1), round(dy * 100.0, 1)))
+    return u" | ".join(out)
+
+
+def parse_position_text(text, polygon, face, n):
+    """The inverse of position_text: [(x, y)] m; ValueError when it doesn't
+    hold n points inside the section."""
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    pts = []
+    for part in (text or u"").replace(u",", u".").split(u"|"):
+        if not part.strip():
+            continue
+        a, b = part.split(u";")
+        x = min(xs) + float(a) / 100.0
+        dy = float(b) / 100.0
+        y = (max(ys) - dy) if face == TOP else (min(ys) + dy)
+        if not (min(xs) < x < max(xs) and min(ys) < y < max(ys)):
+            raise ValueError(part)
+        pts.append((x, y))
+    if len(pts) != n:
+        raise ValueError(text)
+    return pts
 
 
 def write(settings):

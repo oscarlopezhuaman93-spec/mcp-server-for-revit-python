@@ -1010,11 +1010,19 @@ def draw_beam_elevation(canvas, data, frame):
               u"Emp. Ø{} {:.2f}".format(key, s1 - s0), brush=C_LAP_TEXT, size=9)
     # Acero Viga's per-beam settings (only when the data holds them): extra
     # bars with their editable labels, each span's own stirrups, the cuts
+    # the hook legs at the beam ends: click to change them (0 = straight)
+    for s_end, leg, tag in data.get("hooks") or []:
+        text = u"Gancho {:.2f}".format(leg) if leg > 0 else u"Recto"
+        shift = -5.6 * u if s_end < data["length"] / 2.0 else 0.4 * u  # outside the beam end
+        _edit_text(canvas, frame, s_end + shift, (y0 + y1) / 2.0 + 0.3 * u, text, tag)
     for extra in data.get("extras") or []:
         color = _brush(226, 75, 74) if extra["face"] == u"sup" else _brush(29, 158, 117)
+        selected = data.get("selected") == extra.get("index")
         pts = extra["path"]
         for p, q in zip(pts, pts[1:]):
-            _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), color, 3)
+            if selected:  # a halo under the selected one
+                _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(255, 200, 80), 8)
+            _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(240, 140, 20) if selected else color, 3)
         # its own dimension line, as on a drawing: ticks at both ends (drag
         # them), the length (click to change it) and the bars (click to edit)
         # its dimensions, always from a column face out / in to its ends

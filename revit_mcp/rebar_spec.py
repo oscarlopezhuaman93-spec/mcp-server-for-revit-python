@@ -1375,6 +1375,79 @@ def stirrup_sets(length, zones, rest):
     return sets
 
 
+def cantilever_sets(length, zones, rest, support_at_end=False, free_cover=0.05):
+    """A cantilever's stirrups (the user's rule): the distribution starts at
+    the support face only - its zones, then the rest - and runs out to the
+    free end (the last one `free_cover` from it); nothing from the free end.
+    Same format as stirrup_sets; measured from the span's start, so when the
+    support is at the span's end the sets are mirrored (side -1)."""
+    if length <= 0:
+        return []
+    rest_zone = len(zones)
+    eps = 1e-6
+    limit = length - free_cover
+    items = []
+    z = 0.0
+    for index, (count, spacing) in enumerate(zones):
+        for _ in range(count):
+            if z + spacing > limit + eps:
+                break
+            z += spacing
+            items.append((z, index))
+    while z + rest <= limit + eps:
+        z += rest
+        items.append((z, rest_zone))
+    side = 1
+    if support_at_end:
+        items = [(length - p, zone) for p, zone in reversed(items)]
+        side = -1
+    sets = []
+    i = 0
+    while i < len(items):
+        j = i
+        while j + 1 < len(items) and items[j + 1][1] == items[i][1]:
+            j += 1
+        points = [p for p, _ in items[i:j + 1]]
+        spacing = abs(points[1] - points[0]) if len(points) > 1 else 0.0
+        sets.append((points[0], len(points), spacing, items[i][1], side))
+        i = j + 1
+    return sets
+
+
+def span_stirrup_sets(length, zones, rest, free=None):
+    """stirrup_sets of a clear span; `free` "start" / "end": a cantilever,
+    free at that end (cantilever_sets from the other)."""
+    if free == "start":
+        return cantilever_sets(length, zones, rest, support_at_end=True)
+    if free == "end":
+        return cantilever_sets(length, zones, rest)
+    return stirrup_sets(length, zones, rest)
+
+
+def span_zone_positions(length, zones, rest, free=None):
+    """[(offset, zone)] of span_stirrup_sets, from the span's start."""
+    out = []
+    for start, count, spacing, zone, side in span_stirrup_sets(length, zones, rest, free):
+        step = spacing if side > 0 else spacing
+        out += [(start + k * step, zone) for k in range(count)]
+    return sorted(out)
+
+
+def free_ends(spans, supports, tol=0.03):
+    """{span index: "start" / "end"} of the cantilevers: a span whose first
+    (last) end has no support - the beam just ends there. A span free at
+    both ends (no support at all) is left as it is."""
+    out = {}
+    for i, (a, b) in enumerate(spans):
+        at_a = any(s0 <= a + tol and s1 >= a - tol for s0, s1 in supports)
+        at_b = any(s0 <= b + tol and s1 >= b - tol for s0, s1 in supports)
+        if at_a and not at_b:
+            out[i] = "end"
+        elif at_b and not at_a:
+            out[i] = "start"
+    return out
+
+
 def stirrup_zone_positions(length, zones, rest):
     """Every stirrup of `stirrup_sets`, bottom up, tagged with its zone:
     [(offset, zone_index)]."""

@@ -214,6 +214,20 @@ class TestBeams:
         assert beam_lap_zones([(0.0, 6.0)], False, conf) == pytest.approx([(0.0, 1.5), (4.5, 6.0)])  # L/4 from the faces
         assert beam_lap_zones([(0.0, 3.0)], False, conf, 0.95) == pytest.approx([(0.0, 0.95), (2.05, 3.0)])  # lap > L/4
 
+    def test_cantilever_stirrups_start_at_the_support(self):
+        from revit_mcp.rebar_spec import free_ends, span_zone_positions
+
+        spans = [(0.25, 2.0)]
+        assert free_ends(spans, [(0.0, 0.25)]) == {0: "end"}
+        assert free_ends(spans, [(2.0, 2.25)]) == {0: "start"}
+        assert free_ends(spans, [(0.0, 0.25), (2.0, 2.25)]) == {}
+        zones = [(1, 0.05), (5, 0.10)]
+        pts = [p for p, _ in span_zone_positions(1.75, zones, 0.20, "end")]
+        assert pts[:3] == pytest.approx([0.05, 0.15, 0.25])
+        assert pts[-1] <= 1.70 + 1e-9 and pts[-1] > 1.45  # out to the free end, from one side only
+        mirrored = [p for p, _ in span_zone_positions(1.75, zones, 0.20, "start")]
+        assert mirrored == pytest.approx(sorted(1.75 - p for p in pts))
+
     def test_spliced_top_bar_laps_in_a_central_third(self):
         from revit_mcp.rebar_spec import beam_lap_zones, lap_pieces
 

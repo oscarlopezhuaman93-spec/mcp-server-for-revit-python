@@ -449,6 +449,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     if not spans:
         raise spec.SpecError(u"la viga no tiene luz libre entre apoyos")
     axis = line.direction
+    # a cantilever (a span with a free end) has its stirrups from the support only
+    free = spec.free_ends(spans, [(f["s0"], f["s1"]) for f in supports])
 
     # stirrups and ties, per clear span
     groups = {}
@@ -476,7 +478,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             own = bx.span_text(line_settings, span_index, u"edge" if kind == rc.EDGE else u"conf") \
                 if line_settings else u""
             span_family = _SpanFamily(family, own) if own else family
-            for start, n, spacing, _, side in spec.stirrup_sets(b - a, span_family.zones, span_family.rest):
+            for start, n, spacing, _, side in spec.span_stirrup_sets(b - a, span_family.zones, span_family.rest,
+                                                                     free.get(span_index)):
                 # On a haunch every stirrup has its own height: one by one
                 # (a rebar set holds identical bars), each fitted there.
                 runs = ([(start + k * spacing, 1) for k in range(n)] if line.variable else [(start, n)])
@@ -520,19 +523,19 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     for x, y, key in design["bars"]:
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         top = y > 0
-        leg = 0.0
-        if anchor == ANCHOR_HOOK:
-            leg = (legs or {}).get(key)
-            if not leg:
-                raise spec.SpecError(u"falta la longitud del gancho de 90 de las barras de {}".format(key))
+        # the hook legs: the beam's own at each end, else the table's, else 12 db
+        hooked = anchor == ANCHOR_HOOK
+        leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+        leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+        leg = max(leg0, leg1)
         lap = 0.0
         pieces = [(bar_start, bar_end)]
         # the hook legs count in a bar's length (a 9 m bar holds them)
-        if splice is not None and bar_end - bar_start + 2 * leg > splice["max"] + 1e-6:
+        if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:
             lap = splice["laps"].get(key)
             if not lap:  # this diameter isn't spliced: one bar, whatever its length
                 warnings.append(u"Barras {} de {}: {:.2f} m sin empalme (diametro no marcado para empalmar)"
-                                .format(u"superiores" if top else u"inferiores", key, bar_end - bar_start + 2 * leg))
+                                .format(u"superiores" if top else u"inferiores", key, bar_end - bar_start + leg0 + leg1))
                 lap = 0.0
         if lap:
             zones = spec.beam_lap_zones(spans, top, confinement, lap)
@@ -543,7 +546,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         for index, (s0, s1) in enumerate(pieces):
             last = index == len(pieces) - 1
             path = spec.beam_bar_points(x, y, d, s0, s1, lap, not last,
-                                        leg if index == 0 else 0.0, leg if last else 0.0)
+                                        leg0 if index == 0 else 0.0, leg1 if last else 0.0)
             if line.variable:  # along the sloped face of a haunch
                 path = spec.follow_profile(path, line.shift_at(y), line.breaks)
             world = [line.point(px, py, ps) for px, py, ps in path]
@@ -564,9 +567,11 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         s0, s1, hook0, hook1 = bx.extra_ends(extra, bar_start, bar_end)
         if s1 - s0 < 0.1:
             continue
-        leg = (legs or {}).get(key, 0.0) if anchor == ANCHOR_HOOK else 0.0
-        for x, y in bx.extra_positions(design["bars"], extra["face"], int(extra["n"]), key, spec.BAR_DIAMETERS_MM):
-            path = spec.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg if hook0 else 0.0, leg if hook1 else 0.0)
+        hooked = anchor == ANCHOR_HOOK
+        leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked) if hook0 else 0.0
+        leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked) if hook1 else 0.0
+        for x, y in bx.placed_positions(extra, design["bars"], spec.BAR_DIAMETERS_MM):
+            path = spec.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)
             if line.variable:
                 path = spec.follow_profile(path, line.shift_at(y), line.breaks)
             world = [line.point(px, py, ps) for px, py, ps in path]
