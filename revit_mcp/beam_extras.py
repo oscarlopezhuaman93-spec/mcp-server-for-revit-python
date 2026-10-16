@@ -250,6 +250,67 @@ def cota_rows(extras, face, gap=0.15):
     return out
 
 
+def extra_cotas(extra, spans, start_face, end_face, tol=0.02):
+    """The dimensions of an extra, always from a column (support) face, as
+    on the drawings: a bar over a support - from each face out to its end
+    on that side; a bar in a span - from each face of the span in to its
+    start / end. [{"lo", "hi", "end" (0: s0, 1: s1), "face"}]."""
+    s0, s1 = extra["s0"], extra["s1"]
+    g = gaps(spans, start_face, end_face)
+    over = [(g0, g1) for g0, g1 in g if s0 < g1 + tol and s1 > g0 - tol]
+    out = []
+    if over:
+        (l0, _), (_, r1) = over[0], over[-1]
+        if s0 < l0 - tol:
+            out.append({"lo": s0, "hi": l0, "end": 0, "face": l0})
+        if s1 > r1 + tol:
+            out.append({"lo": r1, "hi": s1, "end": 1, "face": r1})
+        if not out:  # all of it inside the support
+            out.append({"lo": s0, "hi": s1, "end": 1, "face": s0})
+        return out
+    k = span_at((s0 + s1) / 2.0, spans)
+    a, b = spans[k] if k is not None else (s0, s1)
+    if s0 > a + tol:
+        out.append({"lo": a, "hi": s0, "end": 0, "face": a})
+    if s1 < b - tol:
+        out.append({"lo": s1, "hi": b, "end": 1, "face": b})
+    return out or [{"lo": s0, "hi": s1, "end": 1, "face": s0}]
+
+
+def set_cota(extra, cota, value):
+    """Change the end a dimension measures to `value` m from its face (the
+    face stays where it is)."""
+    key = "s0" if cota["end"] == 0 else "s1"
+    sign = 1.0 if extra[key] >= cota["face"] - 1e-9 else -1.0
+    extra[key] = round(cota["face"] + sign * max(0.0, float(value)), 3)
+    if extra["s1"] - extra["s0"] < 0.10:
+        extra[key] = round(extra["s0" if key == "s1" else "s1"] + (0.10 if key == "s1" else -0.10), 3)
+    return extra
+
+
+def cota_rows_all(extras, spans, start_face, end_face, face, gap=0.10):
+    """{(extra index, cota index): row} of the dimensions of a face, packed
+    in rows so none overlaps another."""
+    items = []
+    for i, e in enumerate(extras):
+        if e["face"] != face:
+            continue
+        for j, c in enumerate(extra_cotas(e, spans, start_face, end_face)):
+            items.append((c["lo"], c["hi"], (i, j)))
+    items.sort()
+    rows_end, out = [], {}
+    for lo, hi, key in items:
+        for r, end in enumerate(rows_end):
+            if lo >= end + gap:
+                rows_end[r] = hi
+                out[key] = r
+                break
+        else:
+            rows_end.append(hi)
+            out[key] = len(rows_end) - 1
+    return out
+
+
 def set_length(extra, length, faces):
     """A new length, keeping the end that sits on a support face / beam
     end (else the start) where it is."""

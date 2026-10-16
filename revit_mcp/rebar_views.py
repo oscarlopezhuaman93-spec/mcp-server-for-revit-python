@@ -1017,19 +1017,21 @@ def draw_beam_elevation(canvas, data, frame):
             _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), color, 3)
         # its own dimension line, as on a drawing: ticks at both ends (drag
         # them), the length (click to change it) and the bars (click to edit)
-        yc = beam_cota_y(data, extra["face"], extra["row"])
-        s0, s1 = extra["s0"], extra["s1"]
+        # its dimensions, always from a column face out / in to its ends
         dim = _brush(150, 150, 30)
-        _line(canvas, frame, (s0, yc), (s1, yc), dim, 1)
-        for s in (s0, s1):
-            _line(canvas, frame, (s, yc + 0.45 * u), (s, yc - 0.45 * u), dim, 1)
-            _line(canvas, frame, (s - 0.25 * u, yc - 0.25 * u), (s + 0.25 * u, yc + 0.25 * u), dim, 2)
-            # an extension line down / up to the bar
-            yb = (y1 + 0.1 * u) if extra["face"] == u"sup" else (y0 - 0.1 * u)
-            _line(canvas, frame, (s, yc), (s, yb), _brush(200, 200, 160), 0.6, dash=True)
-        _edit_text(canvas, frame, (s0 + s1) / 2.0 - 0.6 * u, yc + 0.55 * u, u"{:.2f}".format(s1 - s0),
-                   extra["len_tag"])
-        _edit_text(canvas, frame, s1 + 0.3 * u, yc, extra["label"], extra["tag"])
+        yb = (y1 + 0.1 * u) if extra["face"] == u"sup" else (y0 - 0.1 * u)
+        cotas = extra.get("cotas") or [{"lo": extra["s0"], "hi": extra["s1"], "row": extra["row"], "tag": extra["len_tag"]}]
+        for c in cotas:
+            yc = beam_cota_y(data, extra["face"], c["row"])
+            lo, hi = c["lo"], c["hi"]
+            _line(canvas, frame, (lo, yc), (hi, yc), dim, 1)
+            for s in (lo, hi):
+                _line(canvas, frame, (s, yc + 0.45 * u), (s, yc - 0.45 * u), dim, 1)
+                _line(canvas, frame, (s - 0.25 * u, yc - 0.25 * u), (s + 0.25 * u, yc + 0.25 * u), dim, 2)
+                _line(canvas, frame, (s, yc), (s, yb), _brush(200, 200, 160), 0.6, dash=True)
+            _edit_text(canvas, frame, (lo + hi) / 2.0 - 0.6 * u, yc + 0.55 * u, u"{:.2f}".format(hi - lo), c["tag"])
+        yl = beam_cota_y(data, extra["face"], extra["row"])
+        _edit_text(canvas, frame, max(c["hi"] for c in cotas) + 0.3 * u, yl, extra["label"], extra["tag"])
     draft = data.get("draft")
     if draft:  # an extra being drawn: from its first click to the mouse
         s0, s1, face = draft

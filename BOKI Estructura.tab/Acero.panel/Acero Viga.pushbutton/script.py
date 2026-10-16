@@ -1754,13 +1754,18 @@ class AceroWindow(forms.WPFWindow):
                         "len_tag": u"len:{}".format(index), "index": index,
                         "label": u"{}\u00d8{}".format(int(extra["n"]), extra["d"]),
                         "s0": extra["s0"], "s1": extra["s1"]})
-        rows = {}
+        # the dimensions, always from a column face, packed in rows per face
+        rows, n_rows = {}, {}
         for face in (bx.TOP, bx.BOTTOM):
-            rows.update(bx.cota_rows(settings["extras"], face))
+            r = bx.cota_rows_all(settings["extras"], spans, start_face, end_face, face) if spans else {}
+            rows.update(r)
+            n_rows[face] = 1 + max(list(r.values()) + [-1])
         for item in extras_view:
-            item["row"] = rows.get(item["index"], 0)
-        top_rows = 1 + max([rows[i] for i, e in enumerate(settings["extras"]) if e["face"] == bx.TOP and i in rows] + [-1])
-        bottom_rows = 1 + max([rows[i] for i, e in enumerate(settings["extras"]) if e["face"] == bx.BOTTOM and i in rows] + [-1])
+            i = item["index"]
+            cs = bx.extra_cotas(settings["extras"][i], spans, start_face, end_face) if spans else []
+            item["cotas"] = [dict(c, row=rows.get((i, j), 0), tag=u"cota:{}:{}".format(i, j)) for j, c in enumerate(cs)]
+            item["row"] = min([c["row"] for c in item["cotas"]] + [0])
+        top_rows, bottom_rows = n_rows.get(bx.TOP, 0), n_rows.get(bx.BOTTOM, 0)
         # the cuts: automatic (one per stretch of the same steel) until moved
         cuts = settings["cuts"] or (bx.auto_cuts(spans, settings["extras"]) if spans else [])
         self._beam_now = (line, spans, start_face, end_face, bars, settings, cuts)
@@ -1970,8 +1975,9 @@ class AceroWindow(forms.WPFWindow):
         y = self._elev_y(args)
         best = None
         for item in data.get("extras") or []:
-            yc = rv.beam_cota_y(data, item["face"], item["row"])
-            for end, se in ((0, item["s0"]), (1, item["s1"])):
+            for c in item.get("cotas") or []:
+                yc = rv.beam_cota_y(data, item["face"], c["row"])
+                end, se = c["end"], (item["s0"] if c["end"] == 0 else item["s1"])
                 d = max(abs(se - s), abs(yc - y)) * scale
                 if d < 9 and (best is None or d < best[0]):
                     best = (d, (item["index"], end))
@@ -2019,6 +2025,20 @@ class AceroWindow(forms.WPFWindow):
                     forms.alert(u"{}".format(e), title=u"Acero Viga")
                     return
             bx.set_span_text(st, index, "edge", value if value.strip() != f["edge_dist"].strip() else u"")
+            self._changed()
+        elif tag.startswith(u"cota:"):
+            index, j = [int(t) for t in tag[5:].split(u":")]
+            extra = self._edit_settings()["extras"][index]
+            cota = bx.extra_cotas(extra, spans, start_face, end_face)[j]
+            value = forms.ask_for_string(default=u"{:.2f}".format(cota["hi"] - cota["lo"]), title=u"Acero Viga",
+                                         prompt=u"Distancia (m) desde la cara de la columna:")
+            if value is None:
+                return
+            try:
+                bx.set_cota(extra, cota, float(value.replace(u",", u".")))
+            except ValueError:
+                forms.alert(u"Escribe un numero, por ejemplo 1.20", title=u"Acero Viga")
+                return
             self._changed()
         elif tag.startswith(u"len:"):
             index = int(tag[4:])
@@ -2090,7 +2110,7 @@ class AceroWindow(forms.WPFWindow):
         if args.ChangedButton == MouseButton.Left and now:
             tag = getattr(args.OriginalSource, "Tag", None)
             if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
-                                                 or tag.startswith(u"len:")):
+                                                 or tag.startswith(u"len:") or tag.startswith(u"cota:")):
                 self._edit_tag(tag)
                 args.Handled = True
                 return

@@ -79,6 +79,26 @@ def test_hand_drawn_extras_rows_lengths_and_auto_cuts():
     assert cuts == [0.75, 2.56]
 
 
+def test_cotas_from_the_column_faces():
+    # a baston over the middle support (3.87-4.12): one dimension each side, from its faces
+    b = be.drawn_extra(3.0, 5.4, be.TOP, 2, '5/8"')
+    cs = be.extra_cotas(b, SPANS, START, END)
+    assert [(c["lo"], c["hi"]) for c in cs] == [(3.0, 3.87), (4.12, 5.4)]
+    be.set_cota(b, cs[1], 1.0)  # 1.00 m from the right face
+    assert b["s1"] == pytest.approx(5.12)
+    # at the end support (0.00-0.25): only into the span
+    e = be.drawn_extra(0.0, 0.8, be.TOP, 2, '5/8"')
+    assert [(c["lo"], c["hi"]) for c in be.extra_cotas(e, SPANS, START, END)] == [(0.25, 0.8)]
+    # a balancin in a span (4.12-7.92): from each face in to its ends
+    bal = be.drawn_extra(5.0, 7.0, be.BOTTOM, 2, '5/8"')
+    cs = be.extra_cotas(bal, SPANS, START, END)
+    assert [(c["lo"], c["hi"]) for c in cs] == [(4.12, 5.0), (7.0, 7.92)]
+    be.set_cota(bal, cs[0], 0.60)
+    assert bal["s0"] == pytest.approx(4.72)
+    rows = be.cota_rows_all([b, e], SPANS, START, END, be.TOP)
+    assert set(rows.values()) == {0}
+
+
 def test_steel_at_cuts_and_ends():
     extras = [be.default_baston(1, SPANS, START, END, 2, '5/8"')]
     text, area = be.steel_at(4.0, MAIN, extras, MM, be.TOP)
