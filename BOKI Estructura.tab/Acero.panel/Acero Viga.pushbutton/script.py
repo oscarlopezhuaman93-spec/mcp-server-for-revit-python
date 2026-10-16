@@ -1722,7 +1722,7 @@ class AceroWindow(forms.WPFWindow):
                 if not lap:
                     missing_laps.add(key)
                 else:
-                    pieces, _ = rs.lap_pieces(bar_start, bar_end, rs.beam_lap_zones(spans, top, confinement),
+                    pieces, _ = rs.lap_pieces(bar_start, bar_end, rs.beam_lap_zones(spans, top, confinement, lap),
                                               lap, splice["max"] - leg)
             for i, (s0, s1) in enumerate(pieces):
                 last = i == len(pieces) - 1

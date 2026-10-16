@@ -54,8 +54,9 @@ Código: `rebar_beams.py` → `line_supports`, `spans_and_ends`;
   marcado queda en una sola barra, con advertencia.
 - Dónde va el empalme:
   - **superiores:** en el **tercio central** de una luz libre;
-  - **inferiores:** en un **tercio extremo**, fuera de la zona de
-    confinamiento de estribos.
+  - **inferiores:** desde la **cara de la columna**, en el **cuarto
+    extremo** (L/4) de la luz libre; si el empalme es más largo que L/4,
+    empieza igual en la cara y se extiende hacia el tramo.
 - La barra que termina en el empalme se desvía un diámetro en vertical
   (1:6), así las dos quedan juntas sin atravesarse.
 - El peso de cada barra se reparte entre los tramos que recorre.

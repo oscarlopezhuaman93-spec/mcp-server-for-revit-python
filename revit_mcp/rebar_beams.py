@@ -535,8 +535,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                                 .format(u"superiores" if top else u"inferiores", key, bar_end - bar_start + 2 * leg))
                 lap = 0.0
         if lap:
-            zones = spec.beam_lap_zones(spans, top, confinement)
-            where = u"un tercio central de tramo" if top else u"un tercio extremo de tramo (fuera del confinamiento)"
+            zones = spec.beam_lap_zones(spans, top, confinement, lap)
+            where = u"un tercio central de tramo" if top else u"un cuarto extremo de tramo (desde la cara del apoyo)"
             pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap, splice["max"] - leg, where)
             warnings += [u"Barras {} de {}: {}".format(u"superiores" if top else u"inferiores", key, w)
                          for w in found]

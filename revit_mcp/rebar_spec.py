@@ -232,19 +232,21 @@ def confinement_length(zones):
     return sum(count * spacing for count, spacing in zones)
 
 
-def beam_lap_zones(spans, top, confinement):
-    """Where the bars of a beam may be spliced (the user's rule, E.060): top
-    bars in the central third of each clear span, bottom bars in its end
-    thirds outside the stirrup confinement zone. [(lo, hi)]."""
+def beam_lap_zones(spans, top, confinement, lap=0.0):
+    """Where the bars of a beam may be spliced (the user's detail, E.060):
+    top bars in the central third of each clear span (L/3), bottom bars
+    starting at a column face, in the end quarter (L/4) - the lap `lap`
+    reaching past it when longer. [(lo, hi)]. (`confinement` is kept for the
+    callers; the bottom splice no longer avoids it.)"""
     zones = []
     for a, b in spans:
-        third = (b - a) / 3.0
         if top:
+            third = (b - a) / 3.0
             zones.append((a + third, b - third))
             continue
-        if confinement < third:
-            zones.append((a + confinement, a + third))
-            zones.append((b - third, b - confinement))
+        reach = min(b - a, max((b - a) / 4.0, lap))
+        zones.append((a, a + reach))
+        zones.append((b - reach, b))
     return zones
 
 

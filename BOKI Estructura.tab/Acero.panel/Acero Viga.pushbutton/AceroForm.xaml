@@ -41,7 +41,7 @@
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_splice" Click="splice_changed"
                                   Content="Empalmar las barras que superen la longitud maxima"
-                                  ToolTip="Las barras superiores e inferiores corren por toda la viga; cuando superan la longitud maxima se cortan con un empalme: superiores en el tercio central de un tramo, inferiores en un tercio extremo fuera del confinamiento."/>
+                                  ToolTip="Las barras superiores e inferiores corren por toda la viga; cuando superan la longitud maxima se cortan con un empalme: superiores en el tercio central de un tramo, inferiores desde la cara de la columna, en el cuarto extremo (L/4)."/>
                         <StackPanel Orientation="Horizontal" Margin="18,4,0,4"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_splice}">
                             <TextBlock Text="Longitud maxima de barra: " VerticalAlignment="Center"/>

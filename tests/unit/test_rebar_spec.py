@@ -211,8 +211,8 @@ class TestBeams:
         conf = confinement_length([(1, 0.05), (10, 0.10)])
         assert conf == pytest.approx(1.05)
         assert beam_lap_zones([(0.0, 6.0)], True, conf) == pytest.approx([(2.0, 4.0)])
-        assert beam_lap_zones([(0.0, 6.0)], False, conf) == pytest.approx([(1.05, 2.0), (4.0, 4.95)])
-        assert beam_lap_zones([(0.0, 3.0)], False, conf) == []  # the confinement takes the end thirds
+        assert beam_lap_zones([(0.0, 6.0)], False, conf) == pytest.approx([(0.0, 1.5), (4.5, 6.0)])  # L/4 from the faces
+        assert beam_lap_zones([(0.0, 3.0)], False, conf, 0.95) == pytest.approx([(0.0, 0.95), (2.05, 3.0)])  # lap > L/4
 
     def test_spliced_top_bar_laps_in_a_central_third(self):
         from revit_mcp.rebar_spec import beam_lap_zones, lap_pieces
