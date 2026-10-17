@@ -133,7 +133,7 @@ def leg_length(settings, key, mm, room):
     return max(0.0, min(float(leg), room))
 
 
-def bastones(chord, spans, gaps, frac, edits, axis, tol=0.02):
+def bastones(chord, spans, gaps, frac, edits, axis, tol=0.02, end_frac=None):
     """[(s0, s1, at_start_edge, at_end_edge, key)] of the bastones of a line:
     over each support, `frac` of the clear span on each side from its faces
     (or the lengths typed for that support); at an edge support from the
@@ -148,8 +148,10 @@ def bastones(chord, spans, gaps, frac, edits, axis, tol=0.02):
         if not left and not right:
             continue  # the line runs along a support (over a parallel beam): nothing to hang over
         own = edits.get(key)
-        l_len = own[0] if own else (frac * (left[0][1] - left[0][0]) if left else 0.0)
-        r_len = own[1] if own else (frac * (right[0][1] - right[0][0]) if right else 0.0)
+        edge = g0 <= a + tol or g1 >= b - tol or not left or not right
+        f = end_frac if (edge and end_frac is not None) else frac  # Ln/4 at an end support
+        l_len = own[0] if own else (f * (left[0][1] - left[0][0]) if left else 0.0)
+        r_len = own[1] if own else (f * (right[0][1] - right[0][0]) if right else 0.0)
         s0 = a if g0 <= a + tol else g0 - l_len
         s1 = b if g1 >= b - tol else g1 + r_len
         if s1 - s0 > 0.1:
@@ -182,7 +184,7 @@ def plan_line(chord, supports, face, axis, settings, h, mm, splice=None):
     c = float(settings.get("cover") or 2.0) / 100.0
     key = settings[face][axis]["d"]
     d = mm[key] / 1000.0
-    z = layer_z(settings, h, mm)[(face, axis)]
+    z = (settings.get("_z") or {}).get((face, axis)) or layer_z(settings, h, mm)[(face, axis)]
     room = h - 2 * c - 2 * d
     hooked = settings.get("anchor", ANCHOR_HOOK) == ANCHOR_HOOK
     leg = leg_length(settings, key, mm, room) if hooked else 0.0
@@ -213,7 +215,8 @@ def plan_line(chord, supports, face, axis, settings, h, mm, splice=None):
                          "lap_at": None if last else (round(s1 - lap, 3), round(s1, 3)), "key": key})
     elif mode == TOP_BASTONES:
         frac = float(settings[SUP].get("frac") or 1.0 / 3.0)
-        for s0, s1, e0, e1, sk in bastones(chord, spans, gaps, frac, settings.get("bast") or {}, axis):
+        for s0, s1, e0, e1, sk in bastones(chord, spans, gaps, frac, settings.get("bast") or {}, axis,
+                                            end_frac=settings[SUP].get("end_frac")):
             s0, s1 = max(s0, bar_start), min(s1, bar_end)
             bars.append({"s0": s0, "s1": s1, "support": sk, "lap_at": None, "key": key,
                          "path": _path(s0, s1, z, h, d, 0.0, False, leg if e0 else 0.0, leg if e1 else 0.0)})
@@ -306,3 +309,169 @@ def crossing(lines, s):
 def steel_per_m(key, spacing, mm):
     """cm2/m of bars of `key` every `spacing` m."""
     return math.pi * (mm[key] / 10.0) ** 2 / 4.0 / spacing
+
+
+# --- losa aligerada (one-way ribbed slab with clay bricks) ------------------------
+MACIZA, ALIGERADA = u"maciza", u"aligerada"
+ENS_NONE, ENS_FULL, ENS_ALT = u"ninguno", u"corrido", u"alternado"
+
+
+def default_ribbed():
+    return {"dir": None,  # x / y: the viguetas' direction; None: across the shorter clear spans
+            "b": 0.10, "s": 0.40, "top": 0.05,  # vigueta width, spacing, slab over the bricks
+            "inf": {"d": u'1/2"'}, "sup": {"d": u'1/2"', "frac": 1.0 / 3.0, "end_frac": 0.25},
+            "temp": {"on": True, "d": u'1/4"', "s": 0.25},
+            "ens": {"mode": ENS_NONE, "len": 0.25},
+            "brick": None}  # the brick family type chosen (its name)
+
+
+def ribbed(settings):
+    out = default_ribbed()
+    for k, v in (settings.get("alig") or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k].update(v)
+        else:
+            out[k] = v
+    return out
+
+
+def auto_direction(slab_tris, support_tris):
+    """The viguetas run across the shorter clear spans: the direction whose
+    typical clear span (at the slab's middle) is shorter."""
+    x0, x1, y0, y1 = extent(slab_tris)
+    best = None
+    for axis, pos in ((X, (y0 + y1) / 2.0), (Y, (x0 + x1) / 2.0)):
+        spans = []
+        for chord in line_intervals(slab_tris, axis, pos):
+            spans += clear_and_gaps(chord, line_intervals(support_tris, axis, pos))[0]
+        if spans:
+            longest = max(b - a for a, b in spans)
+            if best is None or longest < best[0]:
+                best = (longest, axis)
+    return best[1] if best else X
+
+
+def bays(slab_tris, support_tris, axis):
+    """The stretches across the viguetas between parallel supports (sampled
+    along the slab's middle): [(t0, t1)]."""
+    other = Y if axis == X else X
+    x0, x1, y0, y1 = extent(slab_tris)
+    pos = (x0 + x1) / 2.0 if axis == X else (y0 + y1) / 2.0
+    out = []
+    for chord in line_intervals(slab_tris, other, pos):
+        out += clear_and_gaps(chord, line_intervals(support_tris, other, pos))[0]
+    return out
+
+
+def rib_layout(bay, b, s, brick_w):
+    """(vigueta centers, brick strips [(t0, t1)]) of a bay: a brick strip
+    against each face, then vigueta - bricks - vigueta...; the last strip
+    is narrower (a narrower brick or concrete)."""
+    t0, t1 = bay
+    centers, strips = [], []
+    t = t0
+    while t < t1 - 1e-6:
+        w = min(brick_w, t1 - t)
+        strips.append((t, t + w))
+        t += w
+        if t1 - t > b + 0.05:
+            centers.append(t + b / 2.0)
+            t += b
+        else:
+            break
+    return centers, strips
+
+
+def fill_bricks(a, b, lib, width, min_piece=0.10):
+    """Pieces [(type, s0, s1)] filling a ... b with the bricks of `lib`
+    [(type, largo, ancho)] of this width: whole bricks, then the longest
+    shorter one that fits the rest (a cut brick of the family); what is
+    left stays concrete."""
+    fit = sorted([(largo, t) for t, largo, ancho in lib if abs(ancho - width) < 1e-3], reverse=True)
+    if not fit:
+        return []
+    main_l, main_t = fit[0]
+    out, s = [], a
+    while s + main_l <= b + 1e-6:
+        out.append((main_t, s, s + main_l))
+        s += main_l
+    for largo, t in fit[1:]:
+        if largo >= min_piece and s + largo <= b + 1e-6:
+            out.append((t, s, s + largo))
+            s += largo
+            break
+    return out
+
+
+def brick_width(lib, room):
+    """The widest brick width of `lib` that fits `room`."""
+    widths = sorted(set(round(ancho, 3) for _, _, ancho in lib), reverse=True)
+    for w in widths:
+        if w <= room + 1e-6:
+            return w
+    return None
+
+
+def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None):
+    """The ribbed slab: {(face, axis): lines} like plan_slab (bottom and top
+    bars of each vigueta; "temp" lines across), "viguetas" [centers],
+    "bricks" [{"type", "s0", "s1", "t0", "t1"}], "axis", and warnings."""
+    rb = ribbed(settings)
+    axis = rb["dir"] or auto_direction(slab_tris, support_tris)
+    other = Y if axis == X else X
+    c = float(settings.get("cover") or 2.0) / 100.0
+    lib = lib or []
+    main_w = max([ancho for _, _, ancho in lib] or [rb["s"] - rb["b"]])
+    di = mm[rb["inf"]["d"]] / 1000.0
+    ds = mm[rb["sup"]["d"]] / 1000.0
+    dt = mm[rb["temp"]["d"]] / 1000.0
+    z_temp = h - c - dt / 2.0
+    # the vigueta bars: the maciza routine with this vigueta's steel and heights
+    st = {"cover": settings.get("cover") or 2.0, "anchor": settings.get("anchor", ANCHOR_HOOK),
+          "leg": settings.get("leg"), "bast": settings.get("bast") or {},
+          INF: {"on": True, axis: {"d": rb["inf"]["d"], "s": rb["s"]}},
+          SUP: {"on": True, "mode": TOP_BASTONES, "frac": rb["sup"]["frac"], "end_frac": rb["sup"]["end_frac"],
+                axis: {"d": rb["sup"]["d"], "s": rb["s"]}},
+          "_z": {(INF, axis): c + di / 2.0, (SUP, axis): h - c - dt - ds / 2.0}}
+    plan = {(INF, axis): [], (SUP, axis): [], (u"temp", other): []}
+    warnings, centers, bricks = [], [], []
+    for bay in bays(slab_tris, support_tris, axis):
+        cs, strips = rib_layout(bay, rb["b"], rb["s"], main_w)
+        centers += cs
+        for k, (t0, t1) in enumerate(strips):
+            w = brick_width(lib, t1 - t0) if lib else None
+            if w is None:
+                continue
+            tm = (t0 + t1) / 2.0
+            for chord in line_intervals(slab_tris, axis, tm):
+                spans, _ = clear_and_gaps(chord, line_intervals(support_tris, axis, tm))
+                for a, b in spans:
+                    e = rb["ens"]
+                    cut = float(e.get("len") or 0.0) if (e.get("mode") == ENS_FULL
+                                                       or (e.get("mode") == ENS_ALT and k % 2 == 0)) else 0.0
+                    for typ, s0, s1 in fill_bricks(a + cut, b - cut, lib, w):
+                        bricks.append({"type": typ, "s0": s0, "s1": s1, "t0": t0, "t1": t0 + w})
+    for pos in centers:
+        sup = line_intervals(support_tris, axis, pos)
+        for chord in line_intervals(slab_tris, axis, pos):
+            for face in (INF, SUP):
+                bars, spans, gaps, found = plan_line(chord, sup, face, axis, st, h, mm, splice)
+                warnings += found
+                plan[(face, axis)].append({"pos": pos, "chord": chord, "bars": bars, "spans": spans, "gaps": gaps})
+    if rb["temp"].get("on", True):
+        tst = {"cover": settings.get("cover") or 2.0, "anchor": ANCHOR_STRAIGHT, "leg": None, "bast": {},
+               INF: {"on": True, other: {"d": rb["temp"]["d"], "s": rb["temp"]["s"]}},
+               SUP: {"on": False, "mode": TOP_NONE}, "_z": {(INF, other): z_temp}}
+        x0, x1, y0, y1 = extent(slab_tris)
+        lo, hi = (y0, y1) if other == X else (x0, x1)
+        for pos in positions(lo + c + dt / 2.0, hi - c - dt / 2.0, float(rb["temp"]["s"])):
+            sup = line_intervals(support_tris, other, pos)
+            for chord in line_intervals(slab_tris, other, pos):
+                bars, spans, gaps, found = plan_line(chord, sup, INF, other, tst, h, mm, splice)
+                warnings += found
+                plan[(u"temp", other)].append({"pos": pos, "chord": chord, "bars": bars, "spans": spans, "gaps": gaps})
+    seen = []
+    for w in warnings:
+        if w not in seen:
+            seen.append(w)
+    return {"lines": plan, "viguetas": sorted(centers), "bricks": bricks, "axis": axis}, seen

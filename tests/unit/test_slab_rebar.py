@@ -81,3 +81,41 @@ def test_settings_round_trip():
     back = sr.read(sr.write(st))
     assert back["bast"] == {"x@4.62": [1.0, 1.1]} and back[sr.INF][sr.X]["s"] == 0.15
     assert back[sr.SUP]["mode"] == sr.TOP_BASTONES
+
+
+LIB = [(u"H15", 0.30, 0.30), (u"H15 L.275", 0.275, 0.30), (u"H15 L.1889", 0.1889, 0.30),
+       (u"H15 A.20", 0.30, 0.20), (u"H15 A.20 L.275", 0.275, 0.20), (u"H15 A.15", 0.30, 0.15)]
+
+
+def test_ribbed_layout_bricks_and_bars():
+    assert sr.auto_direction(SLAB, BEAMS) == sr.X  # spans along x (4.25) shorter than along y (5.25)
+    centers, strips = sr.rib_layout((0.0, 1.25), 0.10, 0.40, 0.30)
+    assert strips[0] == (0.0, 0.30) and centers[0] == pytest.approx(0.35)
+    assert strips[-1][1] == pytest.approx(1.25) or strips[-1][1] - strips[-1][0] <= 0.30
+    pieces = sr.fill_bricks(0.0, 1.0, LIB, 0.30)
+    assert [p[0] for p in pieces] == [u"H15", u"H15", u"H15"] or pieces[-1][0] != u"H15"
+    pieces = sr.fill_bricks(0.0, 1.08, LIB, 0.30)  # 3 whole + 0.18 left: no 0.1889 fits
+    assert len(pieces) == 3
+    pieces = sr.fill_bricks(0.0, 1.20, LIB, 0.30)
+    assert len(pieces) == 4
+    pieces = sr.fill_bricks(0.0, 1.10, LIB, 0.30)  # 3 + a 0.1889 piece
+    assert pieces[-1][0] == u"H15 L.1889"
+    assert sr.brick_width(LIB, 0.22) == 0.20 and sr.brick_width(LIB, 0.12) is None
+    st = sr.default_settings()
+    st["alig"] = {"dir": sr.Y}
+    # beams along x at y = 0 and 5 (the viguetas span y)
+    beams = rect(0.0, 0.0, 9.25, 0.25) + rect(0.0, 5.0, 9.25, 5.25)
+    plan, warns = sr.plan_ribbed(SLAB, beams, H, st, MM, None, LIB)
+    assert plan["axis"] == sr.Y
+    gaps = [b - a for a, b in zip(plan["viguetas"], plan["viguetas"][1:])]
+    assert all(abs(g - 0.40) < 1e-6 for g in gaps)
+    inf = plan["lines"][(sr.INF, sr.Y)]
+    assert len(inf) == len(plan["viguetas"]) and len(inf[0]["bars"]) == 1
+    sup = plan["lines"][(sr.SUP, sr.Y)]
+    edge = sup[0]["bars"][0]  # an end support: Ln/4 from the face
+    assert edge["s1"] == pytest.approx(0.25 + 4.75 / 4.0)
+    assert plan["bricks"] and all(b["s0"] >= 0.25 - 1e-6 and b["s1"] <= 5.0 + 1e-6 for b in plan["bricks"])
+    assert plan["lines"][(u"temp", sr.X)]
+    st["alig"]["ens"] = {"mode": sr.ENS_FULL, "len": 0.25}
+    plan2, _ = sr.plan_ribbed(SLAB, beams, H, st, MM, None, LIB)
+    assert min(b["s0"] for b in plan2["bricks"]) >= 0.50 - 1e-6

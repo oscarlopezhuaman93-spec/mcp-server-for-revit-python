@@ -75,8 +75,13 @@ class SlabModel(object):
                     found.append({"label": label, "id": other.Id, "tris": tris})
         return found
 
-    def plan(self, settings, mm, splice=None):
-        return sr.plan_slab(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice)
+    def plan(self, settings, mm, splice=None, lib=None):
+        """(layers {(face, axis): lines}, ribbed extras or None, warnings)."""
+        if settings.get("kind") == sr.ALIGERADA:
+            plan, warnings = sr.plan_ribbed(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice, lib)
+            return plan["lines"], plan, warnings
+        lines, warnings = sr.plan_slab(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice)
+        return lines, None, warnings
 
     def point(self, axis, s, pos, z):
         """World point of a bar point: s along its axis, pos across."""
@@ -101,11 +106,11 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
     Returns ([(rebar, face, axis)], warnings)."""
     from Autodesk.Revit.DB.Structure import Rebar, RebarStyle, RebarHookOrientation
     doc = model.element.Document
-    plan, warnings = model.plan(settings, mm, splice)
+    lines, _, warnings = model.plan(settings, mm, splice, brick_library(doc, settings))
     made = []
-    for face, axis in sr.LAYERS:
+    for (face, axis), layer in sorted(lines.items()):
         normal = model.f.uy if axis == sr.X else model.f.ux  # bars laid across
-        for path, key, pos, count, spacing in sr.bar_sets(plan.get((face, axis)) or []):
+        for path, key, pos, count, spacing in sr.bar_sets(layer or []):
             pts = [model.point(axis, s, pos, z) for s, z in path]
             curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
                                      if pts[k].DistanceTo(pts[k + 1]) > 1e-4])
@@ -118,3 +123,98 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
                 tag(rebar)
             made.append((rebar, face, axis))
     return made, warnings
+
+
+# --- bricks of a ribbed slab ("ladrillo de techo", a floor-hosted family) ---------
+BRICK_WORDS = (u"LADRILLO", u"BLOQUE", u"CASETON", u"BOVEDILLA")
+BRICK_TAG = u"BOKI LOSA "  # Comentarios of the bricks placed for a slab: BOKI LOSA <id>
+FT_ = FT
+
+
+def _double(element, name):
+    p = element.LookupParameter(name)
+    return p.AsDouble() * FT if p is not None and p.StorageType == DB.StorageType.Double else None
+
+
+def brick_types(doc):
+    """{name: (symbol, largo, ancho, altura)} of the brick family types of the
+    project (as the Properties palette lists them): generic models named
+    LADRILLO / BLOQUE... with Largo, Ancho and Altura."""
+    out = {}
+    for sym in DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol):
+        fam = sym.FamilyName.upper()
+        if not any(w in fam for w in BRICK_WORDS):
+            continue
+        largo, ancho, altura = _double(sym, "Largo"), _double(sym, "Ancho"), _double(sym, "Altura")
+        if not (largo and ancho and altura):
+            continue
+        name = u"{} : {}".format(sym.FamilyName, sym.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString())
+        out[name] = (sym, largo, ancho, altura)
+    return out
+
+
+def default_brick(types, h, top=0.05):
+    """The brick that fills the ribbed slab: its height h - top, 0.30 wide
+    and long if there is one."""
+    want = h - top
+    best = None
+    for name, (sym, largo, ancho, altura) in types.items():
+        score = abs(altura - want) * 10 + abs(ancho - 0.30) + abs(largo - 0.30)
+        if best is None or score < best[0]:
+            best = (score, name)
+    return best[1] if best else None
+
+
+def brick_library(doc, settings, types=None):
+    """[(name, largo, ancho)] of the chosen brick's family with its height:
+    the whole brick and its shorter / narrower pieces."""
+    if settings.get("kind") != sr.ALIGERADA:
+        return []
+    types = types if types is not None else brick_types(doc)
+    chosen = sr.ribbed(settings).get("brick")
+    if chosen not in types:
+        return []
+    sym, largo, ancho, altura = types[chosen]
+    lib = [(chosen, largo, ancho)]
+    for name, (s2, l2, a2, h2) in types.items():
+        if name != chosen and s2.FamilyName == sym.FamilyName and abs(h2 - altura) < 1e-3 \
+                and l2 <= largo + 1e-6 and a2 <= ancho + 1e-6:
+            lib.append((name, l2, a2))
+    return lib
+
+
+def delete_bricks(doc, floor):
+    tag = BRICK_TAG + str(floor.Id.IntegerValue)
+    old = [e.Id for e in DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_GenericModel)
+           .WhereElementIsNotElementType()
+           if (e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS).AsString() or u"") == tag]
+    if old:
+        doc.Delete(List[DB.ElementId](old))
+    return len(old)
+
+
+def place_bricks(model, ribbed_plan, types):
+    """Place the bricks of the plan, hosted by the floor, hanging from its top
+    face (the family's own drop): the brick's width across the viguetas,
+    its length along them. Returns the number placed."""
+    from Autodesk.Revit.Creation import FamilyInstanceCreationData
+    doc = model.element.Document
+    axis = ribbed_plan["axis"]
+    f = model.f
+    hand = (f.uy.Negate() if axis == sr.X else f.ux)  # the length runs back from the point along the viguetas
+    data = List[FamilyInstanceCreationData]()
+    for b in ribbed_plan["bricks"]:
+        sym = types[b["type"]][0]
+        if not sym.IsActive:
+            sym.Activate()
+        p = model.point(axis, b["s1"], (b["t0"] + b["t1"]) / 2.0, model.thickness)
+        data.Add(FamilyInstanceCreationData(p, sym, hand, model.element, DB.Structure.StructuralType.NonStructural))
+    if data.Count == 0:
+        return 0
+    ids = doc.Create.NewFamilyInstances2(data)
+    tag = BRICK_TAG + str(model.element.Id.IntegerValue)
+    for i in ids:
+        c = doc.GetElement(i).get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+        if c is not None and not c.IsReadOnly:
+            c.Set(tag)
+    return ids.Count

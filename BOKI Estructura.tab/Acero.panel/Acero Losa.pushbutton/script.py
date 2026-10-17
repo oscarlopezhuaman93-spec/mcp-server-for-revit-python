@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Acero de losas macizas: malla inferior corrida (empalmada como las vigas),
-bastones superiores desde la cara de cada apoyo (o malla superior),
-ganchos en los bordes; planta y dos cortes movibles."""
+"""Acero de losas macizas y aligeradas. Maciza: malla inferior corrida
+(empalmada como las vigas), bastones superiores desde la cara de cada apoyo
+(o malla superior), ganchos en los bordes. Aligerada: viguetas con su
+acero inferior corrido y bastones (Ln/4 extremos, Ln/3 interiores),
+temperatura y los ladrillos de techo de la familia del proyecto. Planta y
+dos cortes movibles."""
 
 __title__ = "Acero\nLosa"
 __author__ = "Revit MCP"
@@ -50,7 +53,12 @@ BAR_KEYS = [k for k in rs.bar_diameter_keys() if 6 <= rs.BAR_DIAMETERS_MM[k] <= 
 MM = rs.BAR_DIAMETERS_MM
 PLAN = u"planta"
 COLORS = {(sr.INF, sr.X): (29, 158, 117), (sr.INF, sr.Y): (42, 111, 214),
-          (sr.SUP, sr.X): (210, 60, 60), (sr.SUP, sr.Y): (240, 140, 20)}
+          (sr.SUP, sr.X): (210, 60, 60), (sr.SUP, sr.Y): (240, 140, 20),
+          (u"temp", sr.X): (42, 111, 214), (u"temp", sr.Y): (42, 111, 214)}
+KINDS = [(sr.MACIZA, u"Maciza"), (sr.ALIGERADA, u"Aligerada")]
+DIRS = [(None, u"Autom\u00e1tico (luz corta)"), (sr.X, u"X"), (sr.Y, u"Y")]
+ENS = [(sr.ENS_NONE, u"Ninguno"), (sr.ENS_FULL, u"Corrido"), (sr.ENS_ALT, u"Alternado")]
+BRICK = (196, 120, 80)
 MODES = [(sr.TOP_BASTONES, u"Bastones en apoyos"), (sr.TOP_MESH, u"Malla corrida"), (sr.TOP_NONE, u"Sin acero superior")]
 ANCHORS = [(sr.ANCHOR_HOOK, u"Gancho 90"), (sr.ANCHOR_STRAIGHT, u"Recto")]
 CUT_NAMES = {sr.X: u"1-1", sr.Y: u"2-2"}
@@ -119,6 +127,14 @@ class LosaWindow(forms.WPFWindow):
             getattr(self, "cbo_{}_d".format(name)).ItemsSource = BAR_KEYS
         self.cbo_mode.ItemsSource = [n for _, n in MODES]
         self.cbo_anchor.ItemsSource = [n for _, n in ANCHORS]
+        self.cbo_kind.ItemsSource = [n for _, n in KINDS]
+        self.cbo_dir.ItemsSource = [n for _, n in DIRS]
+        self.cbo_ens.ItemsSource = [n for _, n in ENS]
+        for name in ("vi", "vs", "t"):
+            getattr(self, "cbo_{}_d".format(name)).ItemsSource = BAR_KEYS
+        self.bricks = rsl.brick_types(doc)  # as the Properties palette lists them
+        self.cbo_brick.ItemsSource = sorted(self.bricks)
+        self._rib = None
         self._filling = False
         if self.splice is None:
             self.txt_splice.Text = u"Empalmes: desactivados (barras enteras), como en Acero Viga."
@@ -159,7 +175,15 @@ class LosaWindow(forms.WPFWindow):
             self._models[item.Tag] = rsl.SlabModel(doc.GetElement(DB.ElementId(item.Tag)))
         self.model = self._models[item.Tag]
         if item.Tag not in self.state.settings:
-            self.state.settings[item.Tag] = rsl.read_settings(self.model.element)
+            st = rsl.read_settings(self.model.element)
+            p = self.model.element.LookupParameter(rsl.PARAM)
+            if not (p is not None and (p.AsString() or u"").strip()):
+                # first time: the kind from its type name, the brick that fits its depth
+                name = doc.GetElement(self.model.element.GetTypeId()).get_Parameter(
+                    DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString().upper()
+                st["kind"] = sr.ALIGERADA if u"ALIGERAD" in name else sr.MACIZA
+                st["alig"] = {"brick": rsl.default_brick(self.bricks, self.model.thickness), "place": True}
+            self.state.settings[item.Tag] = st
         st = self._settings()
         if not st.get("cuts"):
             st["cuts"] = sr.default_cuts(self.model.slab_tris)
@@ -185,7 +209,30 @@ class LosaWindow(forms.WPFWindow):
         self.txt_frac.Text = u"{:g}".format(round(1.0 / float(st[sr.SUP].get("frac") or 1.0 / 3.0), 2))
         self.cbo_anchor.SelectedItem = dict(ANCHORS).get(st.get("anchor"), ANCHORS[0][1])
         self.txt_leg.Text = u"" if st.get("leg") is None else u"{:g}".format(float(st["leg"]))
+        kind = st.get("kind") or sr.MACIZA
+        self.cbo_kind.SelectedItem = dict(KINDS)[kind]
+        rb_ = sr.ribbed(st)
+        self.cbo_dir.SelectedItem = dict(DIRS).get(rb_["dir"], DIRS[0][1])
+        self.txt_vb.Text = u"{:g}".format(rb_["b"])
+        self.txt_vs.Text = u"{:g}".format(rb_["s"])
+        self.cbo_brick.SelectedItem = rb_.get("brick")
+        self.chk_brick.IsChecked = bool(rb_.get("place", True))
+        self.cbo_ens.SelectedItem = dict(ENS).get(rb_["ens"]["mode"], ENS[0][1])
+        self.txt_ens.Text = u"{:g}".format(float(rb_["ens"]["len"]))
+        self.cbo_vi_d.SelectedItem = rb_["inf"]["d"]
+        self.cbo_vs_d.SelectedItem = rb_["sup"]["d"]
+        self.txt_vend.Text = u"{:g}".format(round(1.0 / rb_["sup"]["end_frac"], 2))
+        self.txt_vint.Text = u"{:g}".format(round(1.0 / rb_["sup"]["frac"], 2))
+        self.chk_temp.IsChecked = bool(rb_["temp"].get("on", True))
+        self.cbo_t_d.SelectedItem = rb_["temp"]["d"]
+        self.txt_t_s.Text = u"{:g}".format(float(rb_["temp"]["s"]))
+        self._show_kind(kind)
         self._filling = False
+
+    def _show_kind(self, kind):
+        from System.Windows import Visibility
+        self.panel_maciza.Visibility = Visibility.Visible if kind == sr.MACIZA else Visibility.Collapsed
+        self.panel_alig.Visibility = Visibility.Visible if kind == sr.ALIGERADA else Visibility.Collapsed
 
     @staticmethod
     def _num(text, default):
@@ -211,6 +258,24 @@ class LosaWindow(forms.WPFWindow):
         st["anchor"] = anchor[0] if anchor else sr.ANCHOR_HOOK
         leg = (self.txt_leg.Text or u"").strip()
         st["leg"] = max(0.0, self._num(leg, 0.15)) if leg else None
+        kind = [k for k, n in KINDS if n == self.cbo_kind.SelectedItem]
+        st["kind"] = kind[0] if kind else sr.MACIZA
+        a = st.setdefault("alig", {})
+        d = [k for k, n in DIRS if n == self.cbo_dir.SelectedItem]
+        a["dir"] = d[0] if d else None
+        a["b"] = max(0.05, self._num(self.txt_vb.Text, 0.10))
+        a["s"] = max(a["b"] + 0.10, self._num(self.txt_vs.Text, 0.40))
+        a["brick"] = self.cbo_brick.SelectedItem
+        a["place"] = bool(self.chk_brick.IsChecked)
+        e = [k for k, n in ENS if n == self.cbo_ens.SelectedItem]
+        a["ens"] = {"mode": e[0] if e else sr.ENS_NONE, "len": max(0.0, self._num(self.txt_ens.Text, 0.25))}
+        a["inf"] = {"d": self.cbo_vi_d.SelectedItem or u'1/2"'}
+        a["sup"] = {"d": self.cbo_vs_d.SelectedItem or u'1/2"',
+                    "end_frac": 1.0 / max(1.5, self._num(self.txt_vend.Text, 4.0)),
+                    "frac": 1.0 / max(1.5, self._num(self.txt_vint.Text, 3.0))}
+        a["temp"] = {"on": bool(self.chk_temp.IsChecked), "d": self.cbo_t_d.SelectedItem or u'1/4"',
+                     "s": max(0.05, self._num(self.txt_t_s.Text, 0.25))}
+        self._show_kind(st["kind"])
         self.redraw()
 
     # -- drawing -------------------------------------------------------------------
@@ -218,13 +283,20 @@ class LosaWindow(forms.WPFWindow):
         if self.model is None:
             return
         try:
-            self._plan, self._warnings = self.model.plan(self._settings(), MM, self.splice)
-            sets = sum(len(sr.bar_sets(self._plan.get(k) or [])) for k in sr.LAYERS)
-            self.txt_status.Text = u"{} apoyo(s) leído(s); {} conjunto(s) de barras.{}".format(
-                len(self.model.supports), sets,
+            st = self._settings()
+            lib = rsl.brick_library(doc, st, self.bricks)
+            self._plan, self._rib, self._warnings = self.model.plan(st, MM, self.splice, lib)
+            sets = sum(len(sr.bar_sets(v or [])) for v in self._plan.values())
+            extra = u""
+            if self._rib is not None:
+                extra = u" Aligerado en {}: {} vigueta(s), {} ladrillo(s){}.".format(
+                    self._rib["axis"].upper(), len(self._rib["viguetas"]), len(self._rib["bricks"]),
+                    u"" if lib else u" (elige el tipo de ladrillo)")
+            self.txt_status.Text = u"{} apoyo(s) le\u00eddo(s); {} conjunto(s) de barras.{}{}".format(
+                len(self.model.supports), sets, extra,
                 (u"  Aviso: " + u"; ".join(self._warnings)) if self._warnings else u"")
         except Exception as e:
-            self._plan, self._warnings = {}, []
+            self._plan, self._rib, self._warnings = {}, None, []
             self.txt_status.Text = u"No se pudo calcular el acero: {}".format(e)
         self._draw_plan()
         self._draw_cut(sr.X)
@@ -251,6 +323,14 @@ class LosaWindow(forms.WPFWindow):
         for s in m.supports:
             for tri in s["tris"]:
                 rv._polygon(canvas, frame, tri, brush((200, 203, 208) if s["label"] != u"COLUMNA" else (90, 90, 90)))
+        rib = getattr(self, "_rib", None)
+        if rib is not None:
+            fill, edge = brush(BRICK, 70), brush(BRICK, 160)
+            for bk in rib["bricks"]:
+                if rib["axis"] == sr.X:
+                    rv._rect(canvas, frame, bk["s0"], bk["t0"], bk["s1"], bk["t1"], fill, edge)
+                else:
+                    rv._rect(canvas, frame, bk["t0"], bk["s0"], bk["t1"], bk["s1"], fill, edge)
         for (face, axis), lines in sorted(self._plan.items()):
             color = brush(COLORS[(face, axis)], 150 if face == sr.SUP else 110)
             for line in lines:
@@ -305,38 +385,84 @@ class LosaWindow(forms.WPFWindow):
             rv._rect(canvas, frame, a, -4.0 * u, b, 0.0, brush((215, 218, 223)), brush((150, 155, 165)))
         for a, b in chords:
             rv._rect(canvas, frame, a, 0.0, b, h * k, brush((238, 240, 243)), brush((60, 60, 60)))
+        # the bricks cut (a ribbed slab): hanging from the top, 5 cm under it
+        rib = getattr(self, "_rib", None)
+        if rib is not None:
+            top = h - sr.ribbed(st)["top"]
+            fill, edge = brush(BRICK, 90), brush(BRICK, 200)
+            for bk in rib["bricks"]:
+                if rib["axis"] == axis and bk["t0"] <= pos <= bk["t1"]:
+                    rv._rect(canvas, frame, bk["s0"], 0.0, bk["s1"], top * k, fill, edge)
+                elif rib["axis"] != axis and bk["s0"] <= pos <= bk["s1"]:
+                    rv._rect(canvas, frame, bk["t0"], 0.0, bk["t1"], top * k, fill, edge)
         # the bars along the cut (the line nearest it), the others as dots
-        z = sr.layer_z(st, h, MM)
-        for face in (sr.INF, sr.SUP):
-            color = brush(COLORS[(face, axis)])
-            for line in sr.nearest_line(self._plan.get((face, axis)) or [], pos):
-                for bar in line["bars"]:
-                    pts = [(s, zz * k) for s, zz in bar["path"]]
-                    for p, q in zip(pts, pts[1:]):
-                        rv._line(canvas, frame, p, q, color, 2.5)
-                    if bar.get("lap_at"):
-                        l0, l1 = bar["lap_at"]
-                        zz = z[(face, axis)] * k
-                        rv._rect(canvas, frame, l0, zz - 0.3 * u, l1, zz + 0.3 * u, brush((176, 74, 74), 90))
-                        rv._text(canvas, frame, (l0 + l1) / 2.0, zz + (1.0 if face == sr.INF else -1.0) * u,
-                                 u"Emp. {:.2f}".format(l1 - l0), brush=brush((176, 74, 74)), size=9)
-                    if face == sr.SUP and bar.get("support"):
-                        self._bast_cotas(canvas, frame, line, bar, h * k + 1.4 * u, u)
-            dots = brush(COLORS[(face, other)])
-            for p in sr.crossing(self._plan.get((face, other)) or [], pos):
-                self._dot(canvas, frame, p, z[(face, other)] * k, MM[st[face][other]["d"]] / 2000.0, dots)
+        for (face, ax), layer in sorted(self._plan.items()):
+            if not layer:
+                continue
+            if ax == axis:
+                color = brush(COLORS[(face, ax)])
+                for line in sr.nearest_line(layer, pos):
+                    for bar in line["bars"]:
+                        pts = [(s_, zz * k) for s_, zz in bar["path"]]
+                        for p, q in zip(pts, pts[1:]):
+                            rv._line(canvas, frame, p, q, color, 2.5)
+                        if bar.get("lap_at"):
+                            l0, l1 = bar["lap_at"]
+                            zz = self._bar_z(bar) * k
+                            rv._rect(canvas, frame, l0, zz - 0.3 * u, l1, zz + 0.3 * u, brush((176, 74, 74), 90))
+                            rv._text(canvas, frame, (l0 + l1) / 2.0, zz + (1.0 if face != sr.SUP else -1.0) * u,
+                                     u"Emp. {:.2f}".format(l1 - l0), brush=brush((176, 74, 74)), size=9)
+                        if face == sr.SUP and bar.get("support"):
+                            self._bast_cotas(canvas, frame, line, bar, h * k + 1.4 * u, u)
+            else:
+                dots = brush(COLORS[(face, ax)])
+                bar0 = [b_ for l_ in layer for b_ in l_["bars"]]
+                if not bar0:
+                    continue
+                zz = self._bar_z(bar0[0]) * k
+                r = MM[bar0[0]["key"]] / 2000.0
+                for p in sr.crossing(layer, pos):
+                    self._dot(canvas, frame, p, zz, r, dots)
         # clear spans under it
         for a, b in sr.clear_and_gaps(chords[0], supports)[0] if len(chords) == 1 else []:
             y = -5.5 * u
             rv._line(canvas, frame, (a, y), (b, y), brush((42, 111, 214)), 1)
             rv._text(canvas, frame, (a + b) / 2.0, y - 0.9 * u, u"Ln {:.2f}".format(b - a), brush=brush((42, 111, 214)), size=9)
-        for i, (face, ax) in enumerate(((sr.INF, axis), (sr.INF, other), (sr.SUP, axis), (sr.SUP, other))):
-            if not (self._plan.get((face, ax))):
+        for i, (text, key) in enumerate(self._legend(st)):
+            rv._text(canvas, frame, s_lo + (i % 2) * 20 * u, -7.8 * u - (i // 2) * 1.4 * u, text,
+                     brush=brush(COLORS[key]), size=10, anchor="left")
+
+    def _legend(self, st):
+        """[(text, color key)] of the steel shown."""
+        rib = getattr(self, "_rib", None)
+        if rib is not None:
+            r = sr.ribbed(st)
+            a = rib["axis"]
+            other = sr.Y if a == sr.X else sr.X
+            out = [(u"Vigueta inf.: 1\u00d8{} corrido".format(r["inf"]["d"]), (sr.INF, a)),
+                   (u"Bastones: 1\u00d8{} (Ln/{:g} ext., Ln/{:g} int.)".format(
+                       r["sup"]["d"], round(1 / r["sup"]["end_frac"], 2), round(1 / r["sup"]["frac"], 2)), (sr.SUP, a))]
+            if r["temp"].get("on", True):
+                out.append((u"Temperatura: \u00d8{}@{:g}".format(r["temp"]["d"], float(r["temp"]["s"])), (u"temp", other)))
+            return out
+        out = []
+        for face, ax in sr.LAYERS:
+            if not self._plan.get((face, ax)):
                 continue
             cfg = st[face][ax]
-            rv._text(canvas, frame, s_lo + (i % 2) * 20 * u, -7.8 * u - (i // 2) * 1.4 * u, u"{} {}: Ø{}@{:g} ({:.2f} cm²/m)".format(
+            out.append((u"{} {}: \u00d8{}@{:g} ({:.2f} cm\u00b2/m)".format(
                 u"Inf" if face == sr.INF else u"Sup", ax.upper(), cfg["d"], float(cfg["s"]),
-                sr.steel_per_m(cfg["d"], float(cfg["s"]), MM)), brush=brush(COLORS[(face, ax)]), size=10, anchor="left")
+                sr.steel_per_m(cfg["d"], float(cfg["s"]), MM)), (face, ax)))
+        return out
+
+    @staticmethod
+    def _bar_z(bar):
+        """The height of a bar's run (its longest flat stretch)."""
+        best = None
+        for (s0, z0), (s1, z1) in zip(bar["path"], bar["path"][1:]):
+            if abs(z1 - z0) < 1e-6 and (best is None or abs(s1 - s0) > best[0]):
+                best = (abs(s1 - s0), z0)
+        return best[1] if best else bar["path"][0][1]
 
     def _bast_cotas(self, canvas, frame, line, bar, y, u):
         """A baston's dimensions, from the support faces out to its ends."""
@@ -463,10 +589,9 @@ class LosaWindow(forms.WPFWindow):
         _, key, side, left, right = tag.split(u"|")
         side, left, right = int(side), float(left), float(right)
         value = forms.ask_for_string(default=u"{:.2f}".format(left if side == 0 else right), title=u"Acero Losa",
-                                     prompt=u"Largo del bastón (m) desde la cara del apoyo, {} (vale para todo ese "
-                                            u"apoyo; vacío: Ln/{:g}):".format(
-                                                u"izquierda" if side == 0 else u"derecha",
-                                                round(1.0 / self._settings()[sr.SUP]["frac"], 2)))
+                                     prompt=u"Largo del bast\u00f3n (m) desde la cara del apoyo, {} (vale para todo ese "
+                                            u"apoyo; vac\u00edo: el autom\u00e1tico):".format(
+                                                u"izquierda" if side == 0 else u"derecha"))
         if value is None:
             return
         bast = self._settings().setdefault("bast", {})
@@ -495,7 +620,7 @@ class LosaWindow(forms.WPFWindow):
 def pick(state):
     try:
         refs = revit.uidoc.Selection.PickObjects(ObjectType.Element, _FloorFilter(),
-                                                 u"Selecciona las losas macizas y pulsa Finalizar")
+                                                 u"Selecciona las losas y pulsa Finalizar")
     except OperationCanceledException:
         return
     state.picked_ids = [id_of(r.ElementId) for r in refs]
@@ -505,7 +630,7 @@ def pick(state):
 def generate_all(state, models, splice):
     """Save the settings on each slab and (re)generate its bars."""
     bar_types = rc.BarTypes(doc)
-    failed, count, warnings = [], 0, []
+    failed, count, warnings, bricks = [], 0, [], 0
     t = DB.Transaction(doc, "Acero losa")
     t.Start()
     try:
@@ -522,13 +647,23 @@ def generate_all(state, models, splice):
                                            tag=lambda r: rc._tag(r, floor))
                 count += sum(r.Quantity for r, _, _ in made)
                 warnings += found
+                if settings.get("kind") == sr.ALIGERADA:
+                    rsl.delete_bricks(doc, floor)
+                    if sr.ribbed(settings).get("place", True):
+                        types = rsl.brick_types(doc)
+                        lib = rsl.brick_library(doc, settings, types)
+                        if lib:
+                            _, rib, _ = model.plan(settings, MM, splice, lib)
+                            bricks += rsl.place_bricks(model, rib, types)
+                        else:
+                            warnings.append(u"no hay tipo de ladrillo elegido: no se colocaron ladrillos")
             except Exception as e:
                 failed.append(u"Losa id {}: {}".format(element_id, e))
         t.Commit()
     except Exception:
         t.RollBack()
         raise
-    return count, failed, warnings
+    return count, failed, warnings, bricks
 
 
 # --- main -------------------------------------------------------------------
@@ -546,8 +681,10 @@ if __name__ == "__main__":
             continue
         break
     if window.action == "run":
-        count, failed, warnings = generate_all(state, models, window.splice)
+        count, failed, warnings, bricks = generate_all(state, models, window.splice)
         msg = u"Acero de losa: {} barra(s) creada(s).".format(count)
+        if bricks:
+            msg += u"\nLadrillos de techo colocados: {}.".format(bricks)
         if warnings:
             msg += u"\n\nAvisos:\n- " + u"\n- ".join(sorted(set(warnings)))
         if failed:
