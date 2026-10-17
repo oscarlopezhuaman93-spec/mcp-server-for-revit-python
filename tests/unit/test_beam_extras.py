@@ -124,7 +124,8 @@ def test_two_cuts_own_hooks_and_bar_snap():
     assert be.extra_legs(e) == (0.0, 0.0)
     e["h1"] = 0.25
     assert be.extra_legs(e) == (0.0, 0.25)
-    assert be.snap_to_bars(0.065, 0.13, MAIN) == (0.0796, 0.1396)  # onto the bar's x and the layer
+    assert be.snap_to_bars(0.065, 0.13, MAIN) == (0.065, 0.1396)  # onto the layer, not on top of the bar
+    assert be.snap_to_bars(0.065, 0.09, MAIN) == (0.0796, 0.09)  # a second layer: under the bar
     assert be.snap_to_bars(0.0, 0.10, MAIN) == (0.0, 0.10)  # too far: stays
 
 

@@ -443,10 +443,13 @@ def snap_to_bars(x, y, main_bars, tol=0.02):
     and y onto a layer's y when that close."""
     best_x = min(main_bars, key=lambda b: abs(b[0] - x)) if main_bars else None
     best_y = min(main_bars, key=lambda b: abs(b[1] - y)) if main_bars else None
+    x0 = x
     if best_x is not None and abs(best_x[0] - x) <= tol:
         x = best_x[0]
     if best_y is not None and abs(best_y[1] - y) <= tol:
         y = best_y[1]
+    if any(abs(b[0] - x) < 1e-6 and abs(b[1] - y) < 1e-6 for b in main_bars):
+        x = x0  # never on top of a main bar: in its layer it keeps its x
     return x, y
 
 
