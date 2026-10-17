@@ -419,6 +419,37 @@ def auto_cuts(spans, extras, min_len=0.10):
     return out
 
 
+def two_cuts(settings, spans):
+    """The two cuts of a beam (1-1 and 2-2): where they were moved to, else
+    one by the first support (an eighth into the first span) and one at its
+    middle."""
+    cuts = list((settings or {}).get("cuts") or [])
+    if len(cuts) >= 2:
+        return sorted(cuts[:2])
+    if not spans:
+        return []
+    a, b = spans[0]
+    return [round(a + (b - a) / 8.0, 3), round((a + b) / 2.0, 3)]
+
+
+def extra_legs(extra):
+    """(leg at s0, leg at s1) m of an extra's own hooks (0: straight).
+    Its hooks are its own, not the main bars'."""
+    return max(0.0, float(extra.get("h0") or 0.0)), max(0.0, float(extra.get("h1") or 0.0))
+
+
+def snap_to_bars(x, y, main_bars, tol=0.02):
+    """A bar dragged in a cut, lined up with the main bars: x onto a bar's x
+    and y onto a layer's y when that close."""
+    best_x = min(main_bars, key=lambda b: abs(b[0] - x)) if main_bars else None
+    best_y = min(main_bars, key=lambda b: abs(b[1] - y)) if main_bars else None
+    if best_x is not None and abs(best_x[0] - x) <= tol:
+        x = best_x[0]
+    if best_y is not None and abs(best_y[1] - y) <= tol:
+        y = best_y[1]
+    return x, y
+
+
 def extra_ends(extra, bar_start, bar_end, tol=0.02):
     """(s0, s1, hooked at start, hooked at end): the extra clipped to the
     main bars' reach; it takes their anchorage where it reaches a beam end."""

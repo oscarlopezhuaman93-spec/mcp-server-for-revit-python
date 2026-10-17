@@ -567,9 +567,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         s0, s1, hook0, hook1 = bx.extra_ends(extra, bar_start, bar_end)
         if s1 - s0 < 0.1:
             continue
-        hooked = anchor == ANCHOR_HOOK
-        leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked) if hook0 else 0.0
-        leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked) if hook1 else 0.0
+        leg0, leg1 = bx.extra_legs(extra)  # its own hooks, drawn or typed
         for x, y in bx.placed_positions(extra, design["bars"], spec.BAR_DIAMETERS_MM):
             path = spec.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)
             if line.variable:

@@ -926,8 +926,9 @@ def beam_elevation_extent(data):
     ss += [p[2] for pts, _ in data["bar_paths"] for p in pts]
     top_rows, bottom_rows = data.get("cota_rows") or (0, 0)  # Acero Viga's extra bars' dimension rows
     room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0
-    return (min(ss) - 2 * u, min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
-            max(ss) + 2 * u, max(ys) + 6 * u + room + 1.1 * u * top_rows)
+    side = 7 * u if data.get("hooks") else 2 * u  # room for the "Gancho 0.20" labels
+    return (min(ss) - side,min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
+            max(ss) + side, max(ys) + 6 * u + room + 1.1 * u * top_rows)
 
 
 def beam_cota_y(data, face, row):
@@ -1040,6 +1041,13 @@ def draw_beam_elevation(canvas, data, frame):
             _edit_text(canvas, frame, (lo + hi) / 2.0 - 0.6 * u, yc + 0.55 * u, u"{:.2f}".format(hi - lo), c["tag"])
         yl = beam_cota_y(data, extra["face"], extra["row"])
         _edit_text(canvas, frame, max(c["hi"] for c in cotas) + 0.3 * u, yl, extra["label"], extra["tag"])
+    hook = data.get("draft_hook")
+    if hook:  # a baston's hook being drawn: down / up from its end
+        s_h, y_bar, leg, face = hook
+        y_to = y_bar - leg if face == u"sup" else y_bar + leg
+        _line(canvas, frame, (s_h, y_bar * k), (s_h, y_to * k), _brush(230, 80, 30), 3, dash=True)
+        _text(canvas, frame, s_h + 1.6 * u, (y_bar + y_to) / 2.0 * k, u"Gancho {:.2f}".format(leg),
+              brush=_brush(230, 80, 30), size=10, bold=True)
     draft = data.get("draft")
     if draft:  # an extra being drawn: from its first click to the mouse
         s0, s1, face = draft

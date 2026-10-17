@@ -117,6 +117,17 @@ def test_hooks_and_bars_placed_by_hand():
         be.parse_position_text(u"30;5", poly, be.TOP, 1)  # outside the section
 
 
+def test_two_cuts_own_hooks_and_bar_snap():
+    assert be.two_cuts({"cuts": []}, SPANS) == [pytest.approx(0.25 + 3.62 / 8, abs=1e-3), pytest.approx(2.06)]
+    assert be.two_cuts({"cuts": [3.0, 1.0, 5.0]}, SPANS) == [1.0, 3.0]
+    e = be.drawn_extra(1.0, 2.0, be.TOP, 2, '5/8"')
+    assert be.extra_legs(e) == (0.0, 0.0)
+    e["h1"] = 0.25
+    assert be.extra_legs(e) == (0.0, 0.25)
+    assert be.snap_to_bars(0.065, 0.13, MAIN) == (0.0796, 0.1396)  # onto the bar's x and the layer
+    assert be.snap_to_bars(0.0, 0.10, MAIN) == (0.0, 0.10)  # too far: stays
+
+
 def test_steel_at_cuts_and_ends():
     extras = [be.default_baston(1, SPANS, START, END, 2, '5/8"')]
     text, area = be.steel_at(4.0, MAIN, extras, MM, be.TOP)

@@ -247,12 +247,12 @@
                 </Border>
                 <TextBlock DockPanel.Dock="Bottom" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
                            Text="Estribo cerrado: clic en cada barra que abraza y clic derecho (o clic en la primera) para cerrarlo; abierto (U): clic en cada punto y clic derecho para terminarlo sin cerrar. Esc cancela el trazo. Mediante dos puntos: clic en dos esquinas opuestas. Al crear un estribo (o con Editar) aparecen sus medidas para modificarlas. Grapa: un clic donde la quieres; se coloca sola entre las dos barras enfrentadas mas cercanas. En '&#216; acero' eliges si usa el estribo de borde (naranja) o de confinamiento (verde). Barras: elige una de las 4 opciones (el di&#225;metro de cada una se cambia en su lista y se recuerda) y haz clic en la planta donde va cada barra (cerca de un estribo se pega a su cara interior); Borrar quita una barra. Los puntos se ajustan a las barras y a 1 cm. Forma: clic en una forma de armadura (panel derecho) y dibuja el estribo; se crea con esa forma. El boceto se guarda con 'Guardar configuracion' en los tipos marcados de la misma seccion."/>
-                <!-- Three views: 3D (large, left), elevation and plan (the sketch). Mouse wheel
+                <!-- Three views: elevation (large, left), 3D and plan (the sketch). Mouse wheel
                      zooms, middle button drag pans, "Ajustar" refits; in 3D a
                      left drag orbits. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.15*"/>
+                        <ColumnDefinition Width="1.5*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -275,16 +275,32 @@
 
                     <DockPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,6">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+                            <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="view3d_fit_click"/>
+                            <ComboBox DockPanel.Dock="Right" x:Name="cbo_detail" Width="80" Margin="0,0,6,0"
+                                      SelectionChanged="detail_changed"/>
+                            <TextBlock DockPanel.Dock="Right" Text="Nivel de detalle: " VerticalAlignment="Center"/>
+                            <TextBlock Text="VISTA 3D" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <Border x:Name="border3d" BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White"
+                                ClipToBounds="True"
+                                MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
+                                MouseMove="view3d_mouse_move" SizeChanged="view3d_resized">
+                            <Viewport3D x:Name="view3d"/>
+                        </Border>
+                    </DockPanel>
+                    <DockPanel Grid.Column="0" Grid.RowSpan="2" Margin="0,0,6,0">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="elev_fit_click"/>
                             <TextBlock Text="ALZADO   " FontWeight="Bold" VerticalAlignment="Center"/>
                             <ToggleButton x:Name="tool_draw" Content="&#9998; Dibujar acero" Padding="6,0" Click="elev_tool_click"
-                                          ToolTip="A mano alzada: clic en el inicio y en el final. En la mitad de arriba de la viga es bast&#243;n (superior), en la de abajo balanc&#237;n (inferior). Se ajusta a 5 cm y a las caras de los apoyos. Esc cancela."/>
-                            <ToggleButton x:Name="tool_cut" Content="+ Corte" Padding="6,0" Margin="4,0,0,0" Click="elev_tool_click"
-                                          ToolTip="Clic en la viga: agrega UN corte (luego se apaga). Los cortes se arrastran siempre; clic derecho sobre uno lo borra."/>
-                            <Button Content="Cortes autom&#225;ticos" Padding="6,0" Margin="4,0,0,0" Click="auto_cuts_click"
-                                    ToolTip="Un corte en cada zona de cada tramo donde cambia el acero (donde empieza o termina un bast&#243;n o balanc&#237;n)."/>
+                                          ToolTip="Clic en el inicio y en el final (arriba de la mitad: bast&#243;n; abajo: balanc&#237;n). Luego, si quieres, baja o sube desde un extremo y haz clic para su gancho; clic derecho o Esc termina."/>
                             <TextBlock x:Name="txt_elev_hint" Foreground="Gray" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center"
-                                       Text="Clic en un acero para editarlo o eliminarlo. Cotas desde la cara de la columna: clic en el n&#250;mero."/>
+                                       Text="Clic en un acero para editarlo. Los cortes 1-1 y 2-2 se arrastran."/>
+                        </DockPanel>
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <TextBlock DockPanel.Dock="Left" Text="Viga: " VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_view_column" SelectionChanged="view_column_changed"
+                                      ToolTip="Cual de las vigas de este tipo (con sus tramos) se ve en la vista 3D y el alzado."/>
                         </DockPanel>
                         <Border x:Name="sel_bar" DockPanel.Dock="Top" Visibility="Collapsed" Background="#FFFFF4D6"
                                 BorderBrush="#FFE0B050" BorderThickness="1" Padding="4,3" Margin="0,0,0,2">
@@ -299,6 +315,11 @@
                                 <TextBlock x:Name="sel_lbl1" Text="Der. " VerticalAlignment="Center"/>
                                 <TextBox x:Name="sel_c1" Width="40" KeyDown="sel_key" LostFocus="sel_lost_focus"/>
                                 <TextBlock x:Name="sel_m1" Text=" m   " VerticalAlignment="Center"/>
+                                <TextBlock Text="Gancho izq. " VerticalAlignment="Center"/>
+                                <TextBox x:Name="sel_h0" Width="36" KeyDown="sel_key" LostFocus="sel_lost_focus"/>
+                                <TextBlock Text="  der. " VerticalAlignment="Center"/>
+                                <TextBox x:Name="sel_h1" Width="36" KeyDown="sel_key" LostFocus="sel_lost_focus"/>
+                                <TextBlock Text=" m   " VerticalAlignment="Center"/>
                                 <Button Content="Eliminar" Padding="6,0" Foreground="#FFB02020" Click="sel_delete_click"/>
                                 <Button Content="&#10005;" Padding="5,0" Margin="4,0,0,0" Click="sel_close_click" ToolTip="Quitar la selecci&#243;n"/>
                             </StackPanel>
@@ -315,26 +336,6 @@
                         </Border>
                     </DockPanel>
 
-                    <DockPanel Grid.Column="0" Grid.RowSpan="2" Margin="0,0,6,0">
-                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
-                            <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="view3d_fit_click"/>
-                            <ComboBox DockPanel.Dock="Right" x:Name="cbo_detail" Width="80" Margin="0,0,6,0"
-                                      SelectionChanged="detail_changed"/>
-                            <TextBlock DockPanel.Dock="Right" Text="Nivel de detalle: " VerticalAlignment="Center"/>
-                            <TextBlock Text="VISTA 3D" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </DockPanel>
-                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-                            <TextBlock DockPanel.Dock="Left" Text="Viga: " VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_view_column" SelectionChanged="view_column_changed"
-                                      ToolTip="Cual de las vigas de este tipo (con sus tramos) se ve en la vista 3D y el alzado."/>
-                        </DockPanel>
-                        <Border x:Name="border3d" BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White"
-                                ClipToBounds="True"
-                                MouseWheel="view3d_wheel" MouseDown="view3d_mouse_down" MouseUp="view3d_mouse_up"
-                                MouseMove="view3d_mouse_move" SizeChanged="view3d_resized">
-                            <Viewport3D x:Name="view3d"/>
-                        </Border>
-                    </DockPanel>
                 </Grid>
             </DockPanel>
 
