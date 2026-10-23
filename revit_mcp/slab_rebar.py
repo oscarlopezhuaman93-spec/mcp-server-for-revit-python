@@ -105,19 +105,35 @@ def positions(lo, hi, spacing):
     return [lo + (hi - lo) * k / n for k in range(n + 1)]
 
 
-def clear_and_gaps(chord, supports):
-    """(clear spans, supports) of a chord: the supports crossing it, clipped,
-    and the stretches between them."""
+def clear_and_gaps(chord, supports, tol=0.03):
+    """(clear spans, supports) of a chord: the supports crossing it or
+    touching its ends (a slab that stops at a beam's or a wall's face),
+    whole, and the stretches of the chord between them."""
     a, b = chord
-    gaps = [(max(a, s0), min(b, s1)) for s0, s1 in supports if s1 > a + 1e-3 and s0 < b - 1e-3]
+    gaps = sorted((s0, s1) for s0, s1 in supports if s1 > a - tol and s0 < b + tol)
     spans, pos = [], a
     for g0, g1 in gaps:
-        if g0 > pos + 0.05:
-            spans.append((pos, g0))
-        pos = max(pos, g1)
+        g0c = min(max(a, g0), b)
+        if g0c > pos + 0.05:
+            spans.append((pos, g0c))
+        pos = max(pos, min(g1, b))
     if b > pos + 0.05:
         spans.append((pos, b))
     return spans, gaps
+
+
+def bar_reach(chord, gaps, cover, tol=0.03, max_in=0.60):
+    """(start, end) of the bars of a chord: into a support at an end (to its
+    far face less the cover, as the beams' bars), else the cover."""
+    a, b = chord
+    start, end = a + cover, b - cover
+    left = [g for g in gaps if g[0] < a + tol and g[1] > a - tol]
+    right = [g for g in gaps if g[0] < b + tol and g[1] > b - tol]
+    if left:
+        start = max(min(g[0] for g in left) + cover, a - max_in)
+    if right:
+        end = min(max(g[1] for g in right) - cover, b + max_in)
+    return start, end
 
 
 def support_key(axis, gap):
@@ -152,8 +168,8 @@ def bastones(chord, spans, gaps, frac, edits, axis, tol=0.02, end_frac=None):
         f = end_frac if (edge and end_frac is not None) else frac  # Ln/4 at an end support
         l_len = own[0] if own else (f * (left[0][1] - left[0][0]) if left else 0.0)
         r_len = own[1] if own else (f * (right[0][1] - right[0][0]) if right else 0.0)
-        s0 = a if g0 <= a + tol else g0 - l_len
-        s1 = b if g1 >= b - tol else g1 + r_len
+        s0 = g0 if g0 <= a + tol else g0 - l_len  # at an edge support: from its far face
+        s1 = g1 if g1 >= b - tol else g1 + r_len
         if s1 - s0 > 0.1:
             out.append((s0, s1, g0 <= a + tol, g1 >= b - tol, key))
     return out
@@ -190,8 +206,10 @@ def plan_line(chord, supports, face, axis, settings, h, mm, splice=None):
     leg = leg_length(settings, key, mm, room) if hooked else 0.0
     spans, gaps = clear_and_gaps(chord, supports)
     a, b = chord
-    bar_start, bar_end = a + c, b - c
+    bar_start, bar_end = bar_reach(chord, gaps, c)
     bars, warnings = [], []
+    if bar_end - bar_start < 0.15:  # a corner sliver of the slab: no bar there
+        return bars, spans, gaps, warnings
     mode = settings[SUP].get("mode", TOP_BASTONES) if face == SUP else None
     if face == INF or mode == TOP_MESH:
         top = face == SUP
@@ -363,53 +381,104 @@ def bays(slab_tris, support_tris, axis):
     return out
 
 
-def rib_layout(bay, b, s, brick_w):
-    """(vigueta centers, brick strips [(t0, t1)]) of a bay: a brick strip
-    against each face, then vigueta - bricks - vigueta...; the last strip
-    is narrower (a narrower brick or concrete)."""
+def rib_layout(bay, b, s, brick_w, start=0.0):
+    """(vigueta centers, brick strips [(t0, t1)]) of a bay: the first strip
+    `start` m from the face (concrete before it), then vigueta - bricks -
+    vigueta... every `s`; the last strip is what is left (a narrower or cut
+    brick)."""
     t0, t1 = bay
     centers, strips = [], []
-    t = t0
-    while t < t1 - 1e-6:
+    t = t0 + max(0.0, start)
+    while t < t1 - 0.05:
         w = min(brick_w, t1 - t)
         strips.append((t, t + w))
         t += w
         if t1 - t > b + 0.05:
             centers.append(t + b / 2.0)
-            t += b
+            t += max(b, s - brick_w)
         else:
             break
     return centers, strips
 
 
-def fill_bricks(a, b, lib, width, min_piece=0.10):
-    """Pieces [(type, s0, s1)] filling a ... b with the bricks of `lib`
-    [(type, largo, ancho)] of this width: whole bricks, then the longest
-    shorter one that fits the rest (a cut brick of the family); what is
-    left stays concrete."""
-    fit = sorted([(largo, t) for t, largo, ancho in lib if abs(ancho - width) < 1e-3], reverse=True)
-    if not fit:
+def fill_bricks(a, b, lib, width, min_piece=0.05, cut=True):
+    """Bricks filling a ... b, `width` wide: [{"type", "largo", "ancho", "s0",
+    "s1"}]. The family's types of that width first (whole bricks, then a
+    shorter type that fits the rest); what still sticks out is cut: a piece
+    of the brick of exactly the length (and width) left - the type is
+    duplicated at that size when generating. No type nor cut: concrete."""
+    if not lib:
         return []
-    main_l, main_t = fit[0]
-    out, s = [], a
-    while s + main_l <= b + 1e-6:
-        out.append((main_t, s, s + main_l))
-        s += main_l
-    for largo, t in fit[1:]:
-        if largo >= min_piece and s + largo <= b + 1e-6:
-            out.append((t, s, s + largo))
-            s += largo
-            break
+    fit = sorted([(largo, t) for t, largo, ancho in lib if abs(ancho - width) < 1e-3], reverse=True)
+    if fit:
+        main_l, main_t = fit[0]
+    elif cut:
+        main_l, main_t, _ = max([(largo, t, ancho) for t, largo, ancho in lib if ancho >= width - 1e-3] or
+                                [(largo, t, ancho) for t, largo, ancho in lib])
+    else:
+        return []
+    out, pos = [], a
+    while pos + main_l <= b + 1e-6:
+        out.append({"type": main_t, "largo": main_l, "ancho": width, "s0": pos, "s1": pos + main_l})
+        pos += main_l
+    rest = b - pos
+    if rest >= min_piece:
+        shorter = [(largo, t) for largo, t in fit[1:] if largo <= rest + 1e-6]
+        if shorter and (not cut or rest - shorter[0][0] < min_piece):
+            largo, t = shorter[0]
+            out.append({"type": t, "largo": largo, "ancho": width, "s0": pos, "s1": pos + largo})
+        elif cut:
+            out.append({"type": main_t, "largo": round(rest, 3), "ancho": width, "s0": pos, "s1": b})
     return out
 
 
-def brick_width(lib, room):
-    """The widest brick width of `lib` that fits `room`."""
+def brick_width(lib, room, cut=True):
+    """The brick width for a strip `room` wide: a type of the family that
+    fits it exactly, else (cut) the strip's own width, else the widest
+    type that fits."""
     widths = sorted(set(round(ancho, 3) for _, _, ancho in lib), reverse=True)
+    for w in widths:
+        if abs(w - room) < 2e-3:
+            return w
+    if cut and room >= 0.05:
+        return round(room, 3)
     for w in widths:
         if w <= room + 1e-6:
             return w
     return None
+
+
+def strip_runs(slab_tris, support_tris, axis, t0, t1):
+    """Where a brick strip t0..t1 can go along `axis`: inside the slab and off
+    the supports along its two edges and its middle (nothing sticks out)."""
+    runs = None
+    for t in (t0 + 1e-7, (t0 + t1) / 2.0, t1 - 1e-7):
+        here = []
+        for chord in line_intervals(slab_tris, axis, t):
+            here += clear_and_gaps(chord, line_intervals(support_tris, axis, t))[0]
+        if runs is None:
+            runs = here
+        else:
+            runs = [(max(a, c), min(b, d)) for a, b in runs for c, d in here if min(b, d) - max(a, c) > 1e-3]
+    return runs or []
+
+
+def rotate_tris(tris, angle_deg):
+    """Triangles turned by -angle (into the frame of the bricks' direction)."""
+    if not angle_deg:
+        return tris
+    r = math.radians(-angle_deg)
+    c, s = math.cos(r), math.sin(r)
+    return [tuple((x * c - y * s, x * s + y * c) for x, y in t) for t in tris]
+
+
+def unrotate(x, y, angle_deg):
+    """A point of that frame back in the slab's frame."""
+    if not angle_deg:
+        return x, y
+    r = math.radians(angle_deg)
+    c, s = math.cos(r), math.sin(r)
+    return x * c - y * s, x * s + y * c
 
 
 def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None):
@@ -435,22 +504,21 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
           "_z": {(INF, axis): c + di / 2.0, (SUP, axis): h - c - dt - ds / 2.0}}
     plan = {(INF, axis): [], (SUP, axis): [], (u"temp", other): []}
     warnings, centers, bricks = [], [], []
+    cutting = bool(rb.get("cut", True))
     for bay in bays(slab_tris, support_tris, axis):
-        cs, strips = rib_layout(bay, rb["b"], rb["s"], main_w)
+        cs, strips = rib_layout(bay, rb["b"], rb["s"], main_w, float(rb.get("start") or 0.0))
         centers += cs
         for k, (t0, t1) in enumerate(strips):
-            w = brick_width(lib, t1 - t0) if lib else None
+            w = brick_width(lib, t1 - t0, cutting) if lib else None
             if w is None:
                 continue
-            tm = (t0 + t1) / 2.0
-            for chord in line_intervals(slab_tris, axis, tm):
-                spans, _ = clear_and_gaps(chord, line_intervals(support_tris, axis, tm))
-                for a, b in spans:
-                    e = rb["ens"]
-                    cut = float(e.get("len") or 0.0) if (e.get("mode") == ENS_FULL
-                                                       or (e.get("mode") == ENS_ALT and k % 2 == 0)) else 0.0
-                    for typ, s0, s1 in fill_bricks(a + cut, b - cut, lib, w):
-                        bricks.append({"type": typ, "s0": s0, "s1": s1, "t0": t0, "t1": t0 + w})
+            e = rb["ens"]
+            ens = float(e.get("len") or 0.0) if (e.get("mode") == ENS_FULL
+                                               or (e.get("mode") == ENS_ALT and k % 2 == 0)) else 0.0
+            for a, b in strip_runs(slab_tris, support_tris, axis, t0, t0 + w):
+                for piece in fill_bricks(a + ens, b - ens, lib, w, cut=cutting):
+                    piece.update({"t0": t0, "t1": t0 + w})
+                    bricks.append(piece)
     for pos in centers:
         sup = line_intervals(support_tris, axis, pos)
         for chord in line_intervals(slab_tris, axis, pos):

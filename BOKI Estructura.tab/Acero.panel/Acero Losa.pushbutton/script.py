@@ -133,7 +133,7 @@ class LosaWindow(forms.WPFWindow):
         for name in ("vi", "vs", "t"):
             getattr(self, "cbo_{}_d".format(name)).ItemsSource = BAR_KEYS
         self.bricks = rsl.brick_types(doc)  # as the Properties palette lists them
-        self.cbo_brick.ItemsSource = sorted(self.bricks)
+        self.cbo_brick.ItemsSource = sorted(rsl.brick_types(doc, with_cuts=False))
         self._rib = None
         self._filling = False
         if self.splice is None:
@@ -186,7 +186,7 @@ class LosaWindow(forms.WPFWindow):
             self.state.settings[item.Tag] = st
         st = self._settings()
         if not st.get("cuts"):
-            st["cuts"] = sr.default_cuts(self.model.slab_tris)
+            st["cuts"] = sr.default_cuts(self.model.frame_slab())
         for nav in self.navs.values():
             nav.reset()
         self._fill_form()
@@ -217,6 +217,9 @@ class LosaWindow(forms.WPFWindow):
         self.txt_vs.Text = u"{:g}".format(rb_["s"])
         self.cbo_brick.SelectedItem = rb_.get("brick")
         self.chk_brick.IsChecked = bool(rb_.get("place", True))
+        self.chk_cut.IsChecked = bool(rb_.get("cut", True))
+        self.txt_angle.Text = u"{:g}".format(float(rb_.get("angle") or 0.0))
+        self.txt_start.Text = u"{:g}".format(float(rb_.get("start") or 0.0))
         self.cbo_ens.SelectedItem = dict(ENS).get(rb_["ens"]["mode"], ENS[0][1])
         self.txt_ens.Text = u"{:g}".format(float(rb_["ens"]["len"]))
         self.cbo_vi_d.SelectedItem = rb_["inf"]["d"]
@@ -267,6 +270,9 @@ class LosaWindow(forms.WPFWindow):
         a["s"] = max(a["b"] + 0.10, self._num(self.txt_vs.Text, 0.40))
         a["brick"] = self.cbo_brick.SelectedItem
         a["place"] = bool(self.chk_brick.IsChecked)
+        a["cut"] = bool(self.chk_cut.IsChecked)
+        a["angle"] = self._num(self.txt_angle.Text, 0.0) % 360.0
+        a["start"] = max(0.0, self._num(self.txt_start.Text, 0.0))
         e = [k for k, n in ENS if n == self.cbo_ens.SelectedItem]
         a["ens"] = {"mode": e[0] if e else sr.ENS_NONE, "len": max(0.0, self._num(self.txt_ens.Text, 0.25))}
         a["inf"] = {"d": self.cbo_vi_d.SelectedItem or u'1/2"'}
@@ -313,15 +319,15 @@ class LosaWindow(forms.WPFWindow):
         m = self.model
         if m is None or canvas.ActualWidth < 10:
             return
-        x0, x1, y0, y1 = sr.extent(m.slab_tris)
+        x0, x1, y0, y1 = sr.extent(m.frame_slab())
         fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 0.6, y0 - 0.6, x1 + 0.6, y1 + 0.6)
         self._fitted[PLAN] = fitted
         frame = self.navs[PLAN].resolve(fitted)
         self._frames[PLAN] = frame
-        for tri in m.slab_tris:
+        for tri in m.frame_slab():
             rv._polygon(canvas, frame, tri, brush((240, 243, 246)))
         for s in m.supports:
-            for tri in s["tris"]:
+            for tri in sr.rotate_tris(s["tris"], m.angle):
                 rv._polygon(canvas, frame, tri, brush((200, 203, 208) if s["label"] != u"COLUMNA" else (90, 90, 90)))
         rib = getattr(self, "_rib", None)
         if rib is not None:
@@ -369,8 +375,8 @@ class LosaWindow(forms.WPFWindow):
         title = self.txt_cut_x if axis == sr.X else self.txt_cut_y
         title.Text = u"CORTE {}  (barras en {}, {} = {:.2f} m)".format(CUT_NAMES[axis], axis.upper(),
                                                                         u"y" if axis == sr.X else u"x", pos)
-        chords = sr.line_intervals(m.slab_tris, axis, pos)
-        supports = sr.line_intervals(m.support_tris, axis, pos)
+        chords = sr.line_intervals(m.frame_slab(), axis, pos)
+        supports = sr.line_intervals(m.frame_supports(), axis, pos)
         if not chords:
             return
         h = m.thickness
@@ -528,7 +534,7 @@ class LosaWindow(forms.WPFWindow):
     def plan_move(self, sender, args):
         if self._drag_cut is not None:
             x, y, _ = self._plan_xy(args)
-            x0, x1, y0, y1 = sr.extent(self.model.slab_tris)
+            x0, x1, y0, y1 = sr.extent(self.model.frame_slab())
             v = (max(y0, min(y1, y)) if self._drag_cut == sr.X else max(x0, min(x1, x)))
             self._settings()["cuts"][self._drag_cut] = round(v, 3)
             self._draw_plan()

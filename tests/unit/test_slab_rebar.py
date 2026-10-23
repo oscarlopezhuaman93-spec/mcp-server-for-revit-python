@@ -91,16 +91,29 @@ def test_ribbed_layout_bricks_and_bars():
     assert sr.auto_direction(SLAB, BEAMS) == sr.X  # spans along x (4.25) shorter than along y (5.25)
     centers, strips = sr.rib_layout((0.0, 1.25), 0.10, 0.40, 0.30)
     assert strips[0] == (0.0, 0.30) and centers[0] == pytest.approx(0.35)
-    assert strips[-1][1] == pytest.approx(1.25) or strips[-1][1] - strips[-1][0] <= 0.30
-    pieces = sr.fill_bricks(0.0, 1.0, LIB, 0.30)
-    assert [p[0] for p in pieces] == [u"H15", u"H15", u"H15"] or pieces[-1][0] != u"H15"
-    pieces = sr.fill_bricks(0.0, 1.08, LIB, 0.30)  # 3 whole + 0.18 left: no 0.1889 fits
-    assert len(pieces) == 3
-    pieces = sr.fill_bricks(0.0, 1.20, LIB, 0.30)
-    assert len(pieces) == 4
-    pieces = sr.fill_bricks(0.0, 1.10, LIB, 0.30)  # 3 + a 0.1889 piece
-    assert pieces[-1][0] == u"H15 L.1889"
-    assert sr.brick_width(LIB, 0.22) == 0.20 and sr.brick_width(LIB, 0.12) is None
+    assert strips[-1][1] == pytest.approx(1.25) or strips[-1][1] - strips[-1][0] <= 0.30 + 1e-9
+    # whole bricks, a shorter type of the family, else the rest cut to size
+    pieces = sr.fill_bricks(0.0, 1.10, LIB, 0.30)  # 3 + a 0.1889 type: 0.0111 left (< 5 cm) stays concrete
+    assert [p["type"] for p in pieces] == [u"H15"] * 3 + [u"H15 L.1889"]
+    pieces = sr.fill_bricks(0.0, 1.08, LIB, 0.30)  # 3 + 0.18: no type fits, cut to 0.18
+    assert len(pieces) == 4 and pieces[-1]["largo"] == pytest.approx(0.18) and pieces[-1]["type"] == u"H15"
+    assert sr.fill_bricks(0.0, 1.08, LIB, 0.30, cut=False)[-1]["s1"] <= 0.90 + 1e-6
+    assert sr.brick_width(LIB, 0.20) == 0.20
+    assert sr.brick_width(LIB, 0.22) == 0.22  # cut to the strip
+    assert sr.brick_width(LIB, 0.22, cut=False) == 0.20
+    pieces = sr.fill_bricks(0.0, 0.65, LIB, 0.22)  # a cut width from the widest type
+    assert all(p["ancho"] == 0.22 for p in pieces) and pieces[-1]["s1"] == pytest.approx(0.65)
+    # the start: the first strip 0.10 from the face, the vigueta spacing kept
+    centers, strips = sr.rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, start=0.10)
+    assert strips[0][0] == pytest.approx(0.10)
+    assert all(abs((b - a) - 0.40) < 1e-6 for a, b in zip(centers, centers[1:]))
+    # a slab with a slanted side: no brick sticks out of it
+    slab = [((0.0, 0.0), (4.0, 0.0), (4.0, 3.0)), ((0.0, 0.0), (4.0, 3.0), (0.0, 1.0))]
+    runs = sr.strip_runs(slab, [], sr.X, 0.5, 0.8)
+    assert runs and runs[0][0] >= (0.8 - 1.0) / 0.5 - 1e-6  # the upper edge decides: x >= (t - 1) * 2
+    tr = sr.rotate_tris(rect(0, 0, 2, 1), 90)
+    x, y = sr.unrotate(tr[0][1][0], tr[0][1][1], 90)
+    assert (x, y) == (pytest.approx(2.0), pytest.approx(0.0, abs=1e-9))
     st = sr.default_settings()
     st["alig"] = {"dir": sr.Y}
     # beams along x at y = 0 and 5 (the viguetas span y)
@@ -119,3 +132,15 @@ def test_ribbed_layout_bricks_and_bars():
     st["alig"]["ens"] = {"mode": sr.ENS_FULL, "len": 0.25}
     plan2, _ = sr.plan_ribbed(SLAB, beams, H, st, MM, None, LIB)
     assert min(b["s0"] for b in plan2["bricks"]) >= 0.50 - 1e-6
+
+def test_slab_stopping_at_the_faces_of_its_supports():
+    # the slab between walls 0.15 thick that stand beside it (as in the user's model)
+    slab = rect(0.0, 0.0, 3.0, 2.0)
+    walls = rect(-0.15, -0.5, 0.0, 2.5) + rect(3.0, -0.5, 3.15, 2.5)
+    st = sr.default_settings()
+    sup = sr.line_intervals(walls, sr.X, 1.0)
+    bars, spans, gaps, _ = sr.plan_line((0.0, 3.0), sup, sr.INF, sr.X, st, H, MM)
+    assert spans == [(0.0, 3.0)]
+    assert bars[0]["s0"] == pytest.approx(-0.15 + 0.02) and bars[0]["s1"] == pytest.approx(3.15 - 0.02)
+    tops, _, _, _ = sr.plan_line((0.0, 3.0), sup, sr.SUP, sr.X, st, H, MM)
+    assert len(tops) == 2 and tops[0]["s0"] == pytest.approx(-0.13) and tops[0]["s1"] == pytest.approx(1.0)

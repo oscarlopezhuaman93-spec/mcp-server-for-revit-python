@@ -37,12 +37,15 @@ class SlabModel(object):
         self.slab_tris = _flat([t for face in tops for t in face.triangles])
         self.supports = self._supports()
         self.support_tris = [t for s in self.supports for t in s["tris"]]
+        self.angle = 0.0  # degrees: the frame of the last plan (a ribbed slab turned)
 
-    def _supports(self, below=0.03, depth=0.02):
+    def _supports(self, below=0.03, depth=0.02, around=0.8):
         """What holds the slab: the elements cut by a thin slice just under
-        its bottom, inside its outline."""
+        its bottom, under it or around its edges (a slab that stops at the
+        face of its beams and walls)."""
         f = self.f
         x0, x1, y0, y1, z0, z1 = f.extent
+        x0, x1, y0, y1 = x0 - around, x1 + around, y0 - around, y1 + around
         corners = [f.world(x, y, z0 - below - depth) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
         loop = DB.CurveLoop()
         for k in range(4):
@@ -50,7 +53,9 @@ class SlabModel(object):
         slice_ = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
             List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, depth / FT)
         bb = self.element.get_BoundingBox(None)
-        near = DB.Outline(DB.XYZ(bb.Min.X, bb.Min.Y, bb.Min.Z - 0.3 / FT), DB.XYZ(bb.Max.X, bb.Max.Y, bb.Max.Z))
+        pad = around / FT
+        near = DB.Outline(DB.XYZ(bb.Min.X - pad, bb.Min.Y - pad, bb.Min.Z - 0.3 / FT),
+                          DB.XYZ(bb.Max.X + pad, bb.Max.Y + pad, bb.Max.Z))
         doc = self.element.Document
         found = []
         for bic, label in SUPPORT_CATEGORIES:
@@ -78,15 +83,33 @@ class SlabModel(object):
     def plan(self, settings, mm, splice=None, lib=None):
         """(layers {(face, axis): lines}, ribbed extras or None, warnings)."""
         if settings.get("kind") == sr.ALIGERADA:
-            plan, warnings = sr.plan_ribbed(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice, lib)
+            # the bricks' direction turned by an angle: planned in that frame
+            self.angle = float(sr.ribbed(settings).get("angle") or 0.0)
+            plan, warnings = sr.plan_ribbed(sr.rotate_tris(self.slab_tris, self.angle),
+                                            sr.rotate_tris(self.support_tris, self.angle),
+                                            self.thickness, settings, mm, splice, lib)
             return plan["lines"], plan, warnings
+        self.angle = 0.0
         lines, warnings = sr.plan_slab(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice)
         return lines, None, warnings
 
     def point(self, axis, s, pos, z):
         """World point of a bar point: s along its axis, pos across."""
         x, y = (s, pos) if axis == sr.X else (pos, s)
+        x, y = sr.unrotate(x, y, self.angle)
         return self.f.world(x, y, z)
+
+    def frame_slab(self):
+        """The slab's triangles in the frame of the last plan."""
+        return sr.rotate_tris(self.slab_tris, self.angle)
+
+    def frame_supports(self):
+        return sr.rotate_tris(self.support_tris, self.angle)
+
+    def direction(self, axis):
+        """World unit vector of a plan axis (in the turned frame)."""
+        x, y = sr.unrotate(1.0, 0.0, self.angle) if axis == sr.X else sr.unrotate(0.0, 1.0, self.angle)
+        return (self.f.ux * x + self.f.uy * y).Normalize()
 
 
 def read_settings(floor):
@@ -109,7 +132,7 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
     lines, _, warnings = model.plan(settings, mm, splice, brick_library(doc, settings))
     made = []
     for (face, axis), layer in sorted(lines.items()):
-        normal = model.f.uy if axis == sr.X else model.f.ux  # bars laid across
+        normal = model.direction(sr.Y if axis == sr.X else sr.X)  # bars laid across
         for path, key, pos, count, spacing in sr.bar_sets(layer or []):
             pts = [model.point(axis, s, pos, z) for s, z in path]
             curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
@@ -126,26 +149,43 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
 
 
 # --- bricks of a ribbed slab ("ladrillo de techo", a floor-hosted family) ---------
-BRICK_WORDS = (u"LADRILLO", u"BLOQUE", u"CASETON", u"BOVEDILLA")
+BRICK_WORDS = (u"LADRILLO", u"BLOQUE", u"CASETON", u"CAJETIN", u"CAJET\u00cdN", u"BOVEDILLA", u"TECNOPOR", u"EPS")
 BRICK_TAG = u"BOKI LOSA "  # Comentarios of the bricks placed for a slab: BOKI LOSA <id>
 FT_ = FT
 
 
-def _double(element, name):
-    p = element.LookupParameter(name)
-    return p.AsDouble() * FT if p is not None and p.StorageType == DB.StorageType.Double else None
+# the size parameters of a brick / cajetin family, by the names they may have
+SIZE_NAMES = {"largo": (u"Largo", u"Longitud", u"Length", u"L"), "ancho": (u"Ancho", u"Width", u"A", u"B"),
+              "altura": (u"Altura", u"Alto", u"Height", u"H")}
+CUT_MARK = u" CORTE "  # the types made for cut pieces: <type> CORTE L=0.180 A=0.300
 
 
-def brick_types(doc):
-    """{name: (symbol, largo, ancho, altura)} of the brick family types of the
-    project (as the Properties palette lists them): generic models named
-    LADRILLO / BLOQUE... with Largo, Ancho and Altura."""
+def _size_param(element, what):
+    for name in SIZE_NAMES[what]:
+        p = element.LookupParameter(name)
+        if p is not None and p.StorageType == DB.StorageType.Double:
+            return p
+    return None
+
+
+def _double(element, what):
+    p = _size_param(element, what)
+    return p.AsDouble() * FT if p is not None else None
+
+
+def brick_types(doc, with_cuts=True):
+    """{name: (symbol, largo, ancho, altura)} of the brick / cajetin family
+    types of the project (as the Properties palette lists them): models named
+    LADRILLO / BLOQUE / CAJETIN... with a length, a width and a height.
+    with_cuts=False leaves out the types made for cut pieces."""
     out = {}
     for sym in DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol):
         fam = sym.FamilyName.upper()
         if not any(w in fam for w in BRICK_WORDS):
             continue
-        largo, ancho, altura = _double(sym, "Largo"), _double(sym, "Ancho"), _double(sym, "Altura")
+        if not with_cuts and CUT_MARK in (sym.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString() or u""):
+            continue
+        largo, ancho, altura = _double(sym, "largo"), _double(sym, "ancho"), _double(sym, "altura")
         if not (largo and ancho and altura):
             continue
         name = u"{} : {}".format(sym.FamilyName, sym.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString())
@@ -178,7 +218,7 @@ def brick_library(doc, settings, types=None):
     lib = [(chosen, largo, ancho)]
     for name, (s2, l2, a2, h2) in types.items():
         if name != chosen and s2.FamilyName == sym.FamilyName and abs(h2 - altura) < 1e-3 \
-                and l2 <= largo + 1e-6 and a2 <= ancho + 1e-6:
+                and l2 <= largo + 1e-6 and a2 <= ancho + 1e-6 and CUT_MARK not in name:
             lib.append((name, l2, a2))
     return lib
 
@@ -193,18 +233,45 @@ def delete_bricks(doc, floor):
     return len(old)
 
 
+def piece_symbol(doc, types, name, largo, ancho):
+    """The family type of a brick piece: the type itself when its size
+    matches, another type of the family with that size, else a new type
+    duplicated from it with that length and width (the brick cut to fit)."""
+    sym, l0, a0, h0 = types[name]
+    if abs(l0 - largo) < 1e-3 and abs(a0 - ancho) < 1e-3:
+        return sym
+    for other, (s2, l2, a2, h2) in types.items():
+        if s2.FamilyName == sym.FamilyName and abs(h2 - h0) < 1e-3 and abs(l2 - largo) < 1e-3 \
+                and abs(a2 - ancho) < 1e-3:
+            return s2
+    base = name.split(u" : ", 1)[1].split(CUT_MARK)[0]
+    new_name = u"{}{}L={:.3f} A={:.3f}".format(base, CUT_MARK, largo, ancho)
+    new = sym.Duplicate(new_name)
+    for what, value in (("largo", largo), ("ancho", ancho)):
+        p = _size_param(new, what)
+        if p is not None and not p.IsReadOnly:
+            p.Set(value / FT)
+    types[u"{} : {}".format(sym.FamilyName, new_name)] = (new, largo, ancho, h0)
+    return new
+
+
 def place_bricks(model, ribbed_plan, types):
     """Place the bricks of the plan, hosted by the floor, hanging from its top
     face (the family's own drop): the brick's width across the viguetas,
-    its length along them. Returns the number placed."""
+    its length along them; a piece cut to fit takes a type of its own size.
+    Returns the number placed."""
     from Autodesk.Revit.Creation import FamilyInstanceCreationData
     doc = model.element.Document
     axis = ribbed_plan["axis"]
-    f = model.f
-    hand = (f.uy.Negate() if axis == sr.X else f.ux)  # the length runs back from the point along the viguetas
+    across = model.direction(sr.Y if axis == sr.X else sr.X)
+    # the length runs back from the point along the viguetas: hand = the
+    # direction of the viguetas turned -90 degrees
+    along = model.direction(axis)
+    hand = DB.XYZ(along.Y, -along.X, 0.0)
     data = List[FamilyInstanceCreationData]()
     for b in ribbed_plan["bricks"]:
-        sym = types[b["type"]][0]
+        sym = piece_symbol(doc, types, b["type"], b.get("largo") or types[b["type"]][1],
+                           b.get("ancho") or types[b["type"]][2])
         if not sym.IsActive:
             sym.Activate()
         p = model.point(axis, b["s1"], (b["t0"] + b["t1"]) / 2.0, model.thickness)

@@ -86,6 +86,15 @@
                                 <ComboBox x:Name="cbo_dir" Width="150" SelectionChanged="form_changed"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
+                                <TextBlock Text="Girar " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_angle" Width="40" TextChanged="form_changed"
+                                         ToolTip="Gira la direcci&#243;n de las viguetas y los ladrillos (grados, antihorario desde X). La planta se dibuja girada."/>
+                                <TextBlock Text=" &#176;   Inicio desde la cara " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_start" Width="36" TextChanged="form_changed"
+                                         ToolTip="Distancia de la cara de la viga paralela a la primera fila de ladrillos (m). Desde ah&#237; se respeta el espaciamiento de las viguetas."/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Ancho " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_vb" Width="36" TextChanged="form_changed"/>
                                 <TextBlock Text=" m   @ " VerticalAlignment="Center"/>
@@ -95,7 +104,9 @@
                             <TextBlock Text="Ladrillo de techo (tipos de la familia cargada):" Margin="0,6,0,1"/>
                             <ComboBox x:Name="cbo_brick" Margin="16,0,0,2" SelectionChanged="form_changed"
                                       ToolTip="Los tipos de ladrillo del proyecto, como en la paleta de propiedades. Para completar los extremos y los bordes se usan los tipos m&#225;s cortos o angostos de la misma familia y altura."/>
-                            <CheckBox x:Name="chk_brick" Content="Colocar los ladrillos al generar" Margin="16,2,0,4" Click="form_changed"/>
+                            <CheckBox x:Name="chk_brick" Content="Colocar los ladrillos al generar" Margin="16,2,0,2" Click="form_changed"/>
+                            <CheckBox x:Name="chk_cut" Content="Cortar lo que sobresale (pieza a medida)" Margin="16,0,0,4" Click="form_changed"
+                                      ToolTip="Ning&#250;n ladrillo sale de la losa ni entra en una viga: el que sobresale se coloca cortado, con un tipo de la misma familia a esa medida (se crea si no existe)."/>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Ensanche " VerticalAlignment="Center"/>
                                 <ComboBox x:Name="cbo_ens" Width="90" SelectionChanged="form_changed"/>
