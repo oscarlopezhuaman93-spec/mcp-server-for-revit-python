@@ -1191,6 +1191,18 @@ def fitted_design(polygon, cover, stirrup_key, bar_key):
         (ax, ay), (bx, by), (cx, cy) = inner[k - 1], inner[k], inner[(k + 1) % n]
         if (bx - ax) * (cy - by) - (by - ay) * (cx - bx) > 1e-12:  # convex
             bars.append((bx, by, bar_key))
+    # Revit hooks a stirrup at its first corner: start at the convex corner
+    # nearest a right angle, where the 135-degree hooks sit as usual (at an
+    # open corner, like a ridge apex, their legs cross the core)
+    def squareness(k):
+        (ax, ay), (bx, by), (cx, cy) = inner[k - 1], inner[k], inner[(k + 1) % n]
+        u, v = (ax - bx, ay - by), (cx - bx, cy - by)
+        cross = u[0] * v[1] - u[1] * v[0]
+        if cross >= 0:  # concave (counterclockwise polygon)
+            return 9.0
+        return abs(abs(math.atan2(abs(cross), u[0] * v[0] + u[1] * v[1])) - math.pi / 2)
+    first = min(range(n), key=squareness)
+    inner = inner[first:] + inner[:first]
     design = empty_design()
     design["bars"] = bars
     design["stirrups"] = [(KIND_EDGE, inner, rb, False)]
