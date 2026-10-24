@@ -210,6 +210,69 @@ def lap_pieces(bar_start, bar_end, zones, lap, max_length=MAX_BAR_LENGTH, where=
     return pieces, warnings
 
 
+# Lamina "Empalmes por traslape en columnas": minimum anchorage (La) and lap
+# (Le) per diameter, m. Other diameters fall back to E.060.
+COLUMN_LA = {u'3/8"': 0.30, u'1/2"': 0.35, u'5/8"': 0.45, u'3/4"': 0.60, u'1"': 0.90}
+COLUMN_LE = {u'3/8"': 0.40, u'1/2"': 0.50, u'5/8"': 0.60, u'3/4"': 0.80, u'1"': 1.20}
+LAP_INCREASE = 1.7  # more than 50% of the bars lapped in one section
+
+
+def column_lap_cm(diameter_key):
+    """The column lap (cm) of the lamina's table, E.060 when not listed."""
+    if diameter_key in COLUMN_LE:
+        return int(round(COLUMN_LE[diameter_key] * 100))
+    return e060_lap_cm(diameter_key)
+
+
+def central_thirds(stories):
+    """The central third of each story's clear height ([(b, c)] -> [(lo, hi)])."""
+    return [(b + (c - b) / 3.0, c - (c - b) / 3.0) for b, c in stories]
+
+
+def column_splice(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH, group=0, other=None):
+    """Column bars cut per the lamina: every lap in the central third of a
+    story, at most half the bars lapped in one section. Group 0 laps as
+    high as it can; group 1 (`other`: group 0's pieces) laps just below
+    group 0's lap in the same third, or in another story's third when both
+    don't fit; only with no third apart do the bars lap together, the lap
+    increased 70% (column_splice_groups).
+    Returns (pieces, lap used, warnings)."""
+    thirds = central_thirds(stories)
+    if group == 0 or not other:
+        return _with_lap(lap_pieces(bar_start, bar_end, thirds, lap, max_length, u"un tercio central de piso"), lap)
+    # below group 0's lap in the same third when both fit, else a third of
+    # another story (the one below, as the bar length allows)
+    cuts = [e for _, e in other[:-1]]
+    zones = []
+    for lo, hi in thirds:
+        inside = [e for e in cuts if lo - 1e-6 <= e - lap and e <= hi + 1e-6]
+        if not inside:
+            zones.append((lo, hi))
+        elif min(inside) - 2 * lap >= lo - 1e-6:
+            zones.append((lo, min(inside) - lap))
+    pieces, warnings = lap_pieces(bar_start, bar_end, zones, lap, max_length, u"un tercio central de piso")
+    if warnings and not lap_pieces(bar_start, bar_end, thirds, lap, max_length)[1]:
+        return None  # nowhere apart: caller laps together, +70%
+    return pieces, lap, warnings
+
+
+def _with_lap(result, lap):
+    return result[0], lap, result[1]
+
+
+def column_splice_groups(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH):
+    """Both groups' cuts: ({0: pieces, 1: pieces}, lap used, warnings)."""
+    a = column_splice(bar_start, bar_end, stories, lap, max_length, 0)
+    b = column_splice(bar_start, bar_end, stories, lap, max_length, 1, a[0])
+    if b is not None:
+        return {0: a[0], 1: b[0]}, lap, a[2] + b[2]
+    big = int(math.ceil(LAP_INCREASE * lap * 20 - 1e-9)) / 20.0
+    a = column_splice(bar_start, bar_end, stories, big, max_length, 0)
+    note = [u"no caben dos empalmes alternados en el tercio central: se empalman juntos con "
+            u"Le x 1.7 = {:.2f} m".format(big)]
+    return {0: a[0], 1: a[0]}, big, a[2] + note
+
+
 def clear_spans(extent, supports, min_length=0.05):
     """The clear spans of a beam: its extent (start, end, m along it) minus
     the supports crossing it ([(s0, s1)]: columns, walls, the beams it

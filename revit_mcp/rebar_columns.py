@@ -1194,7 +1194,16 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     stories = [st for st in stories if st[1] - st[0] > 0.05]  # joints modeled apart: no lap there
     tops = [(s.z_top - z0_ft) * FT for s in sections]
     warnings = []
-    for x, y, key in column_spec.design["bars"]:
+    # splice["column"]: the lamina's rule - laps in the central third, the
+    # bars in two alternating groups round the section (at most 50% lapped
+    # in one section)
+    bars = column_spec.design["bars"]
+    group_of = {}
+    if splice.get("column"):
+        for rank, k in enumerate(sorted(range(len(bars)), key=lambda k: math.atan2(bars[k][1], bars[k][0]))):
+            group_of[k] = rank % 2
+    groups_cache = {}
+    for index_bar, (x, y, key) in enumerate(bars):
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         ends = bar_ends(doc, column_spec, key, x, y, base, stack[0], stack[-1])
         developed = total + ends.get("anchor", 0.0) + ends.get("leg_bottom", 0.0) + ends.get("leg_top", 0.0)
@@ -1218,7 +1227,14 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
             # top leg's), then put back on the column's axis.
             below = ends.get("anchor", 0.0) + ends.get("leg_bottom", 0.0)
             above = ends.get("leg_top", 0.0) - ends.get("top_drop", 0.0)
-            pieces, found = spec.splice_pieces(-below, total + above, stories, lap, splice["max"])
+            if group_of:
+                cache = (key, round(below, 4), round(above, 4))
+                if cache not in groups_cache:
+                    groups_cache[cache] = spec.column_splice_groups(-below, total + above, stories, lap, splice["max"])
+                by_group, lap, found = groups_cache[cache]
+                pieces = by_group[group_of[index_bar]]
+            else:
+                pieces, found = spec.splice_pieces(-below, total + above, stories, lap, splice["max"])
             pieces = [(max(a, 0.0), min(b, total)) for a, b in pieces]
         warnings += [u"Barras de {}: {}".format(key, w) for w in found]
         # with legs, the crank goes square to the same face (one plane per bar)

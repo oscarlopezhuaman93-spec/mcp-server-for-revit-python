@@ -9,6 +9,7 @@ __author__ = "Revit MCP"
 
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -90,16 +91,16 @@ def save_bar_slots(keys):
 def load_splice_settings():
     """{"on": bool, "max": m, "laps": {diameter key: cm}, "active": {keys}}:
     the splice settings (shared pyRevit settings). Every diameter's lap is
-    prefilled from Norma E.060 (rs.e060_lap_cm, class B) until edited;
+    prefilled from the column lap table (rs.column_lap_cm) until edited;
     only the diameters in "active" are spliced."""
     settings = {"on": True, "max": rs.MAX_BAR_LENGTH, "active": set(),
-                "laps": dict((k, float(rs.e060_lap_cm(k))) for k in rs.bar_diameter_keys())}
+                "laps": dict((k, float(rs.column_lap_cm(k))) for k in rs.bar_diameter_keys())}
     try:
         config = script.get_config(CONFIG_SECTION)
         # on unless turned off: stacked columns / whole beams get continuous bars
         settings["on"] = (config.get_option("splice_on", u"1") or u"1") == u"1"
         settings["max"] = float(config.get_option("splice_max", u"") or rs.MAX_BAR_LENGTH)
-        for pair in (config.get_option("splice_laps", u"") or u"").split(u"|"):
+        for pair in (config.get_option("splice_le", u"") or u"").split(u"|"):
             if u"=" in pair:
                 key, cm = pair.split(u"=", 1)
                 settings["laps"][rs.parse_diameter(key)] = float(cm)
@@ -116,7 +117,7 @@ def save_splice_settings(settings):
         config = script.get_config(CONFIG_SECTION)
         config.splice_on = u"1" if settings["on"] else u"0"
         config.splice_max = u"{}".format(settings["max"])
-        config.splice_laps = u"|".join(u"{}={}".format(k.replace(u'"', u"pulg"), v)
+        config.splice_le = u"|".join(u"{}={}".format(k.replace(u'"', u"pulg"), v)
                                        for k, v in sorted(settings["laps"].items()))
         config.splice_active = u"|".join(k.replace(u'"', u"pulg") for k in sorted(settings["active"]))
         script.save_config()
@@ -130,7 +131,7 @@ def splice_for_generation(settings):
     of another diameter past the maximum stays whole, with a warning)."""
     if not settings["on"]:
         return None
-    return {"max": settings["max"],
+    return {"max": settings["max"], "column": True,
             "laps": dict((k, settings["laps"][k] / 100.0) for k in settings["active"] if k in settings["laps"])}
 
 
@@ -154,8 +155,8 @@ def lap_rows(panel, settings, handler):
         box.Width = 34
         cm = settings["laps"].get(key)
         box.Text = u"{:g}".format(cm) if cm else u""
-        box.ToolTip = u"Longitud de empalme (cm). Sugerido: E.060 clase B = {} cm (f'c 210, fy 4200).".format(
-            rs.e060_lap_cm(key))
+        box.ToolTip = u"Longitud de empalme (cm). Tabla de empalmes en columnas (Le) = {} cm.".format(
+            rs.column_lap_cm(key))
         box.TextChanged += handler
         cell.Children.Add(check)
         cell.Children.Add(box)
@@ -1756,9 +1757,15 @@ class AceroWindow(forms.WPFWindow):
                     u", ".join(unspliced), top))
             bar_paths = []
             stories = [(s["z"], s["z"] + s["clear"]) for s in segments]
-            for x, y, key in bars:
+            order = sorted(range(len(bars)), key=lambda k: math.atan2(bars[k][1], bars[k][0]))
+            group_of = dict((k, rank % 2) for rank, k in enumerate(order))  # as rc.generate_stack
+            for index_bar, (x, y, key) in enumerate(bars):
                 lap = splice["laps"].get(key, 0.0)
-                pieces = rs.splice_pieces(0.0, top, stories, lap, splice["max"])[0] if lap else [(0.0, top)]
+                pieces = [(0.0, top)]
+                if lap:
+                    by_group, lap, found = rs.column_splice_groups(0.0, top, stories, lap, splice["max"])
+                    pieces = by_group[group_of[index_bar]]
+                    messages.extend(m for m in found if m not in messages)
                 d = rs.BAR_DIAMETERS_MM[key] / 1000.0
                 for i, (a, b) in enumerate(pieces):
                     bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))

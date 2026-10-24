@@ -872,3 +872,30 @@ def test_wall_horizontal_path_into_the_columns():
     path = wall_horizontal_path(-0.75, 0.75, 0.064, 0.30, 0.20, 0.15, 0.11)
     assert path == pytest.approx([(-1.05, 0.064 - 0.11), (-1.05, 0.064), (0.95, 0.064), (0.95, 0.064 - 0.11)])
     assert wall_horizontal_path(0, 1, -0.05, 0, 0, 0, 0.1) == [(0, -0.05), (1, -0.05)]
+
+
+class TestColumnSplice:
+    stories = [(0.0, 2.7), (3.0, 5.7), (6.0, 8.7), (9.0, 11.7), (12.0, 14.7)]
+
+    def test_table(self):
+        from revit_mcp.rebar_spec import column_lap_cm
+        assert [column_lap_cm(k) for k in ('3/8"', '1/2"', '5/8"', '3/4"', '1"')] == [40, 50, 60, 80, 120]
+
+    def test_groups_in_central_third_and_apart(self):
+        from revit_mcp.rebar_spec import column_splice_groups, central_thirds
+        groups, lap, _ = column_splice_groups(0.0, 14.7, self.stories, 0.40)
+        assert lap == 0.40
+        thirds = central_thirds(self.stories)
+        laps = {}
+        for g, pieces in groups.items():
+            laps[g] = [(e - lap, e) for _, e in pieces[:-1]]
+            for a, b in laps[g]:
+                assert any(lo - 1e-6 <= a and b <= hi + 1e-6 for lo, hi in thirds)
+        for a, b in laps[0]:  # no section with both groups lapped
+            assert all(b2 <= a + 1e-6 or a2 >= b - 1e-6 for a2, b2 in laps[1])
+
+    def test_no_room_in_one_third_other_story(self):
+        from revit_mcp.rebar_spec import column_splice_groups
+        groups, lap, warnings = column_splice_groups(0.0, 14.7, self.stories, 0.60)
+        assert lap == 0.60 and not warnings
+        assert groups[0][0][1] - groups[1][0][1] > 2.0  # a story apart
