@@ -4,7 +4,7 @@ columnas de concreto. La configuracion (longitudinal, estribos, nucleo y
 el dibujo de la seccion con estribos, grapas y barras a mano) se guarda
 en cada tipo de columna."""
 
-__title__ = "Acero Columna\nLongitudinal"
+__title__ = "Acero\nColumna"
 __author__ = "Revit MCP"
 
 import io
@@ -62,11 +62,6 @@ BAR_SLOT_DEFAULTS = [u'1/2"', u'5/8"', u'3/4"', u'1"']  # the four "Barras" opti
 # pyRevit settings shared by the Acero buttons (column and beam): bar
 # options, splice and hook lengths per diameter.
 CONFIG_SECTION = "OLSTR_Acero"
-
-# Two windows on this script: this button (bars and laps) and "Acero Columna
-# Estribos", which runs it with ACERO_COLUMNA_MODO = "estribos".
-MODE_LONG, MODE_STIRRUPS = "longitudinal", "estribos"
-MODE = globals().get("ACERO_COLUMNA_MODO") or MODE_LONG
 
 
 def load_bar_slots():
@@ -409,53 +404,50 @@ class AceroWindow(forms.WPFWindow):
         active = state.active if state.active in self.by_id else (types[0].id if types else None)
         if active is not None:
             self._select_type(active)
-        self._apply_mode()
+        self._row_heights = [row.Height for row in self.grid_stirrups.RowDefinitions]
+        self._show_tab(self.tab_steel.SelectedIndex == 0)
 
-    def _apply_mode(self):
-        """This window is one of two (MODE): "Longitudinal y empalmes" or
-        "Estribos". Each shows only its own settings and sketch tools and
-        generates only its own steel; the views, the neighbours and the
-        joint are the same in both."""
-        hide = []
-        if MODE == MODE_LONG:
-            self.Title = u"Acero Columna - Longitudinal y empalmes"
-            self.txt_header.Text = u"ACERO COLUMNA · LONGITUDINAL Y EMPALMES"
-            self.txt_header_sub.Text = (u"Barras verticales, anclajes y empalmes por traslape "
-                                        u"(tercio central, Le de la tabla, máx. 50% por sección). "
-                                        u"Los estribos se generan en Acero Columna Estribos.")
-            self.button_run.Content = u"GENERAR LONGITUDINAL"
-            # only the cover stays of the stirrup settings (row 7)
-            for child in self.grid_stirrups.Children:
-                if Grid.GetRow(child) != 7:
-                    hide.append(child)
-            for k, row in enumerate(self.grid_stirrups.RowDefinitions):
-                if k != 7:
-                    row.Height = GridLength(0)
-            self.exp_stirrups.Header = u"Recubrimiento"
+    def tab_changed(self, sender, args):
+        if args.OriginalSource is self.tab_steel and hasattr(self, "_row_heights"):
+            self._show_tab(self.tab_steel.SelectedIndex == 0)
+
+    def _show_tab(self, longitudinal):
+        """Two tabs over the same window: "Acero longitudinal" (bars and
+        laps) and "Estribos" (stirrups, ties, izaje, joint). Each shows only
+        its settings and sketch tools; views, neighbours, the joint and the
+        generation (everything at once) are the same."""
+        stirrup_only = [self.rb_stirrup, self.rb_rect, self.rb_tie, self.rb_edit, self.txt_steel, self.cbo_steel,
+                        self.wrap_shape, self.button_shapes]
+        for element in stirrup_only:
+            element.Visibility = Visibility.Collapsed if longitudinal else Visibility.Visible
+        for element in (self.exp_bars, self.exp_splice):
+            element.Visibility = Visibility.Visible if longitudinal else Visibility.Collapsed
+        # of the stirrup settings only the cover (row 7) and the save button
+        # (row 9) stay on the bars tab
+        for child in self.grid_stirrups.Children:
+            if Grid.GetRow(child) == 9:
+                continue  # the save button: shown by the code that needs it
+            hidden = longitudinal and Grid.GetRow(child) != 7
+            child.Visibility = Visibility.Collapsed if hidden else Visibility.Visible
+        for k, row in enumerate(self.grid_stirrups.RowDefinitions):
+            row.Height = GridLength(0) if (longitudinal and k not in (7, 9)) else self._row_heights[k]
+        self.exp_stirrups.Header = u"Recubrimiento" if longitudinal else u"2. Configuración de estribos"
+        if longitudinal:
             self.exp_bars.IsExpanded = True
             self.exp_splice.IsExpanded = True
-            hide += [self.rb_stirrup, self.rb_rect, self.rb_tie, self.rb_edit, self.txt_steel, self.cbo_steel,
-                     self.wrap_shape, self.button_shapes]
-            self.rb_bar_1.IsChecked = True
+            if not any(rb.IsChecked for rb, _ in self.bar_tools):
+                self.rb_bar_1.IsChecked = True
             self.txt_help.Text = (u"Barras: elige una de las 4 opciones y haz clic en la planta donde va cada barra "
                                   u"(cerca de un estribo se pega a su cara interior); Borrar quita una barra. "
-                                  u"Las barras ya generadas y los estribos existentes no se tocan al generar los "
-                                  u"estribos, ni los estribos al generar las barras.")
+                                  u"Empalmes: tercio central, Le de la tabla, máx. 50% de barras por sección.")
         else:
-            self.Title = u"Acero Columna - Estribos"
-            self.txt_header.Text = u"ACERO COLUMNA · ESTRIBOS"
-            self.txt_header_sub.Text = (u"Estribos de borde y confinamiento, grapas, izaje y núcleo. "
-                                        u"Las barras longitudinales se generan en Acero Columna Longitudinal.")
-            self.button_run.Content = u"GENERAR ESTRIBOS"
+            if not (self.rb_stirrup.IsChecked or self.rb_rect.IsChecked or self.rb_tie.IsChecked
+                    or self.rb_edit.IsChecked or self.rb_erase.IsChecked):
+                self.rb_stirrup.IsChecked = True
             self.txt_help.Text = (u"Estribo cerrado: clic en cada barra que abraza y clic derecho (o clic en la primera) "
                                   u"para cerrarlo; abierto (U): clic en cada punto y clic derecho. Mediante dos puntos: "
                                   u"dos esquinas opuestas. Grapa: un clic donde la quieres. Editar: clic en un estribo "
-                                  u"para cambiar sus medidas. Esc cancela el trazo. Las barras longitudinales no se "
-                                  u"tocan: se generan en Acero Columna Longitudinal.")
-            hide += [self.exp_bars, self.exp_splice]
-        for element in hide:
-            element.Visibility = Visibility.Collapsed
-
+                                  u"para cambiar sus medidas. Esc cancela el trazo.")
     # -- type list ---------------------------------------------------------
     def _compact_list(self):
         """With columns picked, the type box holds just their types: it sits
@@ -2170,8 +2162,8 @@ class AceroWindow(forms.WPFWindow):
             dist = rs.distance_to_polyline if is_open else rs.distance_to_polygon
             candidates.append((dist(m, poly), "stirrups", i))
         # each window erases only its own steel (bars / stirrups and ties)
-        candidates = [c for c in candidates if c[0] <= tol and (c[1] == "bars") == (MODE == MODE_LONG)]
-        if not candidates and MODE != MODE_LONG:
+        candidates = [c for c in candidates if c[0] <= tol and (c[1] == "bars") == (self.tab_steel.SelectedIndex == 0)]
+        if not candidates and self.tab_steel.SelectedIndex != 0:
             # Not on any bar, tie or edge: the stirrup the click is inside.
             index = self._stirrup_at(frame, p)
             if index is not None:
@@ -2452,8 +2444,7 @@ try:
             sub.Start()
             try:
                 created, found = rc.generate_stack(
-                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice,
-                    parts=set([rc.LONGITUDINAL] if MODE == MODE_LONG else [rc.STIRRUPS])
+                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
                 )
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]

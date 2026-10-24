@@ -27,15 +27,23 @@
                        VerticalAlignment="Center"/>
             <StackPanel>
                 <TextBlock x:Name="txt_header" Text="ACERO COLUMNA" Foreground="White" FontSize="18" FontWeight="Bold"/>
-                <TextBlock x:Name="txt_header_sub" Foreground="#FFB9C9DA" FontSize="11"/>
+                <TextBlock x:Name="txt_header_sub" Foreground="#FFB9C9DA" FontSize="11"
+                           Text="Barras longitudinales con empalmes y estribos de columnas. Genera todo el acero a la vez."/>
             </StackPanel>
         </DockPanel>
     </Border>
     <DockPanel Margin="12">
+        <!-- Two tabs over the same window: what the left panel and the sketch
+             tools show (the generation makes everything at once) -->
+        <TabControl DockPanel.Dock="Top" x:Name="tab_steel" Margin="0,0,0,8" SelectionChanged="tab_changed"
+                    Background="Transparent" BorderThickness="0,1,0,0">
+            <TabItem Header="Acero longitudinal" Padding="12,4" FontWeight="Bold"/>
+            <TabItem Header="Estribos" Padding="12,4" FontWeight="Bold"/>
+        </TabControl>
         <!-- Bottom: run (the columns picked in the model, or else every
              column of the checked types) -->
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
-            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="240" Height="40"
+            <Button DockPanel.Dock="Right" x:Name="button_run" Content="GENERAR ACERO" Width="240" Height="40"
                     FontWeight="Bold" Click="run_click" Background="#FF2D8CF0" Foreground="White" BorderThickness="0"
                     ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de las columnas seleccionadas (si no hay ninguna seleccionada, de todas las columnas de los tipos marcados)."/>
             <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"

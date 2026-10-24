@@ -814,55 +814,20 @@ def clear_top(doc, column, section):
     return section.z_top
 
 
-def delete_generated(doc, column, parts=None):
-    """Delete the bars an earlier run generated for this column. `parts`
-    (a set of LONGITUDINAL / STIRRUPS) deletes only those - the rest is
-    kept and returned as [(rebar, diameter key, kind)] so its weight still
-    counts; None: everything (returns the number deleted)."""
+def delete_generated(doc, column):
+    """Delete the bars an earlier run generated for this column."""
     column_id = str(element_id_value(column.Id))
     host_data = RebarHostData.GetRebarHostData(column)
     if host_data is None:
-        return 0 if parts is None else []
-    old, kept = [], []
+        return 0
+    old = []
     for rebar in host_data.GetRebarsInHost():
         p = rebar.LookupParameter(ORIGIN_PARAM)
-        if p is None or p.AsString() != column_id:
-            continue
-        if parts is None:
+        if p is not None and p.AsString() == column_id:
             old.append(rebar.Id)
-            continue
-        kind = LONGITUDINAL if _is_vertical(rebar) else EDGE
-        if (LONGITUDINAL if kind == LONGITUDINAL else STIRRUPS) in parts:
-            old.append(rebar.Id)
-        else:
-            kept.append((rebar, _diameter_key(rebar), kind))
     if old:
         doc.Delete(List[DB.ElementId](old))
-    return len(old) if parts is None else kept
-
-
-STIRRUPS = "stirrups"  # generate_column parts: stirrups and ties
-
-
-def _is_vertical(rebar):
-    """A longitudinal bar: its first bar runs up more than across."""
-    points = _centerline_points(rebar)
-    if not points:
-        return False
-    zs = [p.Z for p in points]
-    xs = [p.X for p in points]
-    ys = [p.Y for p in points]
-    return max(zs) - min(zs) > max(max(xs) - min(xs), max(ys) - min(ys))
-
-
-def _diameter_key(rebar):
-    """The nearest diameter key of a bar's type."""
-    bar_type = rebar.Document.GetElement(rebar.GetTypeId())
-    try:
-        mm = bar_type.BarNominalDiameter * FT * 1000.0
-    except Exception:
-        mm = bar_type.BarDiameter * FT * 1000.0
-    return min(spec.BAR_DIAMETERS_MM, key=lambda k: abs(spec.BAR_DIAMETERS_MM[k] - mm))
+    return len(old)
 
 
 def _tag(rebar, column):
@@ -1035,7 +1000,7 @@ def _bar_type(bar_types, key, mark):
     return bar_type
 
 
-def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=None, longitudinal=True, parts=None):
+def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=None, longitudinal=True):
     """Create the column's longitudinal bars, stirrups and ties from its
     drawing (inside an active Transaction; Revit needs a Regenerate before
     their lengths are known, see `record_weight`). Perimeter stirrups use
@@ -1043,21 +1008,15 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     ones; each takes the rebar shape it was drawn with (`shapes`, a
     RebarShapes) when it has one. `longitudinal`=False leaves the vertical
     bars out (a stack makes them continuous, see `generate_stack`).
-    `parts` (a set of LONGITUDINAL / STIRRUPS): only those are remade, the
-    column's other generated bars stay (listed back for their weight);
-    None: everything. Returns [(rebar, diameter_key, kind)]."""
+    Returns [(rebar, diameter_key, kind)]."""
     section = Section(column)
     design = column_spec.design
 
     def bar_type_for(key):
         return _bar_type(bar_types, key, mark)
 
-    if parts is None:
-        delete_generated(doc, column)
-        created = []
-    else:
-        created = delete_generated(doc, column, parts)
-        longitudinal = longitudinal and LONGITUDINAL in parts
+    delete_generated(doc, column)
+    created = []
 
     height_m = (section.z_top - section.z_bottom) * FT
     for x, y, key in (design["bars"] if longitudinal else []):
@@ -1070,8 +1029,6 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         )
         _tag(rebar, column)
         created.append((rebar, key, LONGITUDINAL))
-    if parts is not None and STIRRUPS not in parts:
-        return created
 
     z_clear_top = clear_top(doc, column, section)
     # Izaje: over a footing, from the column base up to izaje_h; the column's
@@ -1210,7 +1167,7 @@ def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10):
     return [columns_ for columns_, _ in stacks]
 
 
-def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None, splice=None, parts=None):
+def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None, splice=None):
     """Create the rebar of a stack of columns (`column_stacks`, bottom up):
     each column's stirrups and ties (`generate_column`), and longitudinal
     bars running the whole stack, cut into bars of at most splice["max"] m
@@ -1223,15 +1180,12 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     warnings): a longitudinal bar is listed in every column it runs
     through, with the share of its length there (see `record_weight`)."""
     if splice is None:
-        return dict((element_id_value(c.Id), generate_column(doc, c, column_spec, bar_types, hooks, mark, shapes,
-                                                             parts=parts))
+        return dict((element_id_value(c.Id), generate_column(doc, c, column_spec, bar_types, hooks, mark, shapes))
                     for c in stack), []
     created = {}
     for column in stack:
         created[element_id_value(column.Id)] = generate_column(
-            doc, column, column_spec, bar_types, hooks, mark, shapes, longitudinal=False, parts=parts)
-    if parts is not None and LONGITUDINAL not in parts:  # stirrups only: the bars stay
-        return created, []
+            doc, column, column_spec, bar_types, hooks, mark, shapes, longitudinal=False)
     sections = [Section(c) for c in stack]
     base = sections[0]
     z0_ft = base.z_bottom
