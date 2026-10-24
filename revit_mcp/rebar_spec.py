@@ -132,8 +132,9 @@ def bent_stirrup(vertices, radius, hook_leg, is_open=False, bend=None):
     """A stirrup in plan as it is bent: its centerline `radius` outside the
     drawn vertices (the wrapped bar centers), round over each bar, and - a
     closed one - the two 135-degree hooks at the first corner, each going
-    on round the bar 45 degrees past the corner and then straight into the
-    core `hook_leg`. `bend`: the bend radius of the centerline when larger
+    on round the bar so both legs leave it parallel (45 degrees past a
+    square corner, more past an open one) and then straight into the core
+    `hook_leg`. `bend`: the bend radius of the centerline when larger
     than `radius` (Revit bends a stirrup round a pin: about 2.5 db), the
     corner then rounding inside the bar. Returns [path, hook, hook]
     ([path] when open)."""
@@ -182,7 +183,10 @@ def bent_stirrup(vertices, radius, hook_leg, is_open=False, bend=None):
     a_in, a_out = angles[0]
     p = centers.get(0, pts[0])
     hooks = []
-    for start, end, sign in ((a_in, a_out + math.pi / 4, 1.0), (a_out, a_in - math.pi / 4, -1.0)):
+    # the two hooks leave the bar parallel, side by side, whatever the
+    # corner (45 degrees past a square one, more past an open one)
+    extra = max(0.0, (math.pi - (a_out - a_in)) / 2.0)
+    for start, end, sign in ((a_in, a_out + extra, 1.0), (a_out, a_in - extra, -1.0)):
         arc = _arc(p, bend, start, end)
         tx, ty = -math.sin(end) * sign, math.cos(end) * sign
         arc.append((arc[-1][0] + tx * hook_leg, arc[-1][1] + ty * hook_leg))
