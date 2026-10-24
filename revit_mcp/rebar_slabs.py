@@ -5,6 +5,8 @@ the bars that slab_rebar plans, as rebar sets hosted by the floor.
 
 Local frame: rebar_foundation.Foundation (the model's x / y from the
 center of the floor's box, z up from its bottom), meters."""
+import math
+
 from pyrevit import DB
 from System.Collections.Generic import List
 
@@ -253,8 +255,8 @@ def brick_types(doc, with_cuts=True):
     out = {}
     for sym in DB.FilteredElementCollector(doc).OfClass(DB.FamilySymbol):
         fam = sym.FamilyName.upper()
-        if not any(w in fam for w in BRICK_WORDS):
-            continue
+        if not any(w in fam for w in BRICK_WORDS) or u"BASADO EN CARA" in fam:
+            continue  # (the face-based copy is the plugin's own, for sloped slabs)
         if not with_cuts and CUT_MARK in (sym.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString() or u""):
             continue
         largo, ancho, altura = _double(sym, "largo"), _double(sym, "ancho"), _double(sym, "altura")
@@ -327,7 +329,96 @@ def piece_symbol(doc, types, name, largo, ancho):
     return new
 
 
-def place_bricks(model, ribbed_plan, types):
+def _brick_sizes(types, bricks, max_h=None):
+    """{(name, largo, ancho): (type name, largo, ancho, altura)} of the pieces,
+    named as the original family's types (a cut one: <type> CORTE L= A=)."""
+    out = {}
+    for b in bricks:
+        sym, l0, a0, h0 = types[b["type"]]
+        largo, ancho = b.get("largo") or l0, b.get("ancho") or a0
+        base = b["type"].split(u" : ", 1)[1].split(CUT_MARK)[0]
+        name = base if (abs(largo - l0) < 1e-3 and abs(ancho - a0) < 1e-3) else \
+            u"{}{}L={:.3f} A={:.3f}".format(base, CUT_MARK, largo, ancho)
+        h = h0
+        if max_h is not None and max_h < h0 - 1e-3:  # a sloped slab is thinner across its face
+            h = max(0.05, math.floor(max_h / 0.005) * 0.005)
+            name += u" H={:.3f}".format(h)
+        out[(b["type"], round(largo, 3), round(ancho, 3))] = (name, largo, ancho, h)
+    return out
+
+
+def place_bricks_on_slope(model, ribbed_plan, types, folder):
+    """The bricks of a sloped slab: the face-based copy of the family
+    (brick_family), each placed on the slab's top face so it takes its
+    slope, flipped into the slab. Returns the number placed."""
+    import brick_family as bf
+    doc = model.element.Document
+    # the room under the 5 cm on top, across the face (the type's thickness is vertical)
+    tops = [model.element.GetGeometryObjectFromReference(r) for r in DB.HostObjectUtils.GetTopFaces(model.element)]
+    nz = min([abs(f.FaceNormal.Z) for f in tops if isinstance(f, DB.PlanarFace)] or [1.0])
+    room = model.thickness * nz - 0.05
+    sizes = _brick_sizes(types, ribbed_plan["bricks"], room)
+    symbols = bf.ensure_loaded(doc, sorted(set(sizes.values())), folder)
+    if not symbols:
+        return 0
+    faces = []
+    for r in DB.HostObjectUtils.GetTopFaces(model.element):
+        f = model.element.GetGeometryObjectFromReference(r)
+        if isinstance(f, DB.PlanarFace):
+            faces.append((r, f))
+    axis = ribbed_plan["axis"]
+    along = model.direction(axis)
+    tag = BRICK_TAG + str(model.element.Id.IntegerValue)
+    placed = 0
+    for b in ribbed_plan["bricks"]:
+        name, largo, ancho, altura = sizes[(b["type"], round(b.get("largo") or types[b["type"]][1], 3),
+                                            round(b.get("ancho") or types[b["type"]][2], 3))]
+        sym = symbols.get(name)
+        if sym is None:
+            continue
+        if not sym.IsActive:
+            sym.Activate()
+        tc = (b["t0"] + b["t1"]) / 2.0
+        # flipped into the slab, the family's length runs forward: from the start
+        xe, ye = model.point_xy(axis, b["s0"], tc)
+        w = model.f.world(xe, ye, 0.0)
+        best = None
+        for r, f in faces:  # the face over the point (the nearest plane in plan)
+            n, o = f.FaceNormal, f.Origin
+            if abs(n.Z) < 0.2:
+                continue
+            z = o.Z - (n.X * (w.X - o.X) + n.Y * (w.Y - o.Y)) / n.Z
+            pt = DB.XYZ(w.X, w.Y, z)
+            res = f.Project(pt)
+            d = res.Distance if res is not None else 1e9
+            if best is None or d < best[0]:
+                best = (d, r, f, pt)
+        if best is None:
+            continue
+        _, r, f, pt = best
+        n = f.FaceNormal
+        on_face = (along - n * along.DotProduct(n)).Normalize()
+        ref_dir = on_face.CrossProduct(n).Normalize()  # family x: across; its length runs back along -y = -on_face
+        inst = doc.Create.NewFamilyInstance(r, pt, ref_dir, sym)
+        if inst.CanFlipWorkPlane:
+            inst.IsWorkPlaneFlipped = True  # into the slab
+        c = inst.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+        if c is not None and not c.IsReadOnly:
+            c.Set(tag)
+        placed += 1
+    return placed
+
+
+def place_bricks(model, ribbed_plan, types, folder=None, tilt=None):
+    """Bricks of the plan: on a sloped slab (tilt None: when it is sloped)
+    the face-based copy that takes the slope, else the project's family."""
+    if (model.sloped if tilt is None else tilt):
+        import tempfile
+        return place_bricks_on_slope(model, ribbed_plan, types, folder or tempfile.gettempdir())
+    return place_bricks_level(model, ribbed_plan, types)
+
+
+def place_bricks_level(model, ribbed_plan, types):
     """Place the bricks of the plan, hosted by the floor, hanging from its top
     face (the family's own drop): the brick's width across the viguetas,
     its length along them; a piece cut to fit takes a type of its own size.
