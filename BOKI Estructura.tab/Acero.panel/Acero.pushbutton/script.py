@@ -1842,6 +1842,23 @@ class AceroWindow(forms.WPFWindow):
             # stacked like they are generated (see rc.generate_column)
             lifts = rs.stack_lifts([(kind, rs.BAR_DIAMETERS_MM[families[kind]["key"]] / 1000.0, is_open is None)
                                     for kind, _, _, is_open in drawn])
+            circ = self.design.get("circ")
+            if circ and getattr(section, "is_circle", False) and edge is not None:
+                # circular column (rc._circular_steel): hoops at the edge
+                # distribution and joint, or the spiral drawn turn by turn
+                try:
+                    cover = float(f["cover"].replace(u",", u".")) / 100.0
+                except ValueError:
+                    cover = 0.04
+                ds = rs.BAR_DIAMETERS_MM[edge["key"]] / 1000.0
+                radius = section.radius_m - cover - ds / 2.0
+                ring = [(x + dx, y + dy) for x, y in rs.circle_points(radius, 36)]
+                if circ.get("t") == rs.CIRC_SPIRAL:
+                    pts = rs.spiral_path(radius, cover, height - cover, circ.get("p") or rs.SPIRAL_PITCH_M, ds)
+                    zs = [dz + z for _, _, z in pts[::24]]
+                else:
+                    zs = [dz + z for z, _ in edge["tagged"]] + [dz + clear + j for j in joint]
+                loops.append((rs.KIND_EDGE, ring, True, zs, ds / 2.0))
             for (kind, poly, wrap, is_open), lift in zip(drawn, lifts):
                 family = families[kind]
                 try:
