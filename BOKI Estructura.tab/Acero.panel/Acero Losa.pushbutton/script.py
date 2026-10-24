@@ -25,6 +25,8 @@ import rebar_columns as rc
 import rebar_foundation as rf
 import slab_rebar as sr
 import rebar_slabs as rsl
+import roof_rebar as rr
+import roof_model as rm
 import rebar_views as rv
 import utils as fw_utils
 
@@ -35,6 +37,8 @@ reload(rc)
 reload(rf)
 reload(sr)
 reload(rsl)
+reload(rr)
+reload(rm)
 reload(rv)
 
 from pyrevit import revit, DB, forms, script
@@ -59,6 +63,8 @@ KINDS = [(sr.MACIZA, u"Maciza"), (sr.ALIGERADA, u"Aligerada")]
 DIRS = [(None, u"Autom\u00e1tico (luz corta)"), (sr.X, u"X"), (sr.Y, u"Y")]
 ENS = [(sr.ENS_NONE, u"Ninguno"), (sr.ENS_FULL, u"Corrido"), (sr.ENS_ALT, u"Alternado")]
 BRICK = (196, 120, 80)
+ROOF_MODES = [(rr.DOBLEZ, u"Doblez (pasa a la otra losa)"), (rr.CONTINUO, u"Continuo (alero a alero)"),
+              (rr.ANCLADO, u"Anclado (gancho en la cumbrera)")]
 MODES = [(sr.TOP_BASTONES, u"Bastones en apoyos"), (sr.TOP_MESH, u"Malla corrida"), (sr.TOP_NONE, u"Sin acero superior")]
 ANCHORS = [(sr.ANCHOR_HOOK, u"Gancho 90"), (sr.ANCHOR_STRAIGHT, u"Recto")]
 CUT_NAMES = {sr.X: u"1-1", sr.Y: u"2-2"}
@@ -128,6 +134,11 @@ class LosaWindow(forms.WPFWindow):
         self.cbo_mode.ItemsSource = [n for _, n in MODES]
         self.cbo_anchor.ItemsSource = [n for _, n in ANCHORS]
         self.cbo_kind.ItemsSource = [n for _, n in KINDS]
+        self.cbo_roof_inf.ItemsSource = [n for _, n in ROOF_MODES]
+        self.cbo_roof_sup.ItemsSource = [n for _, n in ROOF_MODES]
+        self._partners = {}
+        self._roofs = {}
+        self._roof_plan = None
         self.cbo_dir.ItemsSource = [n for _, n in DIRS]
         self.cbo_ens.ItemsSource = [n for _, n in ENS]
         for name in ("vi", "vs", "t"):
@@ -185,6 +196,14 @@ class LosaWindow(forms.WPFWindow):
                 st["alig"] = {"brick": rsl.default_brick(self.bricks, self.model.thickness), "place": True}
             self.state.settings[item.Tag] = st
         st = self._settings()
+        if item.Tag not in self._partners:
+            other = None
+            if self.model.sloped:
+                try:
+                    other = rm.partner(self.model.element)
+                except Exception:
+                    other = None
+            self._partners[item.Tag] = id_of(other.Id) if other is not None else None
         if not st.get("cuts"):
             st["cuts"] = sr.default_cuts(self.model.frame_slab())
         for nav in self.navs.values():
@@ -229,13 +248,40 @@ class LosaWindow(forms.WPFWindow):
         self.chk_temp.IsChecked = bool(rb_["temp"].get("on", True))
         self.cbo_t_d.SelectedItem = rb_["temp"]["d"]
         self.txt_t_s.Text = u"{:g}".format(float(rb_["temp"]["s"]))
+        roof = rr.read_roof(st.get("roof"))
+        self.chk_roof.IsChecked = bool(st.get("roof_on", True))
+        self.cbo_roof_inf.SelectedItem = dict(ROOF_MODES).get(roof["inf"]["mode"])
+        self.cbo_roof_sup.SelectedItem = dict(ROOF_MODES).get(roof["sup"]["mode"])
         self._show_kind(kind)
         self._filling = False
+
+    def _partner(self):
+        return self._partners.get(self.state.active)
+
+    def _roof_on(self):
+        st = self._settings()
+        return bool(st and st.get("kind") == sr.ALIGERADA and self._partner() and st.get("roof_on", True))
+
+    def _roof(self):
+        """The two-way roof of the active slab and its partner (cached)."""
+        a, b = self.state.active, self._partner()
+        key = tuple(sorted((a, b)))
+        if key not in self._roofs:
+            for i in (a, b):
+                if i not in self._models:
+                    self._models[i] = rsl.SlabModel(doc.GetElement(DB.ElementId(i)))
+            self._roofs[key] = rm.RoofModel(self._models[a].element, self._models[b].element,
+                                            {a: self._models[a], b: self._models[b]})
+        return self._roofs[key]
 
     def _show_kind(self, kind):
         from System.Windows import Visibility
         self.panel_maciza.Visibility = Visibility.Visible if kind == sr.MACIZA else Visibility.Collapsed
         self.panel_alig.Visibility = Visibility.Visible if kind == sr.ALIGERADA else Visibility.Collapsed
+        partner = self._partner() if hasattr(self, "_partners") else None
+        self.panel_roof.Visibility = Visibility.Visible if (kind == sr.ALIGERADA and partner) else Visibility.Collapsed
+        if partner:
+            self.txt_roof.Text = u"Techo a dos aguas con la losa {} (cumbrera entre las dos).".format(partner)
 
     @staticmethod
     def _num(text, default):
@@ -281,6 +327,14 @@ class LosaWindow(forms.WPFWindow):
                     "frac": 1.0 / max(1.5, self._num(self.txt_vint.Text, 3.0))}
         a["temp"] = {"on": bool(self.chk_temp.IsChecked), "d": self.cbo_t_d.SelectedItem or u'1/4"',
                      "s": max(0.05, self._num(self.txt_t_s.Text, 0.25))}
+        st["roof_on"] = bool(self.chk_roof.IsChecked)
+        roof = st.setdefault("roof", {})
+        for combo, group in ((self.cbo_roof_inf, "inf"), (self.cbo_roof_sup, "sup")):
+            mode = [k for k, n in ROOF_MODES if n == combo.SelectedItem]
+            if mode:
+                roof.setdefault(group, {})["mode"] = mode[0]
+        roof.setdefault("inf", {})["d"] = a["inf"]["d"]
+        roof.setdefault("sup", {})["d"] = a["sup"]["d"]
         self._show_kind(st["kind"])
         self.redraw()
 
@@ -292,6 +346,12 @@ class LosaWindow(forms.WPFWindow):
             st = self._settings()
             lib = rsl.brick_library(doc, st, self.bricks)
             self._plan, self._rib, self._warnings = self.model.plan(st, MM, self.splice, lib)
+            self._roof_plan = None
+            if self._roof_on():
+                self._roof_plan = self._roof().plan(st, MM)
+                if self._rib is not None:  # the vigueta bars cross the ridge: drawn from the roof
+                    ax_ = self._rib["axis"]
+                    self._plan = dict((k, v) for k, v in self._plan.items() if k not in ((sr.INF, ax_), (sr.SUP, ax_)))
             sets = sum(len(sr.bar_sets(v or [])) for v in self._plan.values())
             extra = u""
             if self._rib is not None:
@@ -423,6 +483,9 @@ class LosaWindow(forms.WPFWindow):
     def _draw_cut(self, axis):
         canvas = self.canvas_cut_x if axis == sr.X else self.canvas_cut_y
         canvas.Children.Clear()
+        if axis == sr.X and getattr(self, "_roof_plan", None):
+            self._draw_roof_cut(canvas)
+            return
         m = self.model
         if m is None or canvas.ActualWidth < 10 or not self._plan:
             return
@@ -528,6 +591,77 @@ class LosaWindow(forms.WPFWindow):
             if abs(z1 - z0) < 1e-6 and (best is None or abs(s1 - s0) > best[0]):
                 best = (abs(s1 - s0), z0)
         return best[1] if best else bar["path"][0][1]
+
+    def _draw_roof_cut(self, canvas):
+        """The vigueta across the ridge, in its real profile: both slabs, the
+        beams, the bars with their bends and every editable length."""
+        plan = self._roof_plan
+        if canvas.ActualWidth < 10 or not plan:
+            return
+        ts = sorted(plan)
+        t = ts[len(ts) // 2]
+        prof, bars = plan[t]
+        self.txt_cut_x.Text = u"CORTE DE LA VIGUETA - techo a dos aguas (perfil real)"
+        zs = [z for _, z in prof.top]
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, prof.s0 - 0.6, min(zs) - 0.9,
+                              prof.s1 + 0.6, max(zs) + 0.8)
+        self._fitted[sr.X] = fitted
+        frame = self.navs[sr.X].resolve(fitted)
+        self._frames[sr.X] = frame
+        depth = max(prof.t[rr.A], prof.t[rr.B])
+        bottom = rr.bar_path(prof, prof.s0, prof.s1, depth)
+        band = list(prof.top) + list(reversed(bottom))
+        rv._polygon(canvas, frame, band, brush((238, 240, 243)), brush((60, 60, 60)))
+        for a, b in prof.supports:
+            zt = prof.top_z((a + b) / 2.0)
+            rv._rect(canvas, frame, a, zt - 0.45, b, zt, brush((200, 205, 214), 220), brush((120, 125, 140)))
+        cols = {u"inf": brush(COLORS[(sr.INF, sr.X)]), u"sup": brush(COLORS[(sr.SUP, sr.X)])}
+        for bar in bars:
+            pts = bar["path"]
+            for q0, q1 in zip(pts, pts[1:]):
+                rv._line(canvas, frame, q0, q1, cols[bar["face"]], 2.5)
+            # the bends over the ridge: clic = the mode
+            for k in range(1, len(pts) - 1):
+                a_, b_, c_ = pts[k - 1], pts[k], pts[k + 1]
+                if abs(a_[0] - b_[0]) > 1e-6 and abs(c_[0] - b_[0]) > 1e-6:
+                    self._roof_marker(canvas, frame, b_, u"roofmode|" + bar["face"])
+        for bar in bars:
+            for c in bar["cotas"]:
+                s_mid = (c["s0"] + c["s1"]) / 2.0
+                if c.get("hook"):
+                    z = prof.top_z(s_mid) - depth - 0.25 if bar["face"] == u"inf" else prof.top_z(s_mid) + 0.18
+                    label = u"Gancho {:.2f}".format(c["value"])
+                else:
+                    row = c.get("row", 0)
+                    if bar["face"] == u"sup":
+                        z = prof.top_z(s_mid) + 0.2 + 0.3 * row
+                    else:
+                        z = prof.top_z(s_mid) - depth - 0.22 - 0.3 * row
+                    a_ = (c["s0"], prof.top_z(c["s0"]) + (z - prof.top_z(s_mid)))
+                    b_ = (c["s1"], prof.top_z(c["s1"]) + (z - prof.top_z(s_mid)))
+                    rv._line(canvas, frame, a_, b_, brush((150, 150, 30)), 1)
+                    label = u"{:.2f}".format(c["value"])
+                # the label at the cota's outer end: the two sides of the ridge apart
+                x_lab = (min(c["s0"], c["s1"]) - 0.45) if c.get("side") == rr.A else (max(c["s0"], c["s1"]) + 0.05)
+                rv._edit_text(canvas, frame, x_lab, z + 0.05, label, c["tag"])
+        rv._text(canvas, frame, prof.s0, max(zs) + 0.6, u"Verde: inferior. Rojo: bastones. Medidas sobre la pendiente.",
+                 brush=brush((90, 90, 90)), size=10, anchor="left")
+
+    @staticmethod
+    def _roof_marker(canvas, frame, p, tag):
+        from System.Windows.Input import Cursors
+        e = Ellipse()
+        e.Width = e.Height = 14
+        e.Fill = brush((255, 255, 255))
+        e.Stroke = brush((240, 140, 20))
+        e.StrokeThickness = 3
+        e.Tag = tag
+        e.Cursor = Cursors.Hand
+        e.ToolTip = u"Clic: cómo pasa la cumbrera (doblez, continuo o anclado)"
+        px, py = rv._px(frame, p[0], p[1])
+        Canvas.SetLeft(e, px - 7)
+        Canvas.SetTop(e, py - 7)
+        canvas.Children.Add(e)
 
     def _bast_cotas(self, canvas, frame, line, bar, y, u):
         """A baston's dimensions, from the support faces out to its ends."""
@@ -687,6 +821,30 @@ class LosaWindow(forms.WPFWindow):
 
     def cut_left(self, sender, args):
         tag = getattr(args.OriginalSource, "Tag", None)
+        if isinstance(tag, basestring) and tag.startswith(u"roofmode|"):
+            group = tag.split(u"|")[1]
+            choice = forms.SelectFromList.show([n for _, n in ROOF_MODES], button_name=u"Elegir", multiselect=False,
+                                               title=u"{} en la cumbrera".format(u"Inferior" if group == u"inf" else u"Bastón de cumbrera"))
+            if choice:
+                self._settings().setdefault("roof", {}).setdefault(group, {})["mode"] = [k for k, n in ROOF_MODES if n == choice][0]
+                self._fill_form()
+                self.redraw()
+            args.Handled = True
+            return
+        if isinstance(tag, basestring) and tag.startswith(u"roof|"):
+            names = {u"dA": u"longitud de doblez dentro de la losa A", u"dB": u"longitud de doblez dentro de la losa B",
+                     u"a": u"largo hacia la losa A (desde la cumbrera)", u"b": u"largo hacia la losa B (desde la cumbrera)",
+                     u"A": u"bastón del alero A (desde la cara de la viga)", u"B": u"bastón del alero B (desde la cara de la viga)",
+                     u"hA": u"gancho en la cumbrera (lado A)", u"hB": u"gancho en la cumbrera (lado B)"}
+            field = tag.split(u"|")[2]
+            value = forms.ask_for_string(default=u"", title=u"Acero Losa - techo",
+                                         prompt=u"{} (m, sobre la pendiente; vacío = automático):".format(names.get(field, field)))
+            if value is None:
+                return
+            rr.set_value(self._settings(), tag, max(0.0, self._num(value, 0.0)) if value.strip() else None)
+            args.Handled = True
+            self.redraw()
+            return
         if not (isinstance(tag, basestring) and tag.startswith(u"bast|")):
             return
         _, key, side, left, right = tag.split(u"|")
@@ -748,15 +906,43 @@ def generate_all(state, models, splice):
     try:
         rc.ensure_parameters(doc)
         fw_params.ensure_parameters(doc, "Acero", [(rsl.PARAM, True, [FLOORS_BIC], True)])
-        for element_id in state.picked_ids:
+        # a roof's partner slab goes too, with the same steel
+        ids = list(state.picked_ids)
+        partners = getattr(state, "partners", {}) or {}
+        for i in list(ids):
+            st_i = state.settings.get(i) or {}
+            j = partners.get(i)
+            if j and st_i.get("kind") == sr.ALIGERADA and st_i.get("roof_on", True) and j not in ids:
+                ids.append(j)
+                st_j = dict(st_i)
+                st_j["cuts"] = {}
+                state.settings[j] = st_j
+        roofs_done = set()
+        for element_id in ids:
             floor = doc.GetElement(DB.ElementId(element_id))
             settings = state.settings.get(element_id) or rsl.read_settings(floor)
+            j = partners.get(element_id)
+            roof_on = bool(j and settings.get("kind") == sr.ALIGERADA and settings.get("roof_on", True))
+            if roof_on and j in state.settings:  # both keep the same roof steel
+                state.settings[j]["roof"] = settings.get("roof") or {}
             rsl.write_settings(floor, settings)
             try:
                 model = models.get(element_id) or rsl.SlabModel(floor)
                 rc.delete_generated(doc, floor)
+                skip = None
+                if roof_on:
+                    ax_ = sr.X
+                    skip = set([(sr.INF, ax_), (sr.SUP, ax_)])
                 made, found = rsl.generate(model, settings, MM, lambda key: bar_types.pick(key, u"LOSA"), splice,
-                                           tag=lambda r: rc._tag(r, floor))
+                                           tag=lambda r: rc._tag(r, floor), skip=skip)
+                if roof_on and tuple(sorted((element_id, j))) not in roofs_done:
+                    roofs_done.add(tuple(sorted((element_id, j))))
+                    other = doc.GetElement(DB.ElementId(j))
+                    rc.delete_generated(doc, other)
+                    roof = rm.RoofModel(floor, other, {element_id: model, j: models.get(j) or rsl.SlabModel(other)})
+                    roof_bars = roof.generate(settings, MM, lambda key: bar_types.pick(key, u"LOSA"),
+                                              tag=lambda r, host: rc._tag(r, host))
+                    count += sum(r.Quantity for r in roof_bars)
                 count += sum(r.Quantity for r, _, _ in made)
                 warnings += found
                 if settings.get("kind") == sr.ALIGERADA:
@@ -805,6 +991,7 @@ if __name__ == "__main__":
             continue
         break
     if window.action == "run":
+        state.partners = dict(getattr(window, "_partners", {}))
         count, failed, warnings, bricks = generate_all(state, models, window.splice)
         msg = u"Acero de losa: {} barra(s) creada(s).".format(count)
         if bricks:

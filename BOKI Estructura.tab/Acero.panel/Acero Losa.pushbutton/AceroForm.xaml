@@ -115,6 +115,23 @@
                                 <TextBox x:Name="txt_ens" Width="36" Margin="4,0,0,0" TextChanged="form_changed"/>
                                 <TextBlock Text=" m" VerticalAlignment="Center"/>
                             </StackPanel>
+                            <Border x:Name="panel_roof" Visibility="Collapsed" Background="#FFFFF4D6" BorderBrush="#FFE0B050"
+                                    BorderThickness="1" Padding="6,4" Margin="0,8,0,2">
+                                <StackPanel>
+                                    <TextBlock x:Name="txt_roof" FontWeight="Bold" TextWrapping="Wrap"/>
+                                    <CheckBox x:Name="chk_roof" Content="Tratar como un solo techo (acero por la cumbrera)" Margin="0,3,0,3" Click="form_changed"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,1,0,1">
+                                        <TextBlock Text="Inferior en la cumbrera: " VerticalAlignment="Center" Width="150"/>
+                                        <ComboBox x:Name="cbo_roof_inf" Width="150" SelectionChanged="form_changed"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Margin="0,1,0,1">
+                                        <TextBlock Text="Bast&#243;n de cumbrera: " VerticalAlignment="Center" Width="150"/>
+                                        <ComboBox x:Name="cbo_roof_sup" Width="150" SelectionChanged="form_changed"/>
+                                    </StackPanel>
+                                    <TextBlock Foreground="Gray" FontSize="10" TextWrapping="Wrap" Margin="0,3,0,0"
+                                               Text="En el corte de la vigueta: clic en un doblez (c&#237;rculo naranja) para el modo; clic en una cota amarilla para su largo sobre la pendiente (vac&#237;o = autom&#225;tico)."/>
+                                </StackPanel>
+                            </Border>
                             <TextBlock Text="Acero por vigueta" FontWeight="Bold" Margin="0,8,0,2"/>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Inferior 1 &#216; " VerticalAlignment="Center" Foreground="#FF1D9E75" FontWeight="Bold"/>

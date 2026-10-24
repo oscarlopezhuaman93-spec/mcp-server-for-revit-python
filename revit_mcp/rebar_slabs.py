@@ -105,6 +105,11 @@ class SlabModel(object):
             # the bricks' direction turned by an angle (by default along the
             # slab's longest side, its beams): planned in that frame
             angle = sr.ribbed(settings).get("angle")
+            if angle is None and self.sloped:
+                # a sloped slab: the viguetas run down its slope
+                settings = dict(settings)
+                settings["alig"] = dict(settings.get("alig") or {}, dir=sr.X)
+                angle = self.climb_angle()
             self.angle = float(sr.dominant_angle(self.slab_tris) if angle is None else angle)
             plan, warnings = sr.plan_ribbed(sr.rotate_tris(self.slab_tris, self.angle),
                                             sr.rotate_tris(self.support_tris, self.angle),
@@ -119,6 +124,13 @@ class SlabModel(object):
         x, y = (s, pos) if axis == sr.X else (pos, s)
         x, y = sr.unrotate(x, y, self.angle)
         return self.f.world(x, y, self.local_z(x, y, z))
+
+    def climb_angle(self):
+        """Direction (deg, model axes) the slab climbs: its largest top face's."""
+        tops = [f for f in self.f.faces if f.normal[2] > 0.3]
+        f = max(tops, key=lambda q: q.area)
+        import math as _m
+        return _m.degrees(_m.atan2(-f.normal[1], -f.normal[0])) % 360.0
 
     def top_z(self, x, y):
         """Height (local) of the slab's top over (x, y): on its top
@@ -175,7 +187,7 @@ def write_settings(floor, settings):
         p.Set(sr.write(settings))
 
 
-def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
+def generate(model, settings, mm, bar_type_for, splice=None, tag=None, skip=None):
     """Create the slab's bars (inside an open Transaction), one rebar set per
     group of equal bars side by side. bar_type_for(key) -> RebarBarType.
     Returns ([(rebar, face, axis)], warnings)."""
@@ -184,6 +196,8 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
     lines, _, warnings = model.plan(settings, mm, splice, brick_library(doc, settings))
     made = []
     for (face, axis), layer in sorted(lines.items()):
+        if skip and (face, axis) in skip:
+            continue  # (a roof's vigueta bars: made by roof_model across the ridge)
         normal = model.direction(sr.Y if axis == sr.X else sr.X)  # bars laid across
         if model.sloped:  # each bar on its own: it follows the slope (bends at a ridge)
             sets = [(bar["path"], bar["key"], line["pos"], 1, 0.0) for line in layer or [] for bar in line["bars"]]
