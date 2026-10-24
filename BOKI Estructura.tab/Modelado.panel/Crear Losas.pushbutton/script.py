@@ -20,12 +20,14 @@ if REVIT_MCP_DIR not in sys.path:
 import rebar_views as rv
 import slab_create as sc
 import slab_regions as sg
+import slab_fix as sf
 import utils as fw_utils
 
 reload(fw_utils)
 reload(rv)
 reload(sc)
 reload(sg)
+reload(sf)
 
 from pyrevit import revit, DB, forms
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -474,7 +476,7 @@ def create_all(state, types):
         doc.Regenerate()
         if state.join:
             for f in made:
-                joined += sg.join_supports(doc, f)
+                joined += sf.join_beams_cutting(doc, f)  # the beams cut it: it stops at their faces
         t.Commit()
     except Exception:
         t.RollBack()

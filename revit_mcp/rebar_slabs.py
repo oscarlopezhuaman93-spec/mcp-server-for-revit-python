@@ -39,11 +39,12 @@ class SlabModel(object):
         self.slab_tris = _flat(self.top3d)
         self.sloped = any(face.normal[2] < 0.999 for face in tops)
         self.thickness = z1 - z0
-        if self.sloped:  # its own thickness, not the box's height
-            t = floor.Document.GetElement(floor.GetTypeId())
-            p = t.get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_DEFAULT_THICKNESS_PARAM) if t else None
-            if p is not None and p.AsDouble() > 0:
-                self.thickness = p.AsDouble() * FT
+        self.thickness_across = self.thickness
+        if self.sloped:  # its real thickness, measured on its faces: vertical / across the face
+            import slab_fix
+            across, vertical = slab_fix.thickness_across(floor)
+            if across:
+                self.thickness, self.thickness_across = vertical, across
         self.supports = self._supports()
         self.support_tris = [t for s in self.supports for t in s["tris"]]
         self.angle = 0.0  # degrees: the frame of the last plan (a ribbed slab turned)
@@ -354,9 +355,7 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
     import brick_family as bf
     doc = model.element.Document
     # the room under the 5 cm on top, across the face (the type's thickness is vertical)
-    tops = [model.element.GetGeometryObjectFromReference(r) for r in DB.HostObjectUtils.GetTopFaces(model.element)]
-    nz = min([abs(f.FaceNormal.Z) for f in tops if isinstance(f, DB.PlanarFace)] or [1.0])
-    room = model.thickness * nz - 0.05
+    room = model.thickness_across - 0.05  # what fits under the 5 cm on top, across the face
     sizes = _brick_sizes(types, ribbed_plan["bricks"], room)
     symbols = bf.ensure_loaded(doc, sorted(set(sizes.values())), folder)
     if not symbols:
