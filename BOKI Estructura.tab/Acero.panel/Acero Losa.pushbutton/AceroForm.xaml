@@ -23,6 +23,8 @@
             <StackPanel>
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,6" Text="1. Selecciona las losas (macizas o aligeradas)."/>
                 <Button Content="SELECCIONAR LOSAS" Height="34" FontWeight="Bold" Click="pick_click"/>
+                <Button Content="CREAR LOSAS NUEVAS (planas o inclinadas)" Height="30" Margin="0,4,0,0" Click="create_slabs_click"
+                        ToolTip="Abre Crear Losas: paños entre vigas y muros, rect&#225;ngulo o contorno; plana, una, dos o cuatro aguas, con el tipo de losa del proyecto. Al terminar vuelve aqu&#237; con las losas nuevas."/>
                 <TextBlock x:Name="txt_picked" Foreground="Gray" HorizontalAlignment="Center" Margin="0,4,0,6" Text="No hay losas seleccionadas."/>
                 <ListBox x:Name="list_elements" MaxHeight="110" SelectionChanged="element_selected"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>

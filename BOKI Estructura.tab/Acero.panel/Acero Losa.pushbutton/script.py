@@ -712,6 +712,10 @@ class LosaWindow(forms.WPFWindow):
         self.action = "pick"
         self.Close()
 
+    def create_slabs_click(self, sender, args):
+        self.action = "create_slabs"
+        self.Close()
+
     def run_click(self, sender, args):
         if not self.state.picked_ids:
             forms.alert(u"Selecciona primero las losas.", title=u"Acero Losa")
@@ -786,6 +790,18 @@ if __name__ == "__main__":
         window.ShowDialog()
         if window.action == "pick":
             pick(state)
+            continue
+        if window.action == "create_slabs":
+            # the Crear Losas button's own script, then back here with what it made
+            crear = os.path.join(EXT_ROOT, u"BOKI Estructura.tab", u"Modelado.panel", u"Crear Losas.pushbutton", u"script.py")
+            import io
+            code = io.open(crear, encoding="utf-8").read()
+            exec(compile(code, crear, "exec"), {"__name__": "__main__", "__file__": crear})
+            new = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
+            new = [id_of(e.Id) for e in new if e is not None and isinstance(e, DB.Floor)]
+            if new:
+                state.picked_ids = new
+                state.active = new[0]
             continue
         break
     if window.action == "run":
