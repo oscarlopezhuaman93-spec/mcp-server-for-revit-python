@@ -22,6 +22,7 @@ if REVIT_MCP_DIR not in sys.path:
     sys.path.append(REVIT_MCP_DIR)
 
 import formwork_spatial as fw_spatial
+import selection_hosts
 import formwork_params as fw_params
 import rebar_spec as rs
 import beam_extras as bx
@@ -2913,7 +2914,7 @@ if not types:
     script.exit()
 
 state = State()
-preselected = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
+preselected = selection_hosts.expand(doc, revit.uidoc.Selection.GetElementIds())  # a bar / brick: its element
 preselected = [e for e in preselected if e is not None and _BeamFilter().AllowElement(e)]
 if preselected:
     state.picked_ids = [id_of(b.Id) for b in preselected]

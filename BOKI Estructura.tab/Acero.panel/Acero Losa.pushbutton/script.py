@@ -19,6 +19,7 @@ REVIT_MCP_DIR = os.path.join(EXT_ROOT, "revit_mcp")
 if REVIT_MCP_DIR not in sys.path:
     sys.path.append(REVIT_MCP_DIR)
 
+import selection_hosts
 import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
@@ -196,6 +197,18 @@ class LosaWindow(forms.WPFWindow):
                 st["alig"] = {"brick": rsl.default_brick(self.bricks, self.model.thickness), "place": True}
             self.state.settings[item.Tag] = st
         st = self._settings()
+        existing = self.__dict__.setdefault("_existing", {})
+        if item.Tag not in existing:  # what it already has (generated before)
+            floor = self.model.element
+            bars = 0
+            data = DB.Structure.RebarHostData.GetRebarHostData(floor)
+            if data is not None:
+                bars = sum(r.Quantity for r in data.GetRebarsInHost())
+            tag = rsl.BRICK_TAG + str(item.Tag)
+            bricks = len([e for e in DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_GenericModel)
+                          .WhereElementIsNotElementType()
+                          if (e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS).AsString() or u"") == tag])
+            existing[item.Tag] = (bars, bricks)
         if item.Tag not in self._partners:
             other = None
             if self.model.sloped:
@@ -361,7 +374,10 @@ class LosaWindow(forms.WPFWindow):
                 extra = u" Aligerado en {}: {} vigueta(s), {} ladrillo(s){}.".format(
                     self._rib["axis"].upper(), len(self._rib["viguetas"]), len(self._rib["bricks"]),
                     u"" if lib else u" (elige el tipo de ladrillo)")
-            self.txt_status.Text = u"{} apoyo(s) le\u00eddo(s); {} conjunto(s) de barras.{}{}".format(
+            had = self.__dict__.get("_existing", {}).get(self.state.active, (0, 0))
+            now = u"YA GENERADO: {} barra(s), {} ladrillo(s) - su configuraci\u00f3n guardada est\u00e1 cargada.  ".format(*had) \
+                if (had[0] or had[1]) else u""
+            self.txt_status.Text = now + u"{} apoyo(s) le\u00eddo(s); {} conjunto(s) de barras.{}{}".format(
                 len(self.model.supports), sets, extra,
                 (u"  Aviso: " + u"; ".join(self._warnings)) if self._warnings else u"")
         except Exception as e:
@@ -873,10 +889,6 @@ class LosaWindow(forms.WPFWindow):
         self.action = "pick"
         self.Close()
 
-    def create_slabs_click(self, sender, args):
-        self.action = "create_slabs"
-        self.Close()
-
     def bricks_only_click(self, sender, args):
         if not self.state.picked_ids:
             forms.alert(u"Selecciona primero las losas.", title=u"Acero Losa")
@@ -1037,7 +1049,7 @@ def place_bricks_only(state, models):
 # --- main -------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
-    pre = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
+    pre = selection_hosts.expand(doc, revit.uidoc.Selection.GetElementIds())  # a bar / brick: its element
     state.picked_ids = [id_of(e.Id) for e in pre if e is not None and isinstance(e, DB.Floor)]
     xaml = os.path.join(SCRIPT_DIR, "AceroForm.xaml")
     models = {}
@@ -1046,18 +1058,6 @@ if __name__ == "__main__":
         window.ShowDialog()
         if window.action == "pick":
             pick(state)
-            continue
-        if window.action == "create_slabs":
-            # the Crear Losas button's own script, then back here with what it made
-            crear = os.path.join(EXT_ROOT, u"BOKI Estructura.tab", u"Modelado.panel", u"Losa.pulldown", u"Crear Losas.pushbutton", u"script.py")
-            import io
-            code = io.open(crear, encoding="utf-8").read()
-            exec(compile(code, crear, "exec"), {"__name__": "__main__", "__file__": crear})
-            new = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
-            new = [id_of(e.Id) for e in new if e is not None and isinstance(e, DB.Floor)]
-            if new:
-                state.picked_ids = new
-                state.active = new[0]
             continue
         break
     if window.action == "bricks":

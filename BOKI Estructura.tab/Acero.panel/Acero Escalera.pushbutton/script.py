@@ -18,6 +18,7 @@ REVIT_MCP_DIR = os.path.join(EXT_ROOT, "revit_mcp")
 if REVIT_MCP_DIR not in sys.path:
     sys.path.append(REVIT_MCP_DIR)
 
+import selection_hosts
 import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
@@ -700,7 +701,7 @@ def generate_all(state, models):
 # --- main -------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
-    pre = [doc.GetElement(i) for i in revit.uidoc.Selection.GetElementIds()]
+    pre = selection_hosts.expand(doc, revit.uidoc.Selection.GetElementIds())  # a bar / brick: its element
     state.picked_ids = [id_of(e.Id) for e in pre if e is not None and isinstance(e, Stairs)]
     xaml = os.path.join(SCRIPT_DIR, "AceroForm.xaml")
     models = {}
