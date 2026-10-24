@@ -55,7 +55,8 @@ from System.Windows import GridLength, TextWrapping
 from System.Windows.Controls import Border, Dock, DockPanel, WrapPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
-from System.Windows.Media import Color, DoubleCollection, PointCollection, SolidColorBrush
+from System.Windows.Media import (Color, DoubleCollection, PenLineCap, PenLineJoin, PointCollection,
+                                  SolidColorBrush)
 from System.Windows.Shapes import Ellipse, Line, Polygon, Polyline
 
 output = script.get_output()
@@ -1201,10 +1202,15 @@ class AceroWindow(forms.WPFWindow):
                 line = rs.stirrup_centerline(poly, bars, key, wrap, is_open)
             except rs.SpecError:
                 line = poly
-            thickness = max(2, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale)
-            self._polyline(frame, line, color(kind), thickness, closed=not is_open)
-            if not is_open:
-                self._hook(frame, line, key, color(kind), thickness)
+            ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            thickness = max(2, ds * scale)
+            # as bent in Revit: round over each bar (2.5 db), 135-degree hooks
+            wrap_r = (wrap if wrap is not None else rs.wrap_radius(poly, bars)) + ds / 2.0
+            try:
+                for part in rs.bent_stirrup(poly, wrap_r, max(6 * ds, 0.075), is_open, bend=2.5 * ds):
+                    self._steel(frame, part, color(kind), thickness)
+            except Exception:
+                self._polyline(frame, line, color(kind), thickness, closed=not is_open)
             if i == self.selected:
                 try:
                     outline = rs.stirrup_outline(poly, bars, key, wrap, is_open)
@@ -1219,11 +1225,16 @@ class AceroWindow(forms.WPFWindow):
                 a2, b2 = rs.tie_centerline(a, b, bars, key)
             except rs.SpecError:
                 a2, b2 = a, b
-            thickness = max(2, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale)
-            self._polyline(frame, [a2, b2], color(kind), thickness)
-            # C / S crossties: their 180-degree hooks
-            for mark in rs.tie_hook_marks(a2, b2, style, 2.5 * rs.BAR_DIAMETERS_MM[key] / 1000.0):
-                self._polyline(frame, mark, color(kind), thickness)
+            ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            thickness = max(2, ds * scale)
+            # as bent in Revit: round each end bar (135 deg, C / S 180 deg) and its leg
+            radii = []
+            for end in (a, b):
+                bar = rs._bar_at(end, bars)
+                radii.append((rs.BAR_DIAMETERS_MM[bar] / 2000.0 if bar else 0.0) + ds / 2.0)
+            angle = 180 if style in rs.TIE_STYLES else 135
+            leg = (self.design.get("tie_leg") or rs.tie_leg_cm(key, angle)) / 100.0
+            self._steel(frame, rs.bent_tie(a, b, radii[0], radii[1], style, leg), color(kind), thickness)
         for x, y, key in bars:
             self._dot(frame, x, y, max(3.5, rs.BAR_DIAMETERS_MM[key] / 2000.0 * scale), C_BAR)
 
@@ -1267,25 +1278,13 @@ class AceroWindow(forms.WPFWindow):
             self._views_sig = signature
             self._refresh_views()
 
-    def _hook(self, frame, line, key, color, thickness):
-        """The 135-degree hook of a closed stirrup at its first corner (where
-        Revit puts it): a short leg into the core along the bisector."""
-        pts = rs.counterclockwise(line)
-        if len(pts) < 3:
-            return
-        c, nxt, prv = pts[0], pts[1], pts[-1]
-        u = [nxt[0] - c[0], nxt[1] - c[1]]
-        v = [prv[0] - c[0], prv[1] - c[1]]
-        lu, lv = (u[0] ** 2 + u[1] ** 2) ** 0.5, (v[0] ** 2 + v[1] ** 2) ** 0.5
-        if lu < 1e-9 or lv < 1e-9:
-            return
-        bx, by = u[0] / lu + v[0] / lv, u[1] / lu + v[1] / lv
-        lb = (bx ** 2 + by ** 2) ** 0.5
-        if lb < 1e-9:
-            return
-        length = max(6 * rs.BAR_DIAMETERS_MM[key] / 1000.0, 0.075)
-        end = (c[0] + bx / lb * length, c[1] + by / lb * length)
-        self._polyline(frame, [c, end], color, thickness)
+    def _steel(self, frame, points, color, thickness):
+        """A bar in plan: its color over a thin dark edge, round bends and
+        ends, like Revit's fine detail."""
+        for brush, width in ((C_OUTLINE, thickness + 1.5), (color, thickness)):
+            shape = self._polyline(frame, points, brush, width)
+            shape.StrokeLineJoin = PenLineJoin.Round
+            shape.StrokeStartLineCap = shape.StrokeEndLineCap = PenLineCap.Round
 
     @staticmethod
     def _rect(a, b):
