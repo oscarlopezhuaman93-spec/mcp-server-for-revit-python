@@ -238,35 +238,41 @@ def circular_bars(radius_bars, count, key, start=None):
     return [(x, y, key) for x, y in circle_points(radius_bars, count, start)]
 
 
+def _bend_to(point, direction, sign, radius, target, steps=10):
+    """Points of a bend of `radius` starting at `point` heading `direction`,
+    turning left (sign +1) or right (-1) until it heads `target`."""
+    tx, ty = direction
+    nx, ny = (-ty, tx) if sign > 0 else (ty, -tx)
+    cx, cy = point[0] + nx * radius, point[1] + ny * radius
+    turn = (math.atan2(target[1], target[0]) - math.atan2(ty, tx)) * sign % (2 * math.pi)
+    a0 = math.atan2(point[1] - cy, point[0] - cx)
+    return [(cx + radius * math.cos(a0 + sign * turn * k / float(steps)),
+             cy + radius * math.sin(a0 + sign * turn * k / float(steps))) for k in range(1, steps + 1)]
+
+
 def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48):
-    """A circular hoop in plan as bent: a full turn round the core plus a
-    short overlap, both ends finishing in a closed 135-degree hook - a bend
-    of 2.5 ds radius turning into the core and a straight leg `hook_leg`.
+    """A circular hoop in plan as it is bent on site: nearly a full turn,
+    both ends at `start` bent into the core (2.5 ds bends) as two parallel
+    legs `hook_leg` long, side by side towards the centre - no crossing.
     One polyline [(x, y)], counterclockwise."""
     bend = 2.5 * ds
-    overlap = 2.0 * bend / radius  # the two hooks side by side over one bar
-    a0, a1 = start, start + 2 * math.pi + overlap
-    n = max(steps, 8)
-    arc = [(radius * math.cos(a0 + (a1 - a0) * k / float(n)), radius * math.sin(a0 + (a1 - a0) * k / float(n)))
-           for k in range(n + 1)]
+    gap = 1.5 * ds  # half the clear space between the two legs
+    delta = math.asin(min(0.9, (gap + bend + ds / 2.0) / radius))
+    a0, a1 = start + delta, start - delta + 2 * math.pi
+    arc = [(radius * math.cos(a0 + (a1 - a0) * k / float(steps)), radius * math.sin(a0 + (a1 - a0) * k / float(steps)))
+           for k in range(steps + 1)]
+    inward = (-math.cos(start), -math.sin(start))
 
-    def hook(angle, sign):
-        # at the end of the arc (sign +1, travelling counterclockwise) or at
-        # its start (sign -1, travelling back): bend 135 degrees inward
-        px, py = radius * math.cos(angle), radius * math.sin(angle)
-        tx, ty = -math.sin(angle) * sign, math.cos(angle) * sign  # travel direction
-        nx, ny = -math.cos(angle), -math.sin(angle)  # into the core
-        cx, cy = px + nx * bend, py + ny * bend  # centre of the bend
-        a_from = math.atan2(py - cy, px - cx)
-        pts = [(cx + bend * math.cos(a_from + sign * 0.75 * math.pi * k / 8.0),
-                cy + bend * math.sin(a_from + sign * 0.75 * math.pi * k / 8.0)) for k in range(1, 9)]
-        end = a_from + sign * 0.75 * math.pi
-        lx, ly = -math.sin(end) * sign, math.cos(end) * sign
+    def end(angle, sign):
+        # at the arc's end (sign +1, going counterclockwise: turns left) or
+        # its start (sign -1, going back clockwise: turns right)
+        p = (radius * math.cos(angle), radius * math.sin(angle))
+        travel = (-math.sin(angle) * sign, math.cos(angle) * sign)
+        pts = _bend_to(p, travel, sign, bend, inward)
         last = pts[-1]
-        return pts + [(last[0] + lx * hook_leg, last[1] + ly * hook_leg)]
+        return pts + [(last[0] + inward[0] * hook_leg, last[1] + inward[1] * hook_leg)]
 
-    return hook(a0, -1.0)[::-1] + arc + hook(a1, 1.0)
-
+    return end(a0, -1.0)[::-1] + arc + end(a1, 1.0)
 
 def spiral_path(radius, z_start, z_end, pitch, ds, extra_turns=SPIRAL_EXTRA_TURNS, per_turn=24):
     """A spiral as points (x, y, z) from z_start to z_end (m): `extra_turns`
