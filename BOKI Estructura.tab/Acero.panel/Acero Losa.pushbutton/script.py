@@ -793,7 +793,7 @@ if __name__ == "__main__":
             continue
         if window.action == "create_slabs":
             # the Crear Losas button's own script, then back here with what it made
-            crear = os.path.join(EXT_ROOT, u"BOKI Estructura.tab", u"Modelado.panel", u"Crear Losas.pushbutton", u"script.py")
+            crear = os.path.join(EXT_ROOT, u"BOKI Estructura.tab", u"Modelado.panel", u"Losa.pulldown", u"Crear Losas.pushbutton", u"script.py")
             import io
             code = io.open(crear, encoding="utf-8").read()
             exec(compile(code, crear, "exec"), {"__name__": "__main__", "__file__": crear})

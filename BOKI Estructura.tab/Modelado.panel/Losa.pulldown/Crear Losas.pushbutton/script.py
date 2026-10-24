@@ -12,7 +12,7 @@ import os
 import sys
 
 SCRIPT_DIR = os.path.dirname(__file__)
-EXT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
+EXT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", "..", ".."))
 REVIT_MCP_DIR = os.path.join(EXT_ROOT, "revit_mcp")
 if REVIT_MCP_DIR not in sys.path:
     sys.path.append(REVIT_MCP_DIR)
