@@ -335,7 +335,8 @@ ENS_NONE, ENS_FULL, ENS_ALT = u"ninguno", u"corrido", u"alternado"
 
 
 def default_ribbed():
-    return {"dir": None,  # x / y: the viguetas' direction; None: across the shorter clear spans
+    return {"angle": None,  # degrees; None: along the slab's longest side (its beams)
+            "dir": None,  # x / y: the viguetas' direction; None: across the shorter clear spans
             "b": 0.10, "s": 0.40, "top": 0.05,  # vigueta width, spacing, slab over the bricks
             "inf": {"d": u'1/2"'}, "sup": {"d": u'1/2"', "frac": 1.0 / 3.0, "end_frac": 0.25},
             "temp": {"on": True, "d": u'1/4"', "s": 0.25},
@@ -519,6 +520,7 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
                 for piece in fill_bricks(a + ens, b - ens, lib, w, cut=cutting):
                     piece.update({"t0": t0, "t1": t0 + w})
                     bricks.append(piece)
+    centers = sorted(set(round(c_, 4) for c_ in centers))  # bays sampled twice give the same vigueta
     for pos in centers:
         sup = line_intervals(support_tris, axis, pos)
         for chord in line_intervals(slab_tris, axis, pos):
@@ -543,3 +545,69 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
         if w not in seen:
             seen.append(w)
     return {"lines": plan, "viguetas": sorted(centers), "bricks": bricks, "axis": axis}, seen
+
+
+def outline_edges(tris, nd=4):
+    """The outline of triangles in plan: the edges of one triangle only."""
+    count = {}
+    for t in tris:
+        for k in range(3):
+            a = (round(t[k][0], nd), round(t[k][1], nd))
+            b = (round(t[(k + 1) % 3][0], nd), round(t[(k + 1) % 3][1], nd))
+            key = (a, b) if a <= b else (b, a)
+            count[key] = count.get(key, 0) + 1
+    return [e for e, n in count.items() if n == 1]
+
+
+def dominant_angle(tris):
+    """The direction (degrees, 0 to 90) of the slab's longest straight side:
+    the bricks line up with its beams by default."""
+    best = None
+    for (ax, ay), (bx, by) in outline_edges(tris):
+        length = math.hypot(bx - ax, by - ay)
+        if best is None or length > best[0]:
+            best = (length, math.degrees(math.atan2(by - ay, bx - ax)) % 90.0)
+    a = best[1] if best else 0.0
+    return 0.0 if min(a, 90.0 - a) < 0.05 else round(a, 3)
+
+
+def nearest_edge_angle(edges, x, y):
+    """(distance, angle in degrees 0..180) of the edge nearest (x, y)."""
+    best = None
+    for (ax, ay), (bx, by) in edges:
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        if L2 < 1e-10:
+            continue
+        t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+        d = math.hypot(ax + t * dx - x, ay + t * dy - y)
+        if best is None or d < best[0]:
+            best = (d, math.degrees(math.atan2(dy, dx)) % 180.0)
+    return best
+
+
+def follow_surface(points, z_of, step=0.05, tol_deg=0.3):
+    """A bar run [(x, y, z)] on a sloped slab: each stretch sampled every
+    `step` with z_of(x, y) (the height it keeps under the top), then only
+    the points where the slope changes (a ridge) kept."""
+    out = []
+    for (x0, y0, _), (x1, y1, _) in zip(points, points[1:]):
+        n = max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / step)))
+        for k in range(n + (1 if (x1, y1) == points[-1][:2] else 0)):
+            t = float(k) / n
+            x, y = x0 + (x1 - x0) * t, y0 + (y1 - y0) * t
+            out.append((x, y, z_of(x, y)))
+    kept = [out[0]]
+    for i in range(1, len(out) - 1):
+        a, b, c = kept[-1], out[i], out[i + 1]
+        u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+        v = (c[0] - b[0], c[1] - b[1], c[2] - b[2])
+        nu = math.sqrt(sum(q * q for q in u))
+        nv = math.sqrt(sum(q * q for q in v))
+        if nu < 1e-9 or nv < 1e-9:
+            continue
+        cos = sum(p * q for p, q in zip(u, v)) / (nu * nv)
+        if cos < math.cos(math.radians(tol_deg)):
+            kept.append(b)
+    kept.append(out[-1])
+    return kept

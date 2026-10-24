@@ -218,7 +218,7 @@ class LosaWindow(forms.WPFWindow):
         self.cbo_brick.SelectedItem = rb_.get("brick")
         self.chk_brick.IsChecked = bool(rb_.get("place", True))
         self.chk_cut.IsChecked = bool(rb_.get("cut", True))
-        self.txt_angle.Text = u"{:g}".format(float(rb_.get("angle") or 0.0))
+        self.txt_angle.Text = u"" if rb_.get("angle") is None else u"{:g}".format(float(rb_["angle"]))
         self.txt_start.Text = u"{:g}".format(float(rb_.get("start") or 0.0))
         self.cbo_ens.SelectedItem = dict(ENS).get(rb_["ens"]["mode"], ENS[0][1])
         self.txt_ens.Text = u"{:g}".format(float(rb_["ens"]["len"]))
@@ -271,7 +271,7 @@ class LosaWindow(forms.WPFWindow):
         a["brick"] = self.cbo_brick.SelectedItem
         a["place"] = bool(self.chk_brick.IsChecked)
         a["cut"] = bool(self.chk_cut.IsChecked)
-        a["angle"] = self._num(self.txt_angle.Text, 0.0) % 360.0
+        a["angle"] = (self._num(self.txt_angle.Text, 0.0) % 180.0) if (self.txt_angle.Text or u"").strip() else None
         a["start"] = max(0.0, self._num(self.txt_start.Text, 0.0))
         e = [k for k, n in ENS if n == self.cbo_ens.SelectedItem]
         a["ens"] = {"mode": e[0] if e else sr.ENS_NONE, "len": max(0.0, self._num(self.txt_ens.Text, 0.25))}
@@ -313,53 +313,112 @@ class LosaWindow(forms.WPFWindow):
         self._draw_cut(sr.X)
         self._draw_cut(sr.Y)
 
+    def _grids(self):
+        """[(name, (x, y), (x, y))] of the project's grid lines over the slab
+        (local), cached per slab."""
+        m = self.model
+        cache = self.__dict__.setdefault("_grid_cache", {})
+        key = id_of(m.element.Id)
+        if key not in cache:
+            x0, x1, y0, y1 = sr.extent(m.slab_tris)
+            pad = 1.5
+            out = []
+            for g in DB.FilteredElementCollector(doc).OfClass(DB.Grid):
+                c = g.Curve
+                if not isinstance(c, DB.Line):
+                    continue
+                p0, p1 = m.f.local(c.GetEndPoint(0)), m.f.local(c.GetEndPoint(1))
+                (ax, ay), (bx, by) = p0[:2], p1[:2]
+                # clip the line to the slab's box (+ pad)
+                pts = []
+                dx, dy = bx - ax, by - ay
+                for t in [0.0, 1.0] + [((v - ax) / dx) for v in (x0 - pad, x1 + pad) if abs(dx) > 1e-9] + \
+                        [((v - ay) / dy) for v in (y0 - pad, y1 + pad) if abs(dy) > 1e-9]:
+                    if 0.0 <= t <= 1.0:
+                        x, y = ax + dx * t, ay + dy * t
+                        if x0 - pad - 1e-6 <= x <= x1 + pad + 1e-6 and y0 - pad - 1e-6 <= y <= y1 + pad + 1e-6:
+                            pts.append((t, x, y))
+                if len(pts) >= 2:
+                    pts.sort()
+                    out.append((g.Name, pts[0][1:], pts[-1][1:]))
+            cache[key] = out
+        return cache[key]
+
     def _draw_plan(self):
         canvas = self.canvas_plan
         canvas.Children.Clear()
         m = self.model
         if m is None or canvas.ActualWidth < 10:
             return
-        x0, x1, y0, y1 = sr.extent(m.frame_slab())
-        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 0.6, y0 - 0.6, x1 + 0.6, y1 + 0.6)
+        x0, x1, y0, y1 = sr.extent(m.slab_tris)
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 1.4, y0 - 1.4, x1 + 1.4, y1 + 1.4)
         self._fitted[PLAN] = fitted
         frame = self.navs[PLAN].resolve(fitted)
         self._frames[PLAN] = frame
-        for tri in m.frame_slab():
+        ang = m.angle
+
+        def T(x, y):  # the plan's frame (turned with the bricks) back to the slab's
+            return sr.unrotate(x, y, ang)
+        # the grids, behind
+        gray = brush((150, 150, 160))
+        for name, a, b in self._grids():
+            rv._line(canvas, frame, a, b, gray, 1, dash=True)
+            for q in (a, b):
+                self._dot(canvas, frame, q[0], q[1], 0.0, brush((255, 255, 255)))
+                rv._text(canvas, frame, q[0], q[1], name, brush=brush((60, 60, 80)), size=11, bold=True)
+        for tri in m.slab_tris:
             rv._polygon(canvas, frame, tri, brush((240, 243, 246)))
         for s in m.supports:
-            for tri in sr.rotate_tris(s["tris"], m.angle):
+            for tri in s["tris"]:
                 rv._polygon(canvas, frame, tri, brush((200, 203, 208) if s["label"] != u"COLUMNA" else (90, 90, 90)))
         rib = getattr(self, "_rib", None)
         if rib is not None:
             fill, edge = brush(BRICK, 70), brush(BRICK, 160)
             for bk in rib["bricks"]:
-                if rib["axis"] == sr.X:
-                    rv._rect(canvas, frame, bk["s0"], bk["t0"], bk["s1"], bk["t1"], fill, edge)
-                else:
-                    rv._rect(canvas, frame, bk["t0"], bk["s0"], bk["t1"], bk["s1"], fill, edge)
+                corners = [(bk["s0"], bk["t0"]), (bk["s1"], bk["t0"]), (bk["s1"], bk["t1"]), (bk["s0"], bk["t1"])]
+                if rib["axis"] == sr.Y:
+                    corners = [(t, s_) for s_, t in corners]
+                rv._polygon(canvas, frame, [T(*q) for q in corners], fill, edge)
         for (face, axis), lines in sorted(self._plan.items()):
             color = brush(COLORS[(face, axis)], 150 if face == sr.SUP else 110)
             for line in lines:
                 p = line["pos"]
                 for bar in line["bars"]:
                     a, b = ((bar["s0"], p), (bar["s1"], p)) if axis == sr.X else ((p, bar["s0"]), (p, bar["s1"]))
-                    rv._line(canvas, frame, a, b, color, 1.4 if face == sr.SUP else 0.8, dash=face == sr.INF and axis == sr.Y)
+                    rv._line(canvas, frame, T(*a), T(*b), color, 1.4 if face == sr.SUP else 0.8,
+                             dash=face == sr.INF and axis == sr.Y)
                     if bar.get("lap_at"):
                         l0, l1 = bar["lap_at"]
                         a, b = ((l0, p), (l1, p)) if axis == sr.X else ((p, l0), (p, l1))
-                        rv._line(canvas, frame, a, b, brush((176, 74, 74), 160), 5)
+                        rv._line(canvas, frame, T(*a), T(*b), brush((176, 74, 74), 160), 5)
         st = self._settings()
+        fx0, fx1, fy0, fy1 = sr.extent(m.frame_slab())
         cuts = st.get("cuts") or {}
         purple = brush((127, 119, 221))
         for axis in (sr.X, sr.Y):
             c = cuts.get(axis)
             if c is None:
                 continue
-            a, b = ((x0 - 0.4, c), (x1 + 0.4, c)) if axis == sr.X else ((c, y0 - 0.4), (c, y1 + 0.4))
+            a, b = ((fx0 - 0.4, c), (fx1 + 0.4, c)) if axis == sr.X else ((c, fy0 - 0.4), (c, fy1 + 0.4))
+            a, b = T(*a), T(*b)
             rv._line(canvas, frame, a, b, purple, 2, dash=True)
             for q in (a, b):
                 rv._text(canvas, frame, q[0], q[1], CUT_NAMES[axis].split(u"-")[0], brush=brush((83, 74, 183)), size=13, bold=True)
-        rv._text(canvas, frame, x0 - 0.4, y1 + 0.45, u"X →   Y ↑", brush=brush((40, 40, 40)), size=10, anchor="left")
+        if rib is not None:  # the viguetas' direction
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            ux, uy = T(1.0, 0.0) if rib["axis"] == sr.X else T(0.0, 1.0)
+            L = 0.22 * min(x1 - x0, y1 - y0)
+            a, b = (cx - ux * L, cy - uy * L), (cx + ux * L, cy + uy * L)
+            dark = brush((200, 60, 20))
+            rv._line(canvas, frame, a, b, dark, 4)
+            for end, sgn in ((b, 1.0), (a, -1.0)):
+                for side in (0.5, -0.5):
+                    hx = end[0] - sgn * ux * 0.25 * L + side * (-uy) * 0.25 * L
+                    hy = end[1] - sgn * uy * 0.25 * L + side * ux * 0.25 * L
+                    rv._line(canvas, frame, end, (hx, hy), dark, 4)
+            rv._text(canvas, frame, cx, cy + 0.15 * L, u"Viguetas  {:.1f}\u00b0".format(
+                math.degrees(math.atan2(uy, ux)) % 180.0), brush=dark, size=12, bold=True)
+        rv._text(canvas, frame, x0 - 1.2, y1 + 1.2, u"X \u2192   Y \u2191", brush=brush((40, 40, 40)), size=10, anchor="left")
 
     def _draw_cut(self, axis):
         canvas = self.canvas_cut_x if axis == sr.X else self.canvas_cut_y
@@ -515,8 +574,24 @@ class LosaWindow(forms.WPFWindow):
         fitted = self._fitted.get(PLAN)
         if fitted is None:
             return
+        if args.ChangedButton == MouseButton.Left and PLAN in self._frames and self.tool_dir.IsChecked:
+            x, y, scale = self._plan_xy(args)
+            edges = sr.outline_edges(self.model.slab_tris)
+            for sp in self.model.supports:
+                edges += sr.outline_edges(sp["tris"])
+            hit = sr.nearest_edge_angle(edges, x, y)
+            if hit and hit[0] * scale < 25:
+                # the viguetas rest on what was clicked: perpendicular to it
+                a = self._settings().setdefault("alig", {})
+                a["angle"] = round((hit[1] + 90.0) % 180.0, 2)
+                a["dir"] = sr.X
+                self.tool_dir.IsChecked = False
+                self._fill_form()
+                self.redraw()
+            return
         if args.ChangedButton == MouseButton.Left and PLAN in self._frames:
             x, y, scale = self._plan_xy(args)
+            x, y = sr.unrotate(x, y, -self.model.angle)  # into the plan's frame
             cuts = self._settings().get("cuts") or {}
             best = None
             for axis, c in cuts.items():
@@ -534,6 +609,7 @@ class LosaWindow(forms.WPFWindow):
     def plan_move(self, sender, args):
         if self._drag_cut is not None:
             x, y, _ = self._plan_xy(args)
+            x, y = sr.unrotate(x, y, -self.model.angle)
             x0, x1, y0, y1 = sr.extent(self.model.frame_slab())
             v = (max(y0, min(y1, y)) if self._drag_cut == sr.X else max(x0, min(x1, x)))
             self._settings()["cuts"][self._drag_cut] = round(v, 3)
@@ -552,6 +628,27 @@ class LosaWindow(forms.WPFWindow):
             return
         self.navs[PLAN].end_pan()
         self.canvas_plan.ReleaseMouseCapture()
+
+    def turn90_click(self, sender, args):
+        if self._settings() is None:
+            return
+        a = self._settings().setdefault("alig", {})
+        current = a.get("angle")
+        if current is None:
+            current = sr.dominant_angle(self.model.slab_tris)
+        a["angle"] = round((float(current) + 90.0) % 180.0, 2)
+        a["dir"] = sr.X
+        self._fill_form()
+        self.redraw()
+
+    def auto_dir_click(self, sender, args):
+        if self._settings() is None:
+            return
+        a = self._settings().setdefault("alig", {})
+        a["angle"] = None
+        a["dir"] = None
+        self._fill_form()
+        self.redraw()
 
     def plan_fit_click(self, sender, args):
         self.navs[PLAN].reset()

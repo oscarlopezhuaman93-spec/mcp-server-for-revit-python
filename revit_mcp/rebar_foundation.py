@@ -111,6 +111,8 @@ class Foundation(object):
                     group = Face(0, n, offset, u"")
                     groups.append(group)
                 mesh = face.Triangulate()
+                if mesh is None:  # a face Revit can't mesh (a shape-edited slab)
+                    continue
                 for i in range(mesh.NumTriangles):
                     tri = mesh.get_Triangle(i)
                     group.triangles.append(tuple(self.local(tri.get_Vertex(k)) for k in range(3)))

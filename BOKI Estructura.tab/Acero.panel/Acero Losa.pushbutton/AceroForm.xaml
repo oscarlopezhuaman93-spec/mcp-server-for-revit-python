@@ -88,7 +88,7 @@
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Girar " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_angle" Width="40" TextChanged="form_changed"
-                                         ToolTip="Gira la direcci&#243;n de las viguetas y los ladrillos (grados, antihorario desde X). La planta se dibuja girada."/>
+                                         ToolTip="Direcci&#243;n de las viguetas y los ladrillos (grados, antihorario desde X). Vac&#237;o: a lo largo del lado m&#225;s largo de la losa (sus vigas). Tambi&#233;n con &quot;Elegir direcci&#243;n&quot; en la planta."/>
                                 <TextBlock Text=" &#176;   Inicio desde la cara " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_start" Width="36" TextChanged="form_changed"
                                          ToolTip="Distancia de la cara de la viga paralela a la primera fila de ladrillos (m). Desde ah&#237; se respeta el espaciamiento de las viguetas."/>
@@ -160,8 +160,13 @@
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                     <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
                     <TextBlock FontWeight="Bold" VerticalAlignment="Center" Text="PLANTA   "/>
-                    <TextBlock Foreground="Gray" FontSize="10" VerticalAlignment="Center"
-                               Text="Arrastra las l&#237;neas de corte 1-1 y 2-2. Rueda: zoom; bot&#243;n central: mover."/>
+                    <ToggleButton x:Name="tool_dir" Content="&#8644; Elegir direcci&#243;n" Padding="6,0"
+                                  ToolTip="Clic en una viga (o un borde de la losa): las viguetas y los ladrillos se colocan apoyados en ella (perpendiculares)."/>
+                    <Button Content="Girar 90&#176;" Padding="6,0" Margin="4,0,0,0" Click="turn90_click"/>
+                    <Button Content="Autom&#225;tica" Padding="6,0" Margin="4,0,0,0" Click="auto_dir_click"
+                            ToolTip="Alineada al lado m&#225;s largo de la losa (sus vigas)."/>
+                    <TextBlock Foreground="Gray" FontSize="10" VerticalAlignment="Center" Margin="8,0,0,0"
+                               Text="Arrastra los cortes 1-1 y 2-2. Rueda: zoom; bot&#243;n central: mover."/>
                 </DockPanel>
                 <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                     <Canvas x:Name="canvas_plan" Background="White" SizeChanged="views_resized"

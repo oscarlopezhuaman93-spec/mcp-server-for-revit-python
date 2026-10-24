@@ -32,9 +32,16 @@ class SlabModel(object):
         self.element = floor
         self.f = rf.Foundation(floor)
         x0, x1, y0, y1, z0, z1 = self.f.extent
+        tops = [face for face in self.f.faces if face.normal[2] > 0.3]  # a sloped slab too
+        self.top3d = [t for face in tops for t in face.triangles]
+        self.slab_tris = _flat(self.top3d)
+        self.sloped = any(face.normal[2] < 0.999 for face in tops)
         self.thickness = z1 - z0
-        tops = [face for face in self.f.faces if face.normal[2] > 0.9]
-        self.slab_tris = _flat([t for face in tops for t in face.triangles])
+        if self.sloped:  # its own thickness, not the box's height
+            t = floor.Document.GetElement(floor.GetTypeId())
+            p = t.get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_DEFAULT_THICKNESS_PARAM) if t else None
+            if p is not None and p.AsDouble() > 0:
+                self.thickness = p.AsDouble() * FT
         self.supports = self._supports()
         self.support_tris = [t for s in self.supports for t in s["tris"]]
         self.angle = 0.0  # degrees: the frame of the last plan (a ribbed slab turned)
@@ -50,8 +57,11 @@ class SlabModel(object):
         loop = DB.CurveLoop()
         for k in range(4):
             loop.Append(DB.Line.CreateBound(corners[k], corners[(k + 1) % 4]))
+        # a sloped slab: the slice runs its whole height; what passes under its
+        # bottom there is kept (a wall standing on it is not a support)
+        height = (z1 - z0 + below) if self.sloped else depth
         slice_ = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-            List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, depth / FT)
+            List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, height / FT)
         bb = self.element.get_BoundingBox(None)
         pad = around / FT
         near = DB.Outline(DB.XYZ(bb.Min.X - pad, bb.Min.Y - pad, bb.Min.Z - 0.3 / FT),
@@ -75,7 +85,13 @@ class SlabModel(object):
                             mesh = face.Triangulate()
                             for i in range(mesh.NumTriangles):
                                 tri = mesh.get_Triangle(i)
-                                tris.append(tuple(f.local(tri.get_Vertex(k))[:2] for k in range(3)))
+                                pts = [f.local(tri.get_Vertex(k)) for k in range(3)]
+                                if self.sloped:
+                                    cx = sum(q[0] for q in pts) / 3.0
+                                    cy = sum(q[1] for q in pts) / 3.0
+                                    if sum(q[2] for q in pts) / 3.0 > self.top_z(cx, cy) - self.thickness + 0.03:
+                                        continue
+                                tris.append(tuple(q[:2] for q in pts))
                 if tris:
                     found.append({"label": label, "id": other.Id, "tris": tris})
         return found
@@ -83,8 +99,10 @@ class SlabModel(object):
     def plan(self, settings, mm, splice=None, lib=None):
         """(layers {(face, axis): lines}, ribbed extras or None, warnings)."""
         if settings.get("kind") == sr.ALIGERADA:
-            # the bricks' direction turned by an angle: planned in that frame
-            self.angle = float(sr.ribbed(settings).get("angle") or 0.0)
+            # the bricks' direction turned by an angle (by default along the
+            # slab's longest side, its beams): planned in that frame
+            angle = sr.ribbed(settings).get("angle")
+            self.angle = float(sr.dominant_angle(self.slab_tris) if angle is None else angle)
             plan, warnings = sr.plan_ribbed(sr.rotate_tris(self.slab_tris, self.angle),
                                             sr.rotate_tris(self.support_tris, self.angle),
                                             self.thickness, settings, mm, splice, lib)
@@ -97,7 +115,38 @@ class SlabModel(object):
         """World point of a bar point: s along its axis, pos across."""
         x, y = (s, pos) if axis == sr.X else (pos, s)
         x, y = sr.unrotate(x, y, self.angle)
-        return self.f.world(x, y, z)
+        return self.f.world(x, y, self.local_z(x, y, z))
+
+    def top_z(self, x, y):
+        """Height (local) of the slab's top over (x, y): on its top
+        triangles; the nearest one's plane when outside."""
+        best = None
+        for t in self.top3d:
+            (ax, ay, az), (bx, by, bz), (cx, cy, cz) = t
+            det = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(det) < 1e-12:
+                continue
+            l1 = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / det
+            l2 = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / det
+            l3 = 1.0 - l1 - l2
+            z = l1 * az + l2 * bz + l3 * cz
+            out = -min(l1, l2, l3)
+            if out <= 1e-6:
+                return z
+            if best is None or out < best[0]:
+                best = (out, z)
+        return best[1] if best else self.f.extent[5]
+
+    def local_z(self, x, y, z):
+        """A height measured up from the slab's bottom (the bars, the bricks)
+        to the local frame: on a sloped slab, from its bottom right there."""
+        if not self.sloped:
+            return z
+        return self.top_z(x, y) - self.thickness + z
+
+    def point_xy(self, axis, s, pos):
+        x, y = (s, pos) if axis == sr.X else (pos, s)
+        return sr.unrotate(x, y, self.angle)
 
     def frame_slab(self):
         """The slab's triangles in the frame of the last plan."""
@@ -133,8 +182,31 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None):
     made = []
     for (face, axis), layer in sorted(lines.items()):
         normal = model.direction(sr.Y if axis == sr.X else sr.X)  # bars laid across
-        for path, key, pos, count, spacing in sr.bar_sets(layer or []):
-            pts = [model.point(axis, s, pos, z) for s, z in path]
+        if model.sloped:  # each bar on its own: it follows the slope (bends at a ridge)
+            sets = [(bar["path"], bar["key"], line["pos"], 1, 0.0) for line in layer or [] for bar in line["bars"]]
+        else:
+            sets = sr.bar_sets(layer or [])
+        seen = set()
+        for path, key, pos, count, spacing in sets:
+            sig = (key, round(pos, 4), tuple((round(a_, 3), round(b_, 3)) for a_, b_ in path))
+            if sig in seen:  # the same bar twice (two chords of one line): once
+                continue
+            seen.add(sig)
+            if model.sloped:
+                local = []
+                for (s0, z0), (s1, z1) in zip(path, path[1:]):
+                    (x0, y0), (x1, y1) = model.point_xy(axis, s0, pos), model.point_xy(axis, s1, pos)
+                    if abs(z1 - z0) < 1e-9 and abs(s1 - s0) > 1e-6:  # a run: on the surface
+                        run = sr.follow_surface([(x0, y0, 0.0), (x1, y1, 0.0)],
+                                                lambda x, y, z=z0: model.local_z(x, y, z))
+                        local += run if not local else run[1:]
+                    else:  # a hook leg: straight down / up
+                        if not local:
+                            local.append((x0, y0, model.local_z(x0, y0, z0)))
+                        local.append((x1, y1, local[-1][2] + (z1 - z0)))
+                pts = [model.f.world(x, y, z) for x, y, z in local]
+            else:
+                pts = [model.point(axis, s, pos, z) for s, z in path]
             curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
                                      if pts[k].DistanceTo(pts[k + 1]) > 1e-4])
             rebar = Rebar.CreateFromCurves(doc, RebarStyle.Standard, bar_type_for(key), None, None, model.element,
@@ -274,7 +346,13 @@ def place_bricks(model, ribbed_plan, types):
                            b.get("ancho") or types[b["type"]][2])
         if not sym.IsActive:
             sym.Activate()
-        p = model.point(axis, b["s1"], (b["t0"] + b["t1"]) / 2.0, model.thickness)
+        tc = (b["t0"] + b["t1"]) / 2.0
+        xe, ye = model.point_xy(axis, b["s1"], tc)
+        if model.sloped:  # a brick stays level: hung at the height of the top over its middle
+            xc, yc = model.point_xy(axis, (b["s0"] + b["s1"]) / 2.0, tc)
+            p = model.f.world(xe, ye, model.top_z(xc, yc))
+        else:
+            p = model.f.world(xe, ye, model.thickness)
         data.Add(FamilyInstanceCreationData(p, sym, hand, model.element, DB.Structure.StructuralType.NonStructural))
     if data.Count == 0:
         return 0
