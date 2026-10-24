@@ -415,7 +415,7 @@ def _counterclockwise(points):
     for k in range(len(points)):
         (ax, ay), (bx, by) = points[k], points[(k + 1) % len(points)]
         area += ax * by - bx * ay
-    return points if area > 0 else list(reversed(points))
+    return points if area > 0 else points[:1] + points[:0:-1]  # the first corner kept first: the hooks
 
 
 def _share(line, created, rebar, key, kind, s_start, s_end):

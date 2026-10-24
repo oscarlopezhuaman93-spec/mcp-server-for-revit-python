@@ -432,7 +432,8 @@ class AceroWindow(forms.WPFWindow):
             child.Visibility = Visibility.Collapsed if hidden else Visibility.Visible
         for k, row in enumerate(self.grid_stirrups.RowDefinitions):
             row.Height = GridLength(0) if (longitudinal and k not in (7, 9)) else self._row_heights[k]
-        self.exp_stirrups.Header = u"Recubrimiento" if longitudinal else u"2. Configuración de estribos"
+        # the cover is set once, on the Estribos tab
+        self.exp_stirrups.Visibility = Visibility.Collapsed if longitudinal else Visibility.Visible
         if longitudinal:
             self.exp_bars.IsExpanded = True
             self.exp_splice.IsExpanded = True
@@ -2162,6 +2163,8 @@ class AceroWindow(forms.WPFWindow):
             return False
         self._status()
         self._push_undo()
+        if not is_open:
+            pts = rs.start_on_bar(pts, self.design["bars"])  # the hooks wrap a vertical bar
         rs.add_item(self.design, "stirrups", (kind, pts, wrap, is_open), shape["name"] if shape else None)
         self.draft = []
         self._select(len(self.design["stirrups"]) - 1)

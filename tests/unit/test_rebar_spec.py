@@ -959,3 +959,18 @@ class TestHoop:
         # the bar between the two legs
         side = [((q[0] - bx) * -by + (q[1] - by) * bx) for q in (p[0], p[-1])]
         assert side[0] * side[1] < 0
+
+
+class TestHookCorner:
+    def test_first_click_kept_whatever_the_direction(self):
+        from revit_mcp.rebar_spec import bent_stirrup
+        ccw = [(0, 0.1), (-0.1, 0), (0, -0.1), (0.1, 0)]  # top, left, bottom, right
+        cw = [(0, 0.1), (0.1, 0), (0, -0.1), (-0.1, 0)]
+        for pts in (ccw, cw):
+            hook = bent_stirrup(pts, 0.013, 0.075, bend=0.024)[1]
+            assert hook[0][1] > 0.09  # at the top bar, the first click
+
+    def test_starts_on_the_first_bar(self):
+        from revit_mcp.rebar_spec import start_on_bar
+        pts = [(0.0, 0.2), (0.1, 0.1), (0.0, 0.0)]
+        assert start_on_bar(pts, [(0.1, 0.1, '5/8"')])[0] == (0.1, 0.1)

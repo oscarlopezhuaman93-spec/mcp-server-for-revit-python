@@ -3,11 +3,43 @@
         Title="Acero - Cimentaci&#243;n"
         Height="880" Width="1560" MinWidth="1200" MinHeight="640"
         WindowStartupLocation="CenterScreen"
-        ResizeMode="CanResizeWithGrip" PreviewKeyDown="window_key">
+        ResizeMode="CanResizeWithGrip" PreviewKeyDown="window_key" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="Expander">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FFD0D7DF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+    <!-- BOKI header -->
+    <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold"
+                       VerticalAlignment="Center"/>
+            <StackPanel>
+                <TextBlock Text="ACERO CIMENTACI&#211;N" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                <TextBlock Foreground="#FFB9C9DA" FontSize="11"
+                           Text="Zapatas, cimientos corridos y losas de cimentaci&#243;n: mallas, boceto a mano (barras y estribos) y empalmes. Genera todo el acero a la vez."/>
+            </StackPanel>
+        </DockPanel>
+    </Border>
     <DockPanel Margin="12">
+        <!-- Two tabs over the same window: what the left panel shows (the generation makes everything at once) -->
+        <TabControl DockPanel.Dock="Top" x:Name="tab_steel" Margin="0,0,0,8" SelectionChanged="tab_changed"
+                    Background="Transparent" BorderThickness="0,1,0,0">
+            <TabItem Header="Acero" Padding="12,4" FontWeight="Bold"/>
+            <TabItem Header="Boceto" Padding="12,4" FontWeight="Bold"/>
+        </TabControl>
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
-            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
-                    FontWeight="Bold" Click="run_click"
+            <Button DockPanel.Dock="Right" x:Name="button_run" Content="GENERAR ACERO" Width="240" Height="40"
+                    FontWeight="Bold" Click="run_click" Background="#FF2D8CF0" Foreground="White" BorderThickness="0"
                     ToolTip="Guarda recubrimientos y acero en el tipo y genera las barras en los elementos seleccionados."/>
             <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
                     ToolTip="Carga los recubrimientos guardados en un archivo."/>
@@ -33,7 +65,7 @@
                            Margin="0,4,0,6" Text="No hay elementos seleccionados."/>
                 <ListBox DockPanel.Dock="Top" x:Name="list_elements" MaxHeight="160" SelectionChanged="element_selected"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
-                <Expander DockPanel.Dock="Top" Header="2. Recubrimientos por cara" Margin="0,8,0,0" IsExpanded="True">
+                <Expander DockPanel.Dock="Top" x:Name="exp_covers" Header="2. Recubrimientos por cara" Margin="0,8,0,0" IsExpanded="True">
                     <DockPanel Margin="6,4,6,4">
                         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,6"
                                    Text="Cada cara tiene su color y n&#250;mero en la vista 3D y en los alzados. Haz clic en una casilla para resaltar su cara."/>
@@ -42,7 +74,7 @@
                         </ScrollViewer>
                     </DockPanel>
                 </Expander>
-                <Expander DockPanel.Dock="Top" Header="3. Configuraci&#243;n de acero" Margin="0,8,0,0" IsExpanded="True">
+                <Expander DockPanel.Dock="Top" x:Name="exp_steel" Header="3. Configuraci&#243;n de acero" Margin="0,8,0,0" IsExpanded="True">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_bot" Content="Malla inferior (gancho hacia arriba)" FontWeight="Bold" Margin="0,4,0,2" IsChecked="True" Click="steel_changed"/>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_bot}">
@@ -122,7 +154,15 @@
                             <TextBox x:Name="txt_top_hb" Width="40" TextChanged="steel_changed"
                                      ToolTip="T3: gancho al final de la barra (m). 0 = sin gancho."/>
                         </StackPanel>
-                        <CheckBox x:Name="chk_sketch" Content="Boceto (barras dibujadas a mano)" FontWeight="Bold" Margin="0,8,0,2"
+                    </StackPanel>
+                </Expander>
+                <!-- Boceto: bars and closed stirrups (any shape, e.g. a rhombus) drawn in the elevations -->
+                <Expander DockPanel.Dock="Top" x:Name="exp_sketch" Header="Boceto: barras y estribos a mano" Margin="0,8,0,0"
+                          IsExpanded="True" Visibility="Collapsed">
+                    <StackPanel Margin="6,4,6,4">
+                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,0,0,4"
+                                   Text="Dibuja en un alzado: clic en cada punto; clic en el primer punto cierra un estribo (rect&#225;ngulo, rombo...). El gancho de 135&#176; va en el primer clic sobre una barra. Clic derecho termina una barra abierta. Esc cancela."/>
+                        <CheckBox x:Name="chk_sketch" Content="Generar el boceto (barras y estribos a mano)" FontWeight="Bold" Margin="0,4,0,2"
                                   IsChecked="True" Click="steel_changed"/>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sketch}">
                             <ToggleButton x:Name="btn_sketch" Width="30" Height="26" Click="sketch_toggle"
@@ -164,7 +204,7 @@
                         </StackPanel>
                     </StackPanel>
                 </Expander>
-                <Expander DockPanel.Dock="Top" Header="4. Empalme de barras" Margin="0,8,0,0">
+                <Expander DockPanel.Dock="Top" x:Name="exp_splice" Header="4. Empalme de barras" Margin="0,8,0,0">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_splice" Click="splice_changed"
                                   Content="Empalmar las barras m&#225;s largas que la longitud m&#225;xima"
@@ -259,5 +299,6 @@
                 </DockPanel>
             </Grid>
         </Grid>
+    </DockPanel>
     </DockPanel>
 </Window>

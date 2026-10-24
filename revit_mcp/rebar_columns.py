@@ -1344,7 +1344,7 @@ def _counterclockwise(points):
     for k in range(len(points)):
         a, b = points[k], points[(k + 1) % len(points)]
         area += a.X * b.Y - b.X * a.Y
-    return points if area > 0 else list(reversed(points))
+    return points if area > 0 else points[:1] + points[:0:-1]  # the first corner kept first: the hooks
 
 
 def _centerline_points(rebar):

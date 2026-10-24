@@ -173,6 +173,22 @@ class CimentacionWindow(forms.WPFWindow):
                 if item.Tag == active:
                     self.list_elements.SelectedItem = item
 
+    # -- tabs ----------------------------------------------------------------
+    def tab_changed(self, sender, args):
+        """"Acero" (covers, meshes, laps) and "Boceto" (bars and stirrups drawn
+        by hand): what the left panel shows; the views and the generation
+        (everything at once) are the same."""
+        if args.OriginalSource is not self.tab_steel:
+            return
+        sketch = self.tab_steel.SelectedIndex == 1
+        for panel in (self.exp_covers, self.exp_steel, self.exp_splice):
+            panel.Visibility = Visibility.Collapsed if sketch else Visibility.Visible
+        self.exp_sketch.Visibility = Visibility.Visible if sketch else Visibility.Collapsed
+        if not sketch and self._drawing():  # no drawing tool left on outside Boceto
+            self.btn_sketch.IsChecked = self.btn_rect.IsChecked = False
+            self.draft, self.draft_view = [], None
+            self._draw_elevations()
+
     # -- element ---------------------------------------------------------
     def element_selected(self, sender, args):
         item = self.list_elements.SelectedItem
@@ -432,6 +448,8 @@ class CimentacionWindow(forms.WPFWindow):
             # diameter further out
             key = self.cbo_sketch_d.SelectedItem or u'1/2"'
             bars = [(u, z, k) for u, z, k in getattr(self, "_dots", {}).get(view, [])]
+            # its hooks go at its first corner: the first click on a bar
+            pts = rs.start_on_bar(pts, bars)
             try:
                 if rs.wrap_radius(pts, bars) > 0:
                     pts = rs.stirrup_centerline(pts, bars, key)
@@ -440,6 +458,14 @@ class CimentacionWindow(forms.WPFWindow):
                     pts = rs.offset_polygon_outward(pts, -rs.BAR_DIAMETERS_MM[key] / 2000.0)
             except Exception:
                 pass
+        if closed and len(pts) >= 3:
+            # as create_closed_stirrup: a first corner sharper than 60 degrees
+            # leaves no room for the hooks - they go to the widest corner
+            k = rf.hook_corner(pts)
+            if k:
+                pts = pts[k:] + pts[:k]
+                self.txt_title.Text = (u"El primer clic cae en una esquina muy aguda (menos de 60°): "
+                                       u"los ganchos van en la esquina más abierta.")
         steel["sketch"].append({"view": view, "pts": [list(p) for p in pts],
                                 "d": self.cbo_sketch_d.SelectedItem or u'1/2"',
                                 "s": max(0.05, self._num(self.txt_sketch_s.Text, 0.2)),
@@ -1181,12 +1207,23 @@ class CimentacionWindow(forms.WPFWindow):
             if item["view"] != view:
                 continue
             pts = [tuple(q) for q in item["pts"]]
-            if item.get("closed"):
-                pts = pts + [pts[0]]
             color = (SolidColorBrush(Color.FromRgb(230, 120, 20)) if i == self.selected_sketch
                      else blue if on else SolidColorBrush(Color.FromArgb(70, 31, 78, 160)))
-            for a, b in zip(pts, pts[1:]):
-                rv._line(canvas, frame, a, b, color, 3 if i == self.selected_sketch else 2.5)
+            if item.get("closed"):
+                # as bent: round corners, the 135-degree hooks at its first corner
+                ds = rs.BAR_DIAMETERS_MM.get(item["d"], 12.7) / 1000.0
+                try:
+                    parts = rs.bent_stirrup(pts, 0.0, max(6 * ds, 0.075), bend=2.5 * ds)
+                except Exception:
+                    parts = [pts + [pts[0]]]
+                width = max(2.5, ds * frame[0])
+                for part in parts:
+                    for a, b in zip(part, part[1:]):
+                        rv._line(canvas, frame, a, b, color, width)
+                pts = pts + [pts[0]]
+            else:
+                for a, b in zip(pts, pts[1:]):
+                    rv._line(canvas, frame, a, b, color, 3 if i == self.selected_sketch else 2.5)
             if i == self.selected_sketch:
                 for k, (a, b) in enumerate(zip(pts, pts[1:])):
                     rv._text(canvas, frame, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, u"T{}".format(k + 1),
@@ -1403,15 +1440,13 @@ def _hook_tips_inside(rebar):
 def create_closed_stirrup(pts, bar_type, hook, host, normal):
     """A sketched closed stirrup with its hooks turned inward: made one way
     round and, if Revit turns its hooks out, remade the other way. The
-    hooks go at its widest corner (a sharp corner leaves no room for a
-    135-degree hook, as on site)."""
-    import math
-
-    def angle(k):
-        a, b, c = pts[k - 1], pts[k], pts[(k + 1) % len(pts)]
-        u, v = a - b, c - b
-        return math.acos(max(-1.0, min(1.0, u.Normalize().DotProduct(v.Normalize()))))
-    start = max(range(len(pts)), key=angle)
+    hooks go at its first corner - where it was drawn from, on a bar -
+    unless that corner is too sharp for a 135-degree hook (under 60
+    degrees), then at its widest one."""
+    # in the stirrup's own plane
+    e1 = (pts[1] - pts[0]).Normalize()
+    e2 = normal.CrossProduct(e1).Normalize()
+    start = rf.hook_corner([(q.DotProduct(e1), q.DotProduct(e2)) for q in pts])
     pts = pts[start:] + pts[:start]
     for points in (pts, [pts[0]] + list(reversed(pts[1:]))):
         curves = List[DB.Curve]([DB.Line.CreateBound(points[k], points[(k + 1) % len(points)])
@@ -1471,7 +1506,7 @@ if window.action == "run":
                         for k in range(len(pts)):
                             area = area + pts[k].CrossProduct(pts[(k + 1) % len(pts)])
                         if area.DotProduct(normal) < 0:
-                            pts = list(reversed(pts))
+                            pts = pts[:1] + pts[:0:-1]  # its first corner (the hooks) kept first
                         rebar = create_closed_stirrup(pts, bar_type, hooks.get(key), element, normal)
                     else:
                         curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])

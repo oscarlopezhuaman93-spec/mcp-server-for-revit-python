@@ -1082,8 +1082,23 @@ def polygon_signed_area(points):
     return s / 2.0
 
 
+def start_on_bar(points, bars):
+    """A closed stirrup's corners starting at the first one on a bar (its
+    hooks go at the first corner and must wrap a vertical bar); unchanged
+    when the first click was on a bar or none is."""
+    for k, (x, y) in enumerate(points):
+        if any(abs(x - bx) < 1e-6 and abs(y - by) < 1e-6 for bx, by, _ in bars):
+            return list(points[k:]) + list(points[:k])
+    return list(points)
+
+
 def counterclockwise(points):
-    return list(points) if polygon_signed_area(points) > 0 else list(reversed(points))
+    """The points counterclockwise, the first one kept first (a stirrup's
+    hooks go at its first corner, where it was drawn from)."""
+    points = list(points)
+    if polygon_signed_area(points) > 0 or not points:
+        return points
+    return points[:1] + points[:0:-1]
 
 
 def offset_polygon_outward(points, distance):

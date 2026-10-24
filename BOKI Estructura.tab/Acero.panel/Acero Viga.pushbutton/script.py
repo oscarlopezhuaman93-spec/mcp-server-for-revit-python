@@ -2704,6 +2704,8 @@ class AceroWindow(forms.WPFWindow):
             return False
         self._status()
         self._push_undo()
+        if not is_open:
+            pts = rs.start_on_bar(pts, self.design["bars"])  # the hooks wrap a vertical bar
         rs.add_item(self.design, "stirrups", (kind, pts, wrap, is_open), shape["name"] if shape else None)
         self.draft = []
         self._select(len(self.design["stirrups"]) - 1)

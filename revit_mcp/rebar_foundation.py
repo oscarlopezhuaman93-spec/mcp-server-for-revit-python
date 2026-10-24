@@ -274,6 +274,20 @@ def polygon_spans(points, z):
     return [(xs[k], xs[k + 1]) for k in range(0, len(xs) - 1, 2)]
 
 
+def hook_corner(points, min_deg=60.0):
+    """Where a closed sketched stirrup's 135-degree hooks go: its first
+    corner (where it was drawn from), unless that one is sharper than
+    `min_deg` - no room for the hooks -, then its widest corner."""
+    def angle(k):
+        (ax, ay), (bx, by), (cx, cy) = points[k - 1], points[k], points[(k + 1) % len(points)]
+        u, v = (ax - bx, ay - by), (cx - bx, cy - by)
+        nu, nv = math.hypot(*u) or 1.0, math.hypot(*v) or 1.0
+        return math.degrees(math.acos(max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1]) / (nu * nv)))))
+    if angle(0) >= min_deg:
+        return 0
+    return max(range(len(points)), key=angle)
+
+
 def mesh_layer_paths(inner, layer, diameter, hook, level=0, hook_b=None):
     """Bar paths [(u, z)] of one mesh layer in a section, inside the
     `inner` outline (covers already applied): along its bottom (BOTTOM,
