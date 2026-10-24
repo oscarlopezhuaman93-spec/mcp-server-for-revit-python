@@ -556,7 +556,74 @@ class AceroWindow(forms.WPFWindow):
         else:
             self.txt_section.Text = u"Seccion {}  ({:.0f} x {:.0f} cm{})".format(
                 t.name, section.b * rc.FT * 100, section.h * rc.FT * 100,
-                u"" if section.is_rectangle else u", irregular")
+                u"" if section.is_rectangle else (u", circular" if getattr(section, "is_circle", False)
+                                                  else u", irregular"))
+        self._circ_fill(section)
+        self.redraw()
+
+    # -- circular columns ----------------------------------------------------
+    def _circ_fill(self, section):
+        """Show the circular row for a round section, with the design's choice."""
+        is_circle = getattr(section, "is_circle", False)
+        self.wrap_circ.Visibility = Visibility.Visible if is_circle else Visibility.Collapsed
+        circ = self.design.get("circ") or {}
+        self._filling_circ = True
+        try:
+            (self.rb_circ_spiral if circ.get("t") == rs.CIRC_SPIRAL else self.rb_circ_hoop).IsChecked = True
+            self.txt_circ_pitch.Text = u"{:g}".format(round((circ.get("p") or rs.SPIRAL_PITCH_M) * 100, 1))
+        finally:
+            self._filling_circ = False
+        self._circ_check()
+
+    def _circ_check(self):
+        try:
+            pitch = float((self.txt_circ_pitch.Text or u"").replace(u",", u".")) / 100.0
+            ok, clear = rs.spiral_clear_ok(pitch, rs.BAR_DIAMETERS_MM[self._family_key(rs.KIND_EDGE)] / 1000.0)
+        except (ValueError, KeyError):
+            pitch, ok, clear = None, False, 0.0
+        if not self.rb_circ_spiral.IsChecked:
+            self.txt_circ_check.Text = u""
+        else:
+            self.txt_circ_check.Text = (u"✔ Paso libre {:.1f} cm (E.060: 2.5 a 7.5)" if ok
+                                        else u"✖ Paso libre {:.1f} cm fuera de 2.5 a 7.5 (E.060)").format(clear * 100)
+            self.txt_circ_check.Foreground = C_DRAFT if ok else C_REFUSED
+        return pitch
+
+    def circ_changed(self, sender, args):
+        if getattr(self, "_filling_circ", True) or not hasattr(self, "design"):
+            return
+        pitch = self._circ_check()
+        if self.design.get("circ") is not None:
+            self.design["circ"] = {"t": rs.CIRC_SPIRAL if self.rb_circ_spiral.IsChecked else rs.CIRC_HOOP,
+                                   "p": pitch or rs.SPIRAL_PITCH_M}
+            self.dirty = True
+            self.redraw()
+
+    def circ_auto_click(self, sender, args):
+        """Bars evenly round the circle and the hoop / spiral, inside the cover."""
+        t = self.by_id.get(self.state.active)
+        section = t.section if t else None
+        cover = self._cover_m()
+        if not getattr(section, "is_circle", False) or cover is None:
+            self._status(u"Elige una columna circular y escribe el recubrimiento.")
+            return
+        try:
+            n = max(4, int(self.txt_circ_n.Text))
+        except ValueError:
+            n = 8
+        bar_key = self.bar_key or u'5/8"'
+        ds = rs.BAR_DIAMETERS_MM[self._family_key(rs.KIND_EDGE)] / 1000.0
+        self._push_undo()
+        design = rs.empty_design()
+        design["bars"] = rs.circular_bars(section.radius_m - cover - ds - rs.BAR_DIAMETERS_MM[bar_key] / 2000.0,
+                                          n, bar_key)
+        design["circ"] = {"t": rs.CIRC_SPIRAL if self.rb_circ_spiral.IsChecked else rs.CIRC_HOOP,
+                          "p": self._circ_check() or rs.SPIRAL_PITCH_M}
+        self.design = design
+        self.draft = []
+        self._select(None)
+        self._status(u"Columna circular: {} barras Ø{} y {}. Pulsa 'Guardar configuración' para guardarlo."
+                     .format(n, bar_key, u"espiral" if design["circ"]["t"] == rs.CIRC_SPIRAL else u"aros"), error=False)
         self.redraw()
 
     def _keep_draft(self):
@@ -1246,6 +1313,15 @@ class AceroWindow(forms.WPFWindow):
             angle = 180 if style in rs.TIE_STYLES else 135
             leg = (self.design.get("tie_leg") or rs.tie_leg_cm(key, angle)) / 100.0
             self._steel(frame, rs.bent_tie(a, b, radii[0], radii[1], style, leg), color(kind), thickness)
+        circ = self.design.get("circ")
+        if circ and getattr(section, "is_circle", False) and self._cover_m() is not None:
+            # circular column: the hoop (closed, two 135-degree hooks) or the spiral, as bent
+            key = self._family_key(rs.KIND_EDGE)
+            ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            radius = section.radius_m - self._cover_m() - ds / 2.0
+            path = (rs.hoop_path(radius, ds, max(6 * ds, 0.075)) if circ.get("t") != rs.CIRC_SPIRAL
+                    else rs.circle_points(radius, 72) + rs.circle_points(radius, 72)[:1])
+            self._steel(frame, path, C_STIRRUP, max(2, ds * scale))
         for x, y, key in bars:
             self._dot(frame, x, y, max(3.5, rs.BAR_DIAMETERS_MM[key] / 2000.0 * scale), C_BAR)
 

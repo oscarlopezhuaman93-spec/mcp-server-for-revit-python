@@ -29,6 +29,7 @@ bar carries its column's id in EA_Origen_Id so a new run replaces it.
 
 Runs inside Revit's IronPython engine - no f-strings.
 """
+import clr
 import json
 import math
 import re
@@ -38,6 +39,7 @@ from Autodesk.Revit.DB.Structure import (
     MultiplanarOption,
     Rebar,
     RebarBarType,
+    RebarFreeFormValidationResult,
     RebarHookOrientation,
     RebarHookType,
     RebarHostData,
@@ -296,7 +298,7 @@ class ColumnSpec(object):
             return
         if not (self.design and self.design["bars"]):
             raise spec.SpecError(u"dibuja las barras longitudinales de la seccion (o usa Automatico)")
-        if not self.design["stirrups"]:
+        if not self.design["stirrups"] and not self.design.get("circ"):
             raise spec.SpecError(u"dibuja al menos el estribo de borde")
         kinds = [st[0] for st in self.design["stirrups"]] + [t[0] for t in self.design["ties"]]
         if spec.KIND_CONFINEMENT in kinds and self.confinement is None:
@@ -615,9 +617,23 @@ class Section(object):
         if len(loops) != 1:
             raise spec.SpecError(u"seccion con huecos (no soportada)")
         outline = []
-        for curve in loops[0]:
-            if not isinstance(curve, DB.Line):
+        curved = [c for c in loops[0] if not isinstance(c, DB.Line)]
+        self.is_circle = False
+        self.radius_m = None
+        if curved:
+            # a circular column (its edge one or more arcs of one circle):
+            # the outline as a 48-gon, the circle kept for the steel
+            arcs = [c for c in curved if isinstance(c, DB.Arc)]
+            if len(arcs) != len(list(loops[0])) or any(
+                    not a.Center.IsAlmostEqualTo(arcs[0].Center, 1e-4) or abs(a.Radius - arcs[0].Radius) > 1e-4
+                    for a in arcs):
                 raise spec.SpecError(u"seccion con bordes curvos (no soportada)")
+            centre, radius = arcs[0].Center, arcs[0].Radius
+            outline = [DB.XYZ(centre.X + radius * math.cos(2 * math.pi * k / 48),
+                              centre.Y + radius * math.sin(2 * math.pi * k / 48), centre.Z) for k in range(48)]
+            self.is_circle = True
+            self.radius_m = radius * FT
+        for curve in ([] if curved else loops[0]):
             outline.append(curve.GetEndPoint(0))
         z_bottom = bottom.Origin.Z
         height = z_top - z_bottom
@@ -626,6 +642,8 @@ class Section(object):
         cx, cy = (max(xs) + min(xs)) / 2.0, (max(ys) + min(ys)) / 2.0
         polygon_ft = [(p.X - cx, p.Y - cy) for p in outline]
         area = abs(spec.polygon_signed_area(polygon_ft))
+        if self.is_circle:
+            area = math.pi * (self.radius_m / FT) ** 2
         if height <= 0 or abs(solid.Volume - area * height) > 0.02 * solid.Volume:
             raise spec.SpecError(u"la seccion cambia con la altura (no soportada)")
 
@@ -639,6 +657,10 @@ class Section(object):
         self.z_top = t.OfPoint(DB.XYZ(cx, cy, z_top)).Z
 
     def _wall(self, wall):
+        self.is_circle, self.radius_m = False, None
+        self._wall_outline(wall)
+
+    def _wall_outline(self, wall):
         """A vertical wall of any shape in plan (straight, curved, L, ...):
         its section is the outline of its bottom face (arcs as short
         segments), x along the wall when it is straight. Openings and
@@ -1035,6 +1057,9 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     # own distribution starts there.
     izaje_h = column_spec.izaje_h if (column_spec.izaje and foundation_below(doc, column, section)) else 0.0
     z_start = section.z_bottom + izaje_h / FT
+    circ = design.get("circ") if getattr(section, "is_circle", False) else None
+    if circ:
+        created += _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start)
     # (kind, family, [loop centerlines], [tie centerlines]) per family
     groups = {}
     stirrup_shapes = spec.design_shapes(design, "stirrups")
@@ -1129,6 +1154,52 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 _set(rebar, n, spacing / FT)
                 _tag(rebar, column)
                 created.append((rebar, izaje.key, EDGE))
+    return created
+
+
+def _free_form(doc, bar_type, host, points):
+    """A free-form bar through world points (a hoop with its hooks, a
+    spiral): Revit has no shape for them."""
+    loop = DB.CurveLoop()
+    for a, b in zip(points, points[1:]):
+        if a.DistanceTo(b) > 1e-4:
+            loop.Append(DB.Line.CreateBound(a, b))
+    loops = List[DB.CurveLoop]()
+    loops.Add(loop)
+    result = clr.Reference[RebarFreeFormValidationResult]()
+    rebar = Rebar.CreateFreeForm(doc, bar_type, host, loops, result)
+    if rebar is None:
+        raise spec.SpecError(u"Revit no acepto el estribo circular ({})".format(result.Value))
+    return rebar
+
+
+def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start):
+    """A circular column's edge steel at the cover: hoops (spec.hoop_path,
+    closed with two 135-degree hooks) at the edge distribution, joint
+    included, or one spiral (spec.spiral_path) over the clear height with
+    its extra turns at both ends. Returns [(rebar, key, EDGE)]."""
+    family = column_spec.edge
+    key = family.key
+    ds = spec.BAR_DIAMETERS_MM[key] / 1000.0
+    radius = section.radius_m - column_spec.cover_m - ds / 2.0
+    bar_type = named_bar_type(doc, family.type_name, key) or bar_type_for(key)
+    created = []
+    if circ.get("t") == spec.CIRC_SPIRAL:
+        z0 = (z_start - section.z_bottom) * FT + column_spec.cover_m
+        z1 = (section.z_top - section.z_bottom) * FT - column_spec.cover_m
+        pts = spec.spiral_path(radius, z0, z1, circ.get("p") or spec.SPIRAL_PITCH_M, ds)
+        world = [section.point_m(x, y, section.z_bottom + z / FT) for x, y, z in pts]
+        rebar = _free_form(doc, bar_type, column, world)
+        _tag(rebar, column)
+        return [(rebar, key, EDGE)]
+    plan = spec.hoop_path(radius, ds, max(6 * ds, 0.075))
+    joint_m = column_spec.joint_spacing_m or family.rest
+    for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
+        for i in range(n):
+            z = z_set + i * spacing
+            rebar = _free_form(doc, bar_type, column, [section.point_m(x, y, z) for x, y in plan])
+            _tag(rebar, column)
+            created.append((rebar, key, EDGE))
     return created
 
 

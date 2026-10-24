@@ -218,6 +218,81 @@ def bent_tie(a, b, radius_a, radius_b, style, hook_leg):
     return ends[0][::-1] + ends[1]
 
 
+# --- circular columns: hoops and spirals --------------------------------------
+
+CIRC_HOOP, CIRC_SPIRAL = u"aro", u"espiral"
+SPIRAL_PITCH_M = 0.075
+SPIRAL_EXTRA_TURNS = 1.5  # E.060: anchorage, at each end
+SPIRAL_CLEAR_MIN, SPIRAL_CLEAR_MAX = 0.025, 0.075  # E.060 clear pitch, m
+
+
+def circle_points(radius, n=48, start=0.0):
+    return [(radius * math.cos(start + 2 * math.pi * k / n), radius * math.sin(start + 2 * math.pi * k / n))
+            for k in range(n)]
+
+
+def circular_bars(radius_bars, count, key, start=None):
+    """`count` bars evenly round a circle of radius `radius_bars` (centers);
+    none on the axes when it can be helped (start half a step off)."""
+    start = math.pi / count if start is None else start
+    return [(x, y, key) for x, y in circle_points(radius_bars, count, start)]
+
+
+def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48):
+    """A circular hoop in plan as bent: a full turn round the core plus a
+    short overlap, both ends finishing in a closed 135-degree hook - a bend
+    of 2.5 ds radius turning into the core and a straight leg `hook_leg`.
+    One polyline [(x, y)], counterclockwise."""
+    bend = 2.5 * ds
+    overlap = 2.0 * bend / radius  # the two hooks side by side over one bar
+    a0, a1 = start, start + 2 * math.pi + overlap
+    n = max(steps, 8)
+    arc = [(radius * math.cos(a0 + (a1 - a0) * k / float(n)), radius * math.sin(a0 + (a1 - a0) * k / float(n)))
+           for k in range(n + 1)]
+
+    def hook(angle, sign):
+        # at the end of the arc (sign +1, travelling counterclockwise) or at
+        # its start (sign -1, travelling back): bend 135 degrees inward
+        px, py = radius * math.cos(angle), radius * math.sin(angle)
+        tx, ty = -math.sin(angle) * sign, math.cos(angle) * sign  # travel direction
+        nx, ny = -math.cos(angle), -math.sin(angle)  # into the core
+        cx, cy = px + nx * bend, py + ny * bend  # centre of the bend
+        a_from = math.atan2(py - cy, px - cx)
+        pts = [(cx + bend * math.cos(a_from + sign * 0.75 * math.pi * k / 8.0),
+                cy + bend * math.sin(a_from + sign * 0.75 * math.pi * k / 8.0)) for k in range(1, 9)]
+        end = a_from + sign * 0.75 * math.pi
+        lx, ly = -math.sin(end) * sign, math.cos(end) * sign
+        last = pts[-1]
+        return pts + [(last[0] + lx * hook_leg, last[1] + ly * hook_leg)]
+
+    return hook(a0, -1.0)[::-1] + arc + hook(a1, 1.0)
+
+
+def spiral_path(radius, z_start, z_end, pitch, ds, extra_turns=SPIRAL_EXTRA_TURNS, per_turn=24):
+    """A spiral as points (x, y, z) from z_start to z_end (m): `extra_turns`
+    nearly flat turns at each end (anchorage, one bar diameter apart) and
+    the body at `pitch`."""
+    tight = ds * 1.05
+    body = max(z_end - z_start - 2 * extra_turns * tight, 0.0)
+    turns_body = body / pitch
+    segments = [(extra_turns, tight), (turns_body, pitch), (extra_turns, tight)]
+    pts, angle, z = [], 0.0, z_start
+    pts.append((radius, 0.0, z))
+    for turns, step in segments:
+        n = max(1, int(round(turns * per_turn)))
+        for k in range(n):
+            angle += 2 * math.pi * turns / n
+            z += step * turns / n
+            pts.append((radius * math.cos(angle), radius * math.sin(angle), z))
+    return pts
+
+
+def spiral_clear_ok(pitch, ds):
+    """E.060: the clear space between turns, 2.5 to 7.5 cm."""
+    clear = pitch - ds
+    return SPIRAL_CLEAR_MIN - 1e-9 <= clear <= SPIRAL_CLEAR_MAX + 1e-9, clear
+
+
 def tie_hook_marks(a, b, style, radius):
     """Plan preview of a crosstie's 180-degree hooks: at each end (a, b) a
     half circle of `radius` turning back along the tie - both on one side
@@ -883,7 +958,10 @@ def design_to_text(design):
     }
     if design.get("tie_leg"):
         data["tl"] = r(design["tie_leg"])  # crosstie hook leg, cm
-    if not (data["bars"] or data["stirrups"] or data["ties"]):
+    circ = design.get("circ")
+    if circ:  # circular column: hoops or a spiral at the cover ({"t", "p"})
+        data["ci"] = {"t": circ.get("t", CIRC_HOOP), "p": r(circ.get("p", SPIRAL_PITCH_M))}
+    if not (data["bars"] or data["stirrups"] or data["ties"] or circ):
         return u""
     return json.dumps(data, separators=(",", ":"))
 
@@ -910,6 +988,9 @@ def design_from_text(text):
         design = empty_design()
         if data.get("tl"):
             design["tie_leg"] = float(data["tl"])
+        if data.get("ci"):
+            design["circ"] = {"t": data["ci"].get("t", CIRC_HOOP),
+                              "p": float(data["ci"].get("p", SPIRAL_PITCH_M))}
         for x, y, key in data.get("bars", []):
             if key not in BAR_DIAMETERS_MM:
                 raise SpecError(u"Diametro desconocido en el dibujo: {}".format(key))

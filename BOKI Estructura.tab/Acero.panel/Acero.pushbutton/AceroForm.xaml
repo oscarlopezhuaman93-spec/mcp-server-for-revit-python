@@ -301,6 +301,28 @@
                                VerticalAlignment="Center"
                                ToolTip="Forma de armadura de los estribos (o grapas) que dibujes. Se elige con un clic en el panel Formas de armadura."/>
                 </WrapPanel>
+                <!-- Circular columns: hoops or a spiral at the cover (shown only for a round section) -->
+                <Border DockPanel.Dock="Top" x:Name="wrap_circ" Visibility="Collapsed" Margin="0,0,0,4" Padding="6,4"
+                        Background="#FFE8F2FE" BorderBrush="#FF9DBEE8" BorderThickness="1">
+                    <WrapPanel>
+                        <TextBlock Text="Columna circular: " FontWeight="Bold" VerticalAlignment="Center"/>
+                        <RadioButton x:Name="rb_circ_hoop" GroupName="circ" Content="Aro (zuncho)" IsChecked="True"
+                                     Margin="0,0,8,0" VerticalAlignment="Center" Checked="circ_changed"
+                                     ToolTip="Aros cerrados con traslape y dos ganchos de 135&#176; hacia el n&#250;cleo, con la distribuci&#243;n del estribo de borde."/>
+                        <RadioButton x:Name="rb_circ_spiral" GroupName="circ" Content="Espiral" Margin="0,0,12,0"
+                                     VerticalAlignment="Center" Checked="circ_changed"
+                                     ToolTip="Una espiral continua en la altura libre, con 1.5 vueltas extra arriba y abajo (anclaje E.060)."/>
+                        <TextBlock Text="Paso (cm): " VerticalAlignment="Center"/>
+                        <TextBox x:Name="txt_circ_pitch" Width="40" Margin="0,0,12,0" VerticalAlignment="Center" TextChanged="circ_changed"
+                                 ToolTip="Paso de la espiral, de eje a eje. E.060: espacio libre entre vueltas de 2.5 a 7.5 cm."/>
+                        <TextBlock Text="Barras: " VerticalAlignment="Center"/>
+                        <TextBox x:Name="txt_circ_n" Width="30" Text="8" Margin="0,0,6,0" VerticalAlignment="Center"
+                                 ToolTip="N&#250;mero de barras longitudinales repartidas en el c&#237;rculo (del di&#225;metro elegido en Barras)."/>
+                        <Button Content="Armar circular" Padding="8,0" Margin="0,0,12,0" Click="circ_auto_click"
+                                ToolTip="Coloca las barras repartidas en el c&#237;rculo y el aro o la espiral, ajustados al recubrimiento."/>
+                        <TextBlock x:Name="txt_circ_check" VerticalAlignment="Center" FontWeight="Bold"/>
+                    </WrapPanel>
+                </Border>
                 <TextBlock DockPanel.Dock="Top" x:Name="txt_status" Foreground="#FFC0392B" FontWeight="Bold"
                            TextWrapping="Wrap" Margin="0,0,0,4" Visibility="Collapsed"/>
                 <!-- Measures of the selected stirrup (outer face, cm) -->
