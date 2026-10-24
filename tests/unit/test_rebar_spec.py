@@ -942,3 +942,20 @@ class TestFittedDesign:
         d = fitted_design(rect, 0.04, '3/8"', '5/8"')
         xs = sorted(round(abs(x), 4) for x, _, _ in d["bars"])
         assert len(xs) == 4 and abs(xs[0] - (0.125 - 0.04 - 0.009525 - 0.0079375)) < 1e-4
+
+
+class TestHoop:
+    def test_closes_on_a_bar_with_parallel_legs(self):
+        import math
+        from revit_mcp.rebar_spec import hoop_path, hoop_closing, circular_bars
+        ds = 0.009525
+        bars = circular_bars(0.20 - 0.04 - ds - 0.0079, 8, '5/8"')
+        c = hoop_closing(bars, ds)
+        p = hoop_path(0.20 - 0.04 - ds / 2, ds, 0.075, **c)
+        bx, by, _ = min(bars, key=lambda b: abs(math.atan2(b[1], b[0]) - c["start"]))
+        d1 = (p[0][0] - p[1][0], p[0][1] - p[1][1])
+        d2 = (p[-1][0] - p[-2][0], p[-1][1] - p[-2][1])
+        assert abs(d1[0] * d2[1] - d1[1] * d2[0]) < 1e-9  # parallel legs
+        # the bar between the two legs
+        side = [((q[0] - bx) * -by + (q[1] - by) * bx) for q in (p[0], p[-1])]
+        assert side[0] * side[1] < 0

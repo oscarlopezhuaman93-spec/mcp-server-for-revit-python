@@ -250,14 +250,16 @@ def _bend_to(point, direction, sign, radius, target, steps=10):
              cy + radius * math.sin(a0 + sign * turn * k / float(steps))) for k in range(1, steps + 1)]
 
 
-def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48):
+def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48, wrap=None):
     """A circular hoop in plan as it is bent on site: nearly a full turn,
     both ends at `start` bent into the core (2.5 ds bends) as two parallel
     legs `hook_leg` long, side by side towards the centre - no crossing.
-    One polyline [(x, y)], counterclockwise."""
-    bend = 2.5 * ds
+    `wrap` (bar radius + ds / 2): it closes on the vertical bar at `start`
+    - both ends wrap that bar, a 90-degree bend round it each, and run into
+    the core on either side of it. One polyline [(x, y)], counterclockwise."""
+    bend = 2.5 * ds if wrap is None else max(wrap, 2.5 * ds)  # Revit's minimum bend
     gap = 1.5 * ds  # half the clear space between the two legs
-    delta = math.asin(min(0.9, (gap + bend + ds / 2.0) / radius))
+    delta = 0.0 if wrap is not None else math.asin(min(0.9, (gap + bend + ds / 2.0) / radius))
     a0, a1 = start + delta, start - delta + 2 * math.pi
     arc = [(radius * math.cos(a0 + (a1 - a0) * k / float(steps)), radius * math.sin(a0 + (a1 - a0) * k / float(steps)))
            for k in range(steps + 1)]
@@ -273,6 +275,15 @@ def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48):
         return pts + [(last[0] + inward[0] * hook_leg, last[1] + inward[1] * hook_leg)]
 
     return end(a0, -1.0)[::-1] + arc + end(a1, 1.0)
+
+def hoop_closing(bars, ds):
+    """Where a circular hoop closes: on the topmost vertical bar, wrapping
+    it ({"start", "wrap"} for hoop_path); {} without bars."""
+    if not bars:
+        return {}
+    x, y, key = max(bars, key=lambda b: (round(b[1], 4), -b[0]))
+    return {"start": math.atan2(y, x), "wrap": BAR_DIAMETERS_MM[key] / 2000.0 + ds / 2.0}
+
 
 def spiral_path(radius, z_start, z_end, pitch, ds, extra_turns=SPIRAL_EXTRA_TURNS, per_turn=24):
     """A spiral as points (x, y, z) from z_start to z_end (m): `extra_turns`

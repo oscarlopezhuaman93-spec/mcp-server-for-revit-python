@@ -1319,7 +1319,7 @@ class AceroWindow(forms.WPFWindow):
             key = self._family_key(rs.KIND_EDGE)
             ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
             radius = section.radius_m - self._cover_m() - ds / 2.0
-            path = (rs.hoop_path(radius, ds, max(6 * ds, 0.075)) if circ.get("t") != rs.CIRC_SPIRAL
+            path = (rs.hoop_path(radius, ds, max(6 * ds, 0.075), **rs.hoop_closing(bars, ds)) if circ.get("t") != rs.CIRC_SPIRAL
                     else rs.circle_points(radius, 72) + rs.circle_points(radius, 72)[:1])
             self._steel(frame, path, C_STIRRUP, max(2, ds * scale))
         for x, y, key in bars:

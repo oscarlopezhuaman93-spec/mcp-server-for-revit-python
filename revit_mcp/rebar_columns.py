@@ -1192,7 +1192,7 @@ def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_cle
         rebar = _free_form(doc, bar_type, column, world)
         _tag(rebar, column)
         return [(rebar, key, EDGE)]
-    plan = spec.hoop_path(radius, ds, max(6 * ds, 0.075))
+    plan = spec.hoop_path(radius, ds, max(6 * ds, 0.075), **spec.hoop_closing(column_spec.design["bars"], ds))
     joint_m = column_spec.joint_spacing_m or family.rest
     for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
         for i in range(n):
