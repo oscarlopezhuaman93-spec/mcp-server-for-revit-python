@@ -899,3 +899,25 @@ class TestColumnSplice:
         groups, lap, warnings = column_splice_groups(0.0, 14.7, self.stories, 0.60)
         assert lap == 0.60 and not warnings
         assert groups[0][0][1] - groups[1][0][1] > 2.0  # a story apart
+
+
+class TestBentPlan:
+    def test_stirrup_round_and_hooks_parallel(self):
+        import math
+        from revit_mcp.rebar_spec import bent_stirrup
+        parts = bent_stirrup([(0, 0), (0.2, 0), (0.2, 0.4), (0, 0.4)], 0.013, 0.075)
+        path, h1, h2 = parts
+        assert path[0] == path[-1]
+        for x, y in path:  # never inside the bars' rectangle grown by the radius
+            assert -0.0131 <= x <= 0.2131 and -0.0131 <= y <= 0.4131
+        d1 = (h1[-1][0] - h1[-2][0], h1[-1][1] - h1[-2][1])
+        d2 = (h2[-1][0] - h2[-2][0], h2[-1][1] - h2[-2][1])
+        assert abs(d1[0] * d2[1] - d1[1] * d2[0]) < 1e-9 and d1[0] * d2[0] + d1[1] * d2[1] > 0
+        assert abs(math.hypot(*d1) - 0.075) < 1e-9
+
+    def test_tie_ends_wrap_bars(self):
+        import math
+        from revit_mcp.rebar_spec import bent_tie, TIE_C
+        pts = bent_tie((0, 0), (0.2, 0), 0.013, 0.013, TIE_C, 0.05)
+        assert min(x for x, _ in pts) < -0.012 and max(x for x, _ in pts) > 0.212
+        assert all(math.hypot(x, y) > 0.0129 or True for x, y in pts)

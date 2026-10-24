@@ -37,8 +37,8 @@
              tools show (the generation makes everything at once) -->
         <TabControl DockPanel.Dock="Top" x:Name="tab_steel" Margin="0,0,0,8" SelectionChanged="tab_changed"
                     Background="Transparent" BorderThickness="0,1,0,0">
-            <TabItem Header="Acero longitudinal" Padding="12,4" FontWeight="Bold"/>
             <TabItem Header="Estribos" Padding="12,4" FontWeight="Bold"/>
+            <TabItem Header="Acero longitudinal" Padding="12,4" FontWeight="Bold"/>
         </TabControl>
         <!-- Bottom: run (the columns picked in the model, or else every
              column of the checked types) -->

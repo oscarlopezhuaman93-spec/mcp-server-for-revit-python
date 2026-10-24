@@ -121,6 +121,99 @@ def tie_leg_cm(diameter_key, angle):
     return math.ceil(leg * 2.0 - 1e-9) / 2.0
 
 
+def _arc(center, radius, a0, a1, step=math.pi / 16):
+    """Points on a circle from angle a0 to a1 (either way), both ends in."""
+    n = max(1, int(math.ceil(abs(a1 - a0) / step)))
+    return [(center[0] + radius * math.cos(a0 + (a1 - a0) * k / float(n)),
+             center[1] + radius * math.sin(a0 + (a1 - a0) * k / float(n))) for k in range(n + 1)]
+
+
+def bent_stirrup(vertices, radius, hook_leg, is_open=False, bend=None):
+    """A stirrup in plan as it is bent: its centerline `radius` outside the
+    drawn vertices (the wrapped bar centers), round over each bar, and - a
+    closed one - the two 135-degree hooks at the first corner, each going
+    on round the bar 45 degrees past the corner and then straight into the
+    core `hook_leg`. `bend`: the bend radius of the centerline when larger
+    than `radius` (Revit bends a stirrup round a pin: about 2.5 db), the
+    corner then rounding inside the bar. Returns [path, hook, hook]
+    ([path] when open)."""
+    bend = max(bend or 0.0, radius)
+    pts = list(vertices) if is_open else counterclockwise(vertices)
+    n = len(pts)
+    if n < 2:
+        return []
+
+    def normal(a, b):  # outward of a counterclockwise polygon (right side)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy) or 1.0
+        return dy / length, -dx / length
+
+    if is_open:
+        if polygon_signed_area(pts) < 0:  # the U bulges to the right of its run
+            pts = pts[::-1]
+        path = [(pts[0][0] + normal(pts[0], pts[1])[0] * radius, pts[0][1] + normal(pts[0], pts[1])[1] * radius)]
+        corners = range(1, n - 1)
+    else:
+        path = []
+        corners = range(n)
+    angles, centers = {}, {}
+    for k in corners:
+        p, prev, nxt = pts[k], pts[k - 1], pts[(k + 1) % n]
+        n_in, n_out = normal(prev, p), normal(p, nxt)
+        a_in, a_out = math.atan2(n_in[1], n_in[0]), math.atan2(n_out[1], n_out[0])
+        turn = (a_out - a_in + math.pi) % (2 * math.pi) - math.pi
+        if turn >= 0:  # convex: round over the bar
+            # the centre `bend` inside both offset sides
+            k_ = (bend - radius) / (1.0 + math.cos(turn))
+            c = (p[0] - k_ * (math.cos(a_in) + math.cos(a_in + turn)),
+                 p[1] - k_ * (math.sin(a_in) + math.sin(a_in + turn)))
+            path += _arc(c, bend, a_in, a_in + turn)
+            centers[k] = c
+        else:  # concave: the offset sides meet
+            half = turn / 2.0
+            r = radius / max(math.cos(half), 0.2)
+            path.append((p[0] + r * math.cos(a_in + half), p[1] + r * math.sin(a_in + half)))
+        angles[k] = (a_in, a_in + turn)
+    if is_open:
+        path.append((pts[-1][0] + normal(pts[-2], pts[-1])[0] * radius,
+                     pts[-1][1] + normal(pts[-2], pts[-1])[1] * radius))
+        return [path]
+    path.append(path[0])
+    a_in, a_out = angles[0]
+    p = centers.get(0, pts[0])
+    hooks = []
+    for start, end, sign in ((a_in, a_out + math.pi / 4, 1.0), (a_out, a_in - math.pi / 4, -1.0)):
+        arc = _arc(p, bend, start, end)
+        tx, ty = -math.sin(end) * sign, math.cos(end) * sign
+        arc.append((arc[-1][0] + tx * hook_leg, arc[-1][1] + ty * hook_leg))
+        hooks.append(arc)
+    return [path] + hooks
+
+
+def bent_tie(a, b, radius_a, radius_b, style, hook_leg):
+    """A crosstie in plan as it is bent, between bar centers a and b: a
+    straight run beside the bars and, at each end, round its bar (135
+    degrees; 180 for TIE_C / TIE_S, the S turning to opposite sides) and a
+    straight leg `hook_leg`. One polyline."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux
+    sweep = math.pi if style in TIE_STYLES else 0.75 * math.pi
+    side_b = -1.0 if style == TIE_S else 1.0
+    ends = []
+    for c, r, side, toward in ((a, radius_a, 1.0, -1.0), (b, radius_b, side_b, 1.0)):
+        start = math.atan2(ny * side, nx * side)
+        # from the tie's side round the far side of the bar (away from the run)
+        sign = 1.0 if (side * toward) < 0 else -1.0
+        end = start + sign * sweep
+        arc = _arc(c, r, start, end)
+        tx, ty = -math.sin(end) * sign, math.cos(end) * sign
+        arc.append((arc[-1][0] + tx * hook_leg, arc[-1][1] + ty * hook_leg))
+        ends.append(arc)
+    return ends[0][::-1] + ends[1]
+
+
 def tie_hook_marks(a, b, style, radius):
     """Plan preview of a crosstie's 180-degree hooks: at each end (a, b) a
     half circle of `radius` turning back along the tie - both on one side
