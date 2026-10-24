@@ -363,3 +363,22 @@ def place_bricks(model, ribbed_plan, types):
         if c is not None and not c.IsReadOnly:
             c.Set(tag)
     return ids.Count
+
+class DropFailing(DB.IFailuresPreprocessor):
+    """Revit's warnings noted and dismissed; an element Revit refuses (a
+    brick cut outside its host, a bar fully out of the slab) is deleted
+    on its own instead of undoing everything."""
+
+    def __init__(self):
+        self.messages = []
+
+    def PreprocessFailures(self, accessor):
+        resolved = False
+        for f in accessor.GetFailureMessages():
+            self.messages.append(f.GetDescriptionText())
+            if f.GetSeverity() == DB.FailureSeverity.Warning:
+                accessor.DeleteWarning(f)
+            elif f.HasResolutions():
+                accessor.ResolveFailure(f)
+                resolved = True
+        return DB.FailureProcessingResult.ProceedWithCommit if resolved else DB.FailureProcessingResult.Continue

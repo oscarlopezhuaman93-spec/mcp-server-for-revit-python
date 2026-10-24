@@ -102,7 +102,8 @@ def test_ribbed_layout_bricks_and_bars():
     assert sr.brick_width(LIB, 0.22) == 0.22  # cut to the strip
     assert sr.brick_width(LIB, 0.22, cut=False) == 0.20
     pieces = sr.fill_bricks(0.0, 0.65, LIB, 0.22)  # a cut width from the widest type
-    assert all(p["ancho"] == 0.22 for p in pieces) and pieces[-1]["s1"] == pytest.approx(0.65)
+    # 2 bricks + 0.05 left: under the 0.10 minimum piece, it stays concrete
+    assert all(p["ancho"] == 0.22 for p in pieces) and pieces[-1]["s1"] == pytest.approx(0.60)
     # the start: the first strip 0.10 from the face, the vigueta spacing kept
     centers, strips = sr.rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, start=0.10)
     assert strips[0][0] == pytest.approx(0.10)

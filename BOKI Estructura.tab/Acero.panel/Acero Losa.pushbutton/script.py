@@ -735,6 +735,11 @@ def generate_all(state, models, splice):
     bar_types = rc.BarTypes(doc)
     failed, count, warnings, bricks = [], 0, [], 0
     t = DB.Transaction(doc, "Acero losa")
+    failures = rsl.DropFailing()  # a brick or bar Revit refuses goes alone, not everything
+    opts = t.GetFailureHandlingOptions()
+    opts.SetFailuresPreprocessor(failures)
+    opts.SetForcedModalHandling(False)
+    t.SetFailureHandlingOptions(opts)
     t.Start()
     try:
         rc.ensure_parameters(doc)

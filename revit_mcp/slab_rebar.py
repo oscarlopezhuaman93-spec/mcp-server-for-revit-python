@@ -402,7 +402,7 @@ def rib_layout(bay, b, s, brick_w, start=0.0):
     return centers, strips
 
 
-def fill_bricks(a, b, lib, width, min_piece=0.05, cut=True):
+def fill_bricks(a, b, lib, width, min_piece=0.10, cut=True):
     """Bricks filling a ... b, `width` wide: [{"type", "largo", "ancho", "s0",
     "s1"}]. The family's types of that width first (whole bricks, then a
     shorter type that fits the rest); what still sticks out is cut: a piece
@@ -441,7 +441,7 @@ def brick_width(lib, room, cut=True):
     for w in widths:
         if abs(w - room) < 2e-3:
             return w
-    if cut and room >= 0.05:
+    if cut and room >= 0.10:  # narrower: the family's hollows don't fit
         return round(room, 3)
     for w in widths:
         if w <= room + 1e-6:
