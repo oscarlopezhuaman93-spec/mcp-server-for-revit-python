@@ -29,7 +29,9 @@
                 <ListBox x:Name="list_elements" MaxHeight="110" SelectionChanged="element_selected"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
 
-                <Expander Header="2. Acero de la losa" Margin="0,8,0,0" IsExpanded="True">
+                <TabControl x:Name="tabs" Margin="0,8,0,0">
+                <TabItem Header="Acero">
+                <Expander Header="2. Acero de la losa" Margin="0,4,0,0" IsExpanded="True">
                     <StackPanel Margin="6,4,6,4">
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                             <TextBlock Text="Recubrimiento: " VerticalAlignment="Center"/>
@@ -83,38 +85,8 @@
                         </StackPanel>
 
                         <StackPanel x:Name="panel_alig" Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
-                                <TextBlock Text="Viguetas en: " VerticalAlignment="Center"/>
-                                <ComboBox x:Name="cbo_dir" Width="150" SelectionChanged="form_changed"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
-                                <TextBlock Text="Girar " VerticalAlignment="Center"/>
-                                <TextBox x:Name="txt_angle" Width="40" TextChanged="form_changed"
-                                         ToolTip="Direcci&#243;n de las viguetas y los ladrillos (grados, antihorario desde X). Vac&#237;o: a lo largo del lado m&#225;s largo de la losa (sus vigas). Tambi&#233;n con &quot;Elegir direcci&#243;n&quot; en la planta."/>
-                                <TextBlock Text=" &#176;   Inicio desde la cara " VerticalAlignment="Center"/>
-                                <TextBox x:Name="txt_start" Width="36" TextChanged="form_changed"
-                                         ToolTip="Distancia de la cara de la viga paralela a la primera fila de ladrillos (m). Desde ah&#237; se respeta el espaciamiento de las viguetas."/>
-                                <TextBlock Text=" m" VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
-                                <TextBlock Text="Ancho " VerticalAlignment="Center"/>
-                                <TextBox x:Name="txt_vb" Width="36" TextChanged="form_changed"/>
-                                <TextBlock Text=" m   @ " VerticalAlignment="Center"/>
-                                <TextBox x:Name="txt_vs" Width="36" TextChanged="form_changed"/>
-                                <TextBlock Text=" m" VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <TextBlock Text="Ladrillo de techo (tipos de la familia cargada):" Margin="0,6,0,1"/>
-                            <ComboBox x:Name="cbo_brick" Margin="16,0,0,2" SelectionChanged="form_changed"
-                                      ToolTip="Los tipos de ladrillo del proyecto, como en la paleta de propiedades. Para completar los extremos y los bordes se usan los tipos m&#225;s cortos o angostos de la misma familia y altura."/>
-                            <CheckBox x:Name="chk_brick" Content="Colocar los ladrillos al generar" Margin="16,2,0,2" Click="form_changed"/>
-                            <CheckBox x:Name="chk_cut" Content="Cortar lo que sobresale (pieza a medida)" Margin="16,0,0,4" Click="form_changed"
-                                      ToolTip="Ning&#250;n ladrillo sale de la losa ni entra en una viga: el que sobresale se coloca cortado, con un tipo de la misma familia a esa medida (se crea si no existe)."/>
-                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
-                                <TextBlock Text="Ensanche " VerticalAlignment="Center"/>
-                                <ComboBox x:Name="cbo_ens" Width="90" SelectionChanged="form_changed"/>
-                                <TextBox x:Name="txt_ens" Width="36" Margin="4,0,0,0" TextChanged="form_changed"/>
-                                <TextBlock Text=" m" VerticalAlignment="Center"/>
-                            </StackPanel>
+                            <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,2"
+                                       Text="La distribuci&#243;n de viguetas y los ladrillos est&#225;n en la pesta&#241;a 'Ladrillos de techo'."/>
                             <Border x:Name="panel_roof" Visibility="Collapsed" Background="#FFFFF4D6" BorderBrush="#FFE0B050"
                                     BorderThickness="1" Padding="6,4" Margin="0,8,0,2">
                                 <StackPanel>
@@ -171,6 +143,53 @@
                         <TextBlock x:Name="txt_splice" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,10,0,0"/>
                     </StackPanel>
                 </Expander>
+                </TabItem>
+                <TabItem Header="Ladrillos de techo">
+                    <StackPanel Margin="6,6,6,4">
+                        <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
+                                   Text="Solo para losas aligeradas. Coloca los ladrillos de techo sin tocar el acero (en losas inclinadas, inclinados con la pendiente)."/>
+                        <TextBlock x:Name="txt_bricks_kind" Foreground="#FFB02020" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                        <TextBlock Text="Viguetas" FontWeight="Bold" Margin="0,2,0,2"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                                <TextBlock Text="Viguetas en: " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_dir" Width="150" SelectionChanged="form_changed"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
+                                <TextBlock Text="Girar " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_angle" Width="40" TextChanged="form_changed"
+                                         ToolTip="Direcci&#243;n de las viguetas y los ladrillos (grados, antihorario desde X). Vac&#237;o: a lo largo del lado m&#225;s largo de la losa (sus vigas). Tambi&#233;n con &quot;Elegir direcci&#243;n&quot; en la planta."/>
+                                <TextBlock Text=" &#176;   Inicio desde la cara " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_start" Width="36" TextChanged="form_changed"
+                                         ToolTip="Distancia de la cara de la viga paralela a la primera fila de ladrillos (m). Desde ah&#237; se respeta el espaciamiento de las viguetas."/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
+                                <TextBlock Text="Ancho " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_vb" Width="36" TextChanged="form_changed"/>
+                                <TextBlock Text=" m   @ " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_vs" Width="36" TextChanged="form_changed"/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Ladrillo de techo (tipos de la familia cargada):" Margin="0,6,0,1"/>
+                            <ComboBox x:Name="cbo_brick" Margin="16,0,0,2" SelectionChanged="form_changed"
+                                      ToolTip="Los tipos de ladrillo del proyecto, como en la paleta de propiedades. Para completar los extremos y los bordes se usan los tipos m&#225;s cortos o angostos de la misma familia y altura."/>
+                            <CheckBox x:Name="chk_brick" Content="Colocarlos tambi&#233;n al generar el acero" Margin="16,2,0,2" Click="form_changed"/>
+                            <CheckBox x:Name="chk_cut" Content="Cortar lo que sobresale (pieza a medida)" Margin="16,0,0,4" Click="form_changed"
+                                      ToolTip="Ning&#250;n ladrillo sale de la losa ni entra en una viga: el que sobresale se coloca cortado, con un tipo de la misma familia a esa medida (se crea si no existe)."/>
+                            <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
+                                <TextBlock Text="Ensanche " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_ens" Width="90" SelectionChanged="form_changed"/>
+                                <TextBox x:Name="txt_ens" Width="36" Margin="4,0,0,0" TextChanged="form_changed"/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        <Button x:Name="button_bricks" Content="COLOCAR SOLO LADRILLOS" Height="34" FontWeight="Bold" Margin="0,12,0,4"
+                                Click="bricks_only_click"
+                                ToolTip="Coloca (o vuelve a colocar) los ladrillos de techo de las losas seleccionadas, sin crear ni borrar acero."/>
+                        <TextBlock Foreground="Gray" FontSize="10" TextWrapping="Wrap"
+                                   Text="Los ladrillos que el plugin coloc&#243; antes en esas losas se reemplazan. La planta y los cortes muestran c&#243;mo quedan."/>
+                    </StackPanel>
+                </TabItem>
+                </TabControl>
             </StackPanel>
             </ScrollViewer>
 

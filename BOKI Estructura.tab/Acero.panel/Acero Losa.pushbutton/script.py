@@ -278,6 +278,9 @@ class LosaWindow(forms.WPFWindow):
         from System.Windows import Visibility
         self.panel_maciza.Visibility = Visibility.Visible if kind == sr.MACIZA else Visibility.Collapsed
         self.panel_alig.Visibility = Visibility.Visible if kind == sr.ALIGERADA else Visibility.Collapsed
+        self.txt_bricks_kind.Text = u"" if kind == sr.ALIGERADA else \
+            u"Esta losa est\u00e1 como Maciza: elige 'Aligerada' en la pesta\u00f1a Acero para sus ladrillos."
+        self.button_bricks.IsEnabled = kind == sr.ALIGERADA
         partner = self._partner() if hasattr(self, "_partners") else None
         self.panel_roof.Visibility = Visibility.Visible if (kind == sr.ALIGERADA and partner) else Visibility.Collapsed
         if partner:
@@ -874,6 +877,19 @@ class LosaWindow(forms.WPFWindow):
         self.action = "create_slabs"
         self.Close()
 
+    def bricks_only_click(self, sender, args):
+        if not self.state.picked_ids:
+            forms.alert(u"Selecciona primero las losas.", title=u"Acero Losa")
+            return
+        alig = [i for i in self.state.picked_ids
+                if settings_for(self.state, doc.GetElement(DB.ElementId(i)), self.bricks, 0.20).get("kind") == sr.ALIGERADA]
+        if not alig:
+            forms.alert(u"Los ladrillos de techo son para losas aligeradas (elige 'Aligerada' en Tipo de losa).",
+                        title=u"Acero Losa")
+            return
+        self.action = "bricks"
+        self.Close()
+
     def run_click(self, sender, args):
         if not self.state.picked_ids:
             forms.alert(u"Selecciona primero las losas.", title=u"Acero Losa")
@@ -964,6 +980,60 @@ def generate_all(state, models, splice):
     return count, failed, warnings, bricks
 
 
+def settings_for(state, floor, types, thickness):
+    """The slab's settings: as edited in the window, else as saved on it,
+    else its first ones (the kind from its type's name, the brick that fits)."""
+    fid = id_of(floor.Id)
+    if fid in state.settings:
+        return state.settings[fid]
+    st = rsl.read_settings(floor)
+    p = floor.LookupParameter(rsl.PARAM)
+    if not (p is not None and (p.AsString() or u"").strip()):
+        name = doc.GetElement(floor.GetTypeId()).get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString().upper()
+        st["kind"] = sr.ALIGERADA if u"ALIGERAD" in name else sr.MACIZA
+        st["alig"] = {"brick": rsl.default_brick(types, thickness), "place": True}
+    state.settings[fid] = st
+    return st
+
+
+def place_bricks_only(state, models):
+    """Only the roof bricks of the picked ribbed slabs (their steel left as
+    it is): the old bricks of each replaced. Returns (placed, failed)."""
+    placed, failed = 0, []
+    t = DB.Transaction(doc, "Ladrillos de techo")
+    failures = rsl.DropFailing()
+    opts = t.GetFailureHandlingOptions()
+    opts.SetFailuresPreprocessor(failures)
+    opts.SetForcedModalHandling(False)
+    t.SetFailureHandlingOptions(opts)
+    t.Start()
+    try:
+        fw_params.ensure_parameters(doc, "Acero", [(rsl.PARAM, True, [FLOORS_BIC], True)])
+        types = rsl.brick_types(doc)
+        for element_id in state.picked_ids:
+            floor = doc.GetElement(DB.ElementId(element_id))
+            model = models.get(element_id) or rsl.SlabModel(floor)
+            settings = settings_for(state, floor, types, model.thickness)
+            if settings.get("kind") != sr.ALIGERADA:
+                continue
+            rsl.write_settings(floor, settings)
+            try:
+                lib = rsl.brick_library(doc, settings, types)
+                if not lib:
+                    failed.append(u"Losa id {}: no hay tipo de ladrillo elegido".format(element_id))
+                    continue
+                rsl.delete_bricks(doc, floor)
+                _, rib, _ = model.plan(settings, MM, None, lib)
+                placed += rsl.place_bricks(model, rib, types)
+            except Exception as e:
+                failed.append(u"Losa id {}: {}".format(element_id, e))
+        t.Commit()
+    except Exception:
+        t.RollBack()
+        raise
+    return placed, failed
+
+
 # --- main -------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
@@ -990,6 +1060,12 @@ if __name__ == "__main__":
                 state.active = new[0]
             continue
         break
+    if window.action == "bricks":
+        placed, failed = place_bricks_only(state, models)
+        msg = u"Ladrillos de techo colocados: {} (el acero no se modific\u00f3).".format(placed)
+        if failed:
+            msg += u"\n\nNo se pudo:\n- " + u"\n- ".join(failed)
+        forms.alert(msg, title=u"Acero Losa")
     if window.action == "run":
         state.partners = dict(getattr(window, "_partners", {}))
         count, failed, warnings, bricks = generate_all(state, models, window.splice)
