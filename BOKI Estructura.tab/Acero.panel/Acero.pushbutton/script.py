@@ -4,7 +4,7 @@ columnas de concreto. La configuracion (longitudinal, estribos, nucleo y
 el dibujo de la seccion con estribos, grapas y barras a mano) se guarda
 en cada tipo de columna."""
 
-__title__ = "Acero\nColumna"
+__title__ = "Acero Columna\nLongitudinal"
 __author__ = "Revit MCP"
 
 import io
@@ -39,7 +39,7 @@ reload(rv)
 
 from pyrevit import revit, DB, forms, script
 from System.Windows import GridLength, TextWrapping, Visibility
-from System.Windows.Controls import Dock, DockPanel, Expander, GroupBox
+from System.Windows.Controls import Dock, DockPanel, Expander, Grid, GroupBox
 from Autodesk.Revit.Exceptions import OperationCanceledException
 from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
 from System.Collections.Generic import List
@@ -62,6 +62,11 @@ BAR_SLOT_DEFAULTS = [u'1/2"', u'5/8"', u'3/4"', u'1"']  # the four "Barras" opti
 # pyRevit settings shared by the Acero buttons (column and beam): bar
 # options, splice and hook lengths per diameter.
 CONFIG_SECTION = "OLSTR_Acero"
+
+# Two windows on this script: this button (bars and laps) and "Acero Columna
+# Estribos", which runs it with ACERO_COLUMNA_MODO = "estribos".
+MODE_LONG, MODE_STIRRUPS = "longitudinal", "estribos"
+MODE = globals().get("ACERO_COLUMNA_MODO") or MODE_LONG
 
 
 def load_bar_slots():
@@ -404,6 +409,52 @@ class AceroWindow(forms.WPFWindow):
         active = state.active if state.active in self.by_id else (types[0].id if types else None)
         if active is not None:
             self._select_type(active)
+        self._apply_mode()
+
+    def _apply_mode(self):
+        """This window is one of two (MODE): "Longitudinal y empalmes" or
+        "Estribos". Each shows only its own settings and sketch tools and
+        generates only its own steel; the views, the neighbours and the
+        joint are the same in both."""
+        hide = []
+        if MODE == MODE_LONG:
+            self.Title = u"Acero Columna - Longitudinal y empalmes"
+            self.txt_header.Text = u"ACERO COLUMNA · LONGITUDINAL Y EMPALMES"
+            self.txt_header_sub.Text = (u"Barras verticales, anclajes y empalmes por traslape "
+                                        u"(tercio central, Le de la tabla, máx. 50% por sección). "
+                                        u"Los estribos se generan en Acero Columna Estribos.")
+            self.button_run.Content = u"GENERAR LONGITUDINAL"
+            # only the cover stays of the stirrup settings (row 7)
+            for child in self.grid_stirrups.Children:
+                if Grid.GetRow(child) != 7:
+                    hide.append(child)
+            for k, row in enumerate(self.grid_stirrups.RowDefinitions):
+                if k != 7:
+                    row.Height = GridLength(0)
+            self.exp_stirrups.Header = u"Recubrimiento"
+            self.exp_bars.IsExpanded = True
+            self.exp_splice.IsExpanded = True
+            hide += [self.rb_stirrup, self.rb_rect, self.rb_tie, self.rb_edit, self.txt_steel, self.cbo_steel,
+                     self.wrap_shape, self.button_shapes]
+            self.rb_bar_1.IsChecked = True
+            self.txt_help.Text = (u"Barras: elige una de las 4 opciones y haz clic en la planta donde va cada barra "
+                                  u"(cerca de un estribo se pega a su cara interior); Borrar quita una barra. "
+                                  u"Las barras ya generadas y los estribos existentes no se tocan al generar los "
+                                  u"estribos, ni los estribos al generar las barras.")
+        else:
+            self.Title = u"Acero Columna - Estribos"
+            self.txt_header.Text = u"ACERO COLUMNA · ESTRIBOS"
+            self.txt_header_sub.Text = (u"Estribos de borde y confinamiento, grapas, izaje y núcleo. "
+                                        u"Las barras longitudinales se generan en Acero Columna Longitudinal.")
+            self.button_run.Content = u"GENERAR ESTRIBOS"
+            self.txt_help.Text = (u"Estribo cerrado: clic en cada barra que abraza y clic derecho (o clic en la primera) "
+                                  u"para cerrarlo; abierto (U): clic en cada punto y clic derecho. Mediante dos puntos: "
+                                  u"dos esquinas opuestas. Grapa: un clic donde la quieres. Editar: clic en un estribo "
+                                  u"para cambiar sus medidas. Esc cancela el trazo. Las barras longitudinales no se "
+                                  u"tocan: se generan en Acero Columna Longitudinal.")
+            hide += [self.exp_bars, self.exp_splice]
+        for element in hide:
+            element.Visibility = Visibility.Collapsed
 
     # -- type list ---------------------------------------------------------
     def _compact_list(self):
@@ -2118,8 +2169,9 @@ class AceroWindow(forms.WPFWindow):
         for i, (_, poly, _, is_open) in enumerate(self.design["stirrups"]):
             dist = rs.distance_to_polyline if is_open else rs.distance_to_polygon
             candidates.append((dist(m, poly), "stirrups", i))
-        candidates = [c for c in candidates if c[0] <= tol]
-        if not candidates:
+        # each window erases only its own steel (bars / stirrups and ties)
+        candidates = [c for c in candidates if c[0] <= tol and (c[1] == "bars") == (MODE == MODE_LONG)]
+        if not candidates and MODE != MODE_LONG:
             # Not on any bar, tie or edge: the stirrup the click is inside.
             index = self._stirrup_at(frame, p)
             if index is not None:
@@ -2400,7 +2452,8 @@ try:
             sub.Start()
             try:
                 created, found = rc.generate_stack(
-                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
+                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice,
+                    parts=set([rc.LONGITUDINAL] if MODE == MODE_LONG else [rc.STIRRUPS])
                 )
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]

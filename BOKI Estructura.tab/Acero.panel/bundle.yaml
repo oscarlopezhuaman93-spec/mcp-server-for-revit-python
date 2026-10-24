@@ -1,9 +1,10 @@
-background:
+﻿background:
   panel: "#33E08A1E"
   title: "#FFE08A1E"
   slideout: "#33E08A1E"
 layout:
   - Acero
+  - Acero Columna Estribos
   - Acero Viga
   - Acero Muro
   - Acero Cimentacion

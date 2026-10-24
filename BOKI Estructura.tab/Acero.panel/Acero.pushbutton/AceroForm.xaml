@@ -4,13 +4,39 @@
         Height="880" Width="1560" MinWidth="1200" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResizeWithGrip"
+        Background="#FFF3F5F8"
         PreviewKeyDown="window_key">
+    <Window.Resources>
+        <Style TargetType="Expander">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FFD0D7DF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+    <!-- BOKI header: which window this is (set by MODE in the script) -->
+    <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+        <DockPanel>
+            <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold"
+                       VerticalAlignment="Center"/>
+            <StackPanel>
+                <TextBlock x:Name="txt_header" Text="ACERO COLUMNA" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                <TextBlock x:Name="txt_header_sub" Foreground="#FFB9C9DA" FontSize="11"/>
+            </StackPanel>
+        </DockPanel>
+    </Border>
     <DockPanel Margin="12">
         <!-- Bottom: run (the columns picked in the model, or else every
              column of the checked types) -->
         <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
-            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="220" Height="40"
-                    FontWeight="Bold" Click="run_click"
+            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Generar acero..." Width="240" Height="40"
+                    FontWeight="Bold" Click="run_click" Background="#FF2D8CF0" Foreground="White" BorderThickness="0"
                     ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de las columnas seleccionadas (si no hay ninguna seleccionada, de todas las columnas de los tipos marcados)."/>
             <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
                     ToolTip="Carga una configuraci&#243;n guardada (estribos, barras y dibujo de la secci&#243;n)."/>
@@ -37,24 +63,24 @@
                           Click="all_click"/>
 
                 <!-- Lap splices of the longitudinal bars (settings kept per user) -->
-                <Expander DockPanel.Dock="Bottom" Header="4. Empalme de barras longitudinales" Margin="0,8,0,0">
+                <Expander DockPanel.Dock="Bottom" x:Name="exp_splice" Header="4. Empalme de barras longitudinales" Margin="0,8,0,0">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_splice" Click="splice_changed"
                                   Content="Barras continuas en columnas apiladas, con empalme"
-                                  ToolTip="Activado: las barras longitudinales siguen continuas por las columnas apiladas que generas (mismo tipo y eje, una sobre otra; al seleccionar, solo las seleccionadas); cuando superan la longitud maxima se cortan con un empalme en la mitad central de un piso. Desactivado: una barra por columna."/>
+                                  ToolTip="Activado: las barras longitudinales siguen continuas por las columnas apiladas que generas (mismo tipo y eje, una sobre otra; al seleccionar, solo las seleccionadas); cuando superan la longitud maxima se cortan con un empalme en el tercio central de un piso, alternando la mitad de las barras (m&#225;x. 50% por secci&#243;n). Desactivado: una barra por columna."/>
                         <StackPanel Orientation="Horizontal" Margin="18,4,0,4"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_splice}">
                             <TextBlock Text="Longitud maxima de barra: " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_splice_max" Width="45" TextChanged="splice_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <TextBlock Text="Empalme por diametro: marca los que se empalman (cm; sugerido E.060 clase B):" TextWrapping="Wrap" Margin="0,2,0,2"/>
+                        <TextBlock Text="Empalme por di&#225;metro: marca los que se empalman (Le en cm; tabla de empalmes en columnas):" TextWrapping="Wrap" Margin="0,2,0,2"/>
                         <WrapPanel x:Name="panel_laps" IsEnabled="{Binding IsChecked, ElementName=chk_splice}"/>
                     </StackPanel>
                 </Expander>
 
                 <!-- Vertical bars: four diameters (drawing tool) and their Revit bar type -->
-                <Expander DockPanel.Dock="Bottom" Header="3. Configuraci&#243;n de barra vertical" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
+                <Expander DockPanel.Dock="Bottom" x:Name="exp_bars" Header="3. Configuraci&#243;n de barra vertical" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="34"/>
@@ -125,8 +151,8 @@
                     </Grid>
                 </Expander>
 
-                <Expander DockPanel.Dock="Bottom" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
-                    <Grid>
+                <Expander DockPanel.Dock="Bottom" x:Name="exp_stirrups" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
+                    <Grid x:Name="grid_stirrups">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170"/>
                             <ColumnDefinition Width="*"/>
@@ -230,13 +256,13 @@
                                  ToolTip="Clic en un estribo para ver y cambiar sus medidas y su tipo (borde/confinamiento)."/>
                     <RadioButton x:Name="rb_erase" GroupName="tool" Content="Borrar" Margin="0,0,16,0"
                                  VerticalAlignment="Center" Checked="tool_changed"/>
-                    <TextBlock Text="&#216; acero: " VerticalAlignment="Center"/>
+                    <TextBlock x:Name="txt_steel" Text="&#216; acero: " VerticalAlignment="Center"/>
                     <ComboBox x:Name="cbo_steel" Width="190" Margin="0,0,12,0" SelectionChanged="steel_changed"
                               ToolTip="Estribo y Grapa: el di&#225;metro de la configuraci&#243;n de estribos (borde o confinamiento)."/>
                     <Button Content="Deshacer" Width="70" Margin="0,0,4,0" Click="undo_click"/>
                     <Button Content="Limpiar" Width="65" Margin="0,0,4,0" Click="clear_click"/>
                 </WrapPanel>
-                <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                <WrapPanel DockPanel.Dock="Top" x:Name="wrap_shape" Margin="0,0,0,4">
                     <TextBlock Text="Estribo: " VerticalAlignment="Center"/>
                     <RadioButton x:Name="rb_shape_closed" GroupName="shape" Content="Cerrado" IsChecked="True"
                                  Margin="0,0,8,0" VerticalAlignment="Center"
@@ -292,7 +318,7 @@
                                 ToolTip="Borra el estribo seleccionado (tecla Supr). Deshacer lo recupera."/>
                     </WrapPanel>
                 </Border>
-                <TextBlock DockPanel.Dock="Bottom" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
+                <TextBlock DockPanel.Dock="Bottom" x:Name="txt_help" TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
                            Text="Estribo cerrado: clic en cada barra que abraza y clic derecho (o clic en la primera) para cerrarlo; abierto (U): clic en cada punto y clic derecho para terminarlo sin cerrar. Esc cancela el trazo. Mediante dos puntos: clic en dos esquinas opuestas. Al crear un estribo (o con Editar) aparecen sus medidas para modificarlas. Grapa: un clic donde la quieres; se coloca sola entre las dos barras enfrentadas mas cercanas. En '&#216; acero' eliges si usa el estribo de borde (naranja) o de confinamiento (verde). Barras: elige una de las 4 opciones (el di&#225;metro de cada una se cambia en su lista y se recuerda) y haz clic en la planta donde va cada barra (cerca de un estribo se pega a su cara interior); Borrar quita una barra. Los puntos se ajustan a las barras y a 1 cm. Forma: clic en una forma de armadura (panel derecho) y dibuja el estribo; se crea con esa forma. El boceto se guarda con 'Guardar configuracion' en los tipos marcados de la misma seccion."/>
                 <!-- Three views: 3D (large, left), elevation and plan (the sketch). Mouse wheel
                      zooms, middle button drag pans, "Ajustar" refits; in 3D a
@@ -377,5 +403,6 @@
                 </DockPanel>
             </GroupBox>
         </Grid>
+    </DockPanel>
     </DockPanel>
 </Window>
