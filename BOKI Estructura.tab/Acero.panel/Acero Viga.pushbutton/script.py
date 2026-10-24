@@ -52,7 +52,7 @@ from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.DB.Structure import RebarShape, RebarStyle
 from System.Windows.Input import Cursors, Key, Keyboard, MouseButton
 from System.Windows import GridLength, TextWrapping
-from System.Windows.Controls import Border, Dock, DockPanel, WrapPanel
+from System.Windows.Controls import Border, Dock, DockPanel, Grid, WrapPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import (Color, DoubleCollection, PenLineCap, PenLineJoin, PointCollection,
@@ -453,6 +453,78 @@ class AceroWindow(forms.WPFWindow):
         active = state.active if state.active in self.by_id else (types[0].id if types else None)
         if active is not None:
             self._select_type(active)
+        self._row_heights = [row.Height for row in self.grid_stirrups.RowDefinitions]
+        self._show_tab(self.tab_steel.SelectedIndex == 1)
+
+    def tab_changed(self, sender, args):
+        if args.OriginalSource is self.tab_steel and hasattr(self, "_row_heights"):
+            self._show_tab(self.tab_steel.SelectedIndex == 1)
+
+    def _show_tab(self, longitudinal):
+        """Two tabs over the same window: "Estribos" (first) and "Acero
+        longitudinal" (bars, laps, hooks). Each shows only its settings and
+        sketch tools; views, cuts and the generation (everything at once)
+        are the same."""
+        stirrup_only = [self.rb_stirrup, self.rb_rect, self.rb_tie, self.rb_edit, self.txt_steel, self.cbo_steel,
+                        self.wrap_shape, self.button_shapes]
+        for element in stirrup_only:
+            element.Visibility = Visibility.Collapsed if longitudinal else Visibility.Visible
+        for element in (self.exp_bars, self.exp_splice):
+            element.Visibility = Visibility.Visible if longitudinal else Visibility.Collapsed
+        # on the bars tab only the cover (row 4), the end anchorage (5) and
+        # the save button (6, shown by the code that needs it) stay
+        keep = (4, 5, 6)
+        for child in self.grid_stirrups.Children:
+            if Grid.GetRow(child) == 6:
+                continue
+            hidden = longitudinal and Grid.GetRow(child) not in keep
+            child.Visibility = Visibility.Collapsed if hidden else Visibility.Visible
+        for k, row in enumerate(self.grid_stirrups.RowDefinitions):
+            row.Height = GridLength(0) if (longitudinal and k not in keep) else self._row_heights[k]
+        self.exp_stirrups.Header = (u"Recubrimiento y anclaje" if longitudinal
+                                    else u"2. Configuración de estribos")
+        if longitudinal:
+            self.exp_bars.IsExpanded = True
+            self.exp_splice.IsExpanded = True
+            if not any(rb_.IsChecked for rb_ in (self.rb_bar_1, self.rb_bar_2, self.rb_bar_3, self.rb_bar_4)):
+                self.rb_bar_2.IsChecked = True
+            self.txt_help.Text = (u"Barras: elige una de las 4 opciones y haz clic en la sección donde va cada barra "
+                                  u"(cerca de un estribo se pega a su cara interior); Borrar quita una barra. En el "
+                                  u"alzado: Dibujar acero para bastones y balancines; clic en un acero para editarlo.")
+        else:
+            if not (self.rb_stirrup.IsChecked or self.rb_rect.IsChecked or self.rb_tie.IsChecked
+                    or self.rb_edit.IsChecked or self.rb_erase.IsChecked):
+                self.rb_stirrup.IsChecked = True
+            self.txt_help.Text = (u"Estribo cerrado: clic en cada barra que abraza y clic derecho (o clic en la primera) "
+                                  u"para cerrarlo; abierto (U): clic en cada punto y clic derecho. Mediante dos puntos: "
+                                  u"dos esquinas opuestas. Grapa: un clic donde la quieres. Editar: clic en un estribo "
+                                  u"para cambiar sus medidas. Armado automático: barras en las esquinas y estribo "
+                                  u"ajustados al recubrimiento, en cualquier sección. Esc cancela el trazo.")
+
+    def auto_click(self, sender, args):
+        """Bars in the corners and the edge stirrup, fitted to the cover of
+        the section, whatever its shape (rs.fitted_design)."""
+        t = self.by_id.get(self.state.active)
+        section = t.section if t else None
+        cover = self._cover_m()
+        if section is None or cover is None:
+            self._status(u"Elige un tipo de viga y escribe el recubrimiento.")
+            return
+        stirrup_key = self.cbo_edge.SelectedItem or u'3/8"'
+        bar_key = self.bar_key or u'5/8"'
+        try:
+            design = rs.fitted_design(section.polygon_m, cover, stirrup_key, bar_key)
+        except rs.SpecError as e:
+            self._status(u"No se pudo armar la sección: {}".format(e))
+            return
+        self._push_undo()
+        self.design = design
+        self.draft = []
+        self._select(None)
+        self._status(u"Armado automático: {} barras Ø{} y estribo Ø{} a {:g} cm de recubrimiento. "
+                     u"Pulsa 'Guardar configuración' para guardarlo en el tipo.".format(
+                         len(design["bars"]), bar_key, stirrup_key, cover * 100), error=False)
+        self.redraw()
 
     # -- type list ---------------------------------------------------------
     def _type_item(self, t):
@@ -2723,8 +2795,9 @@ class AceroWindow(forms.WPFWindow):
         for i, (_, poly, _, is_open) in enumerate(self.design["stirrups"]):
             dist = rs.distance_to_polyline if is_open else rs.distance_to_polygon
             candidates.append((dist(m, poly), "stirrups", i))
-        candidates = [c for c in candidates if c[0] <= tol]
-        if not candidates:
+        # each tab erases only its own steel (bars / stirrups and ties)
+        candidates = [c for c in candidates if c[0] <= tol and (c[1] == "bars") == (self.tab_steel.SelectedIndex == 1)]
+        if not candidates and self.tab_steel.SelectedIndex != 1:
             # Not on any bar, tie or edge: the stirrup the click is inside.
             index = self._stirrup_at(frame, p)
             if index is not None:

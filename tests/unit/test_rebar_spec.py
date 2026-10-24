@@ -921,3 +921,24 @@ class TestBentPlan:
         pts = bent_tie((0, 0), (0.2, 0), 0.013, 0.013, TIE_C, 0.05)
         assert min(x for x, _ in pts) < -0.012 and max(x for x, _ in pts) > 0.212
         assert all(math.hypot(x, y) > 0.0129 or True for x, y in pts)
+
+
+class TestFittedDesign:
+    ridge = [(0.0, 0.1345), (-0.2, 0.0495), (-0.1218, -0.1345), (0.0, -0.0828), (0.1218, -0.1345), (0.2, 0.0495)]
+
+    def test_inside_cover_any_section(self):
+        from revit_mcp.rebar_spec import (fitted_design, stirrup_outline, distance_to_polygon,
+                                          point_in_polygon)
+        d = fitted_design(self.ridge, 0.04, '3/8"', '5/8"')
+        assert len(d["bars"]) == 5  # the notch corner is concave: no bar
+        kind, poly, wrap, is_open = d["stirrups"][0]
+        for p in stirrup_outline(poly, d["bars"], '3/8"', wrap):
+            assert point_in_polygon(p, self.ridge)
+            assert abs(distance_to_polygon(p, self.ridge) - 0.04) < 0.0015 or distance_to_polygon(p, self.ridge) > 0.04
+
+    def test_rectangle_corners(self):
+        from revit_mcp.rebar_spec import fitted_design
+        rect = [(-0.125, -0.25), (0.125, -0.25), (0.125, 0.25), (-0.125, 0.25)]
+        d = fitted_design(rect, 0.04, '3/8"', '5/8"')
+        xs = sorted(round(abs(x), 4) for x, _, _ in d["bars"])
+        assert len(xs) == 4 and abs(xs[0] - (0.125 - 0.04 - 0.009525 - 0.0079375)) < 1e-4

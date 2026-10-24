@@ -1174,6 +1174,25 @@ def tie_centerline(start, end, bars, stirrup_key):
     return ((start[0] - ux * es, start[1] - uy * es), (end[0] + ux * ee, end[1] + uy * ee))
 
 
+def fitted_design(polygon, cover, stirrup_key, bar_key):
+    """Any section (rectangular or not, e.g. a ridge beam): one bar in each
+    convex corner and one edge stirrup round them, both inside the cover -
+    the stirrup's outer face at `cover` from every face of `polygon`."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    rb = BAR_DIAMETERS_MM[bar_key] / 2000.0
+    inner = counterclockwise(offset_polygon_outward(polygon, -(cover + ds + rb)))
+    n = len(inner)
+    bars = []
+    for k in range(n):
+        (ax, ay), (bx, by), (cx, cy) = inner[k - 1], inner[k], inner[(k + 1) % n]
+        if (bx - ax) * (cy - by) - (by - ay) * (cx - bx) > 1e-12:  # convex
+            bars.append((bx, by, bar_key))
+    design = empty_design()
+    design["bars"] = bars
+    design["stirrups"] = [(KIND_EDGE, inner, rb, False)]
+    return design
+
+
 def auto_design(b, h, cover, stirrup_key, groups):
     """Rectangular section: bars from `layout_rectangular_bars` and one
     perimeter stirrup through the four corner bars."""
