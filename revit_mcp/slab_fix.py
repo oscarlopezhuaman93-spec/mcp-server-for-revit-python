@@ -148,7 +148,7 @@ def join_beams_cutting(doc, floor):
     return n
 
 
-def fix_floor(doc, floor):
+def fix_floor(doc, floor, join=True):
     """Remake a shape-edited sloped floor (inside an open Transaction): one
     floor per sloped plane of its top. Returns the new floors (the old one
     deleted)."""
@@ -173,6 +173,100 @@ def fix_floor(doc, floor):
         made.append(new)
     doc.Delete(floor.Id)
     doc.Regenerate()
-    for new in made:
+    for new in made if join else []:
         join_beams_cutting(doc, new)
     return made
+
+
+def _single_slope(floor):
+    """(face, outline, holes, arrow, slope, tail height, climb (x, y), high
+    side m) of a floor with one sloped planar top, else None."""
+    tops = _top_faces(floor)
+    if len(tops) != 1 or abs(tops[0].FaceNormal.Z) > 0.999:
+        return None
+    face = tops[0]
+    outer, holes, arrow, slope, z_tail = plane_slab(face)
+    if arrow is None:
+        return None
+    (ax, ay), (bx, by) = arrow
+    L = math.hypot(bx - ax, by - ay)
+    h = ((bx - ax) / L, (by - ay) / L)
+    hi = max(p[0] * h[0] + p[1] * h[1] for p in outer)
+    return face, outer, holes, arrow, slope, z_tail, h, hi
+
+
+def ridge_beam(doc, floor, reach=0.8):
+    """The beam a sloped floor's high edge meets (a ridge beam): running
+    along that edge, its axis just past it (within `reach` m) and its top
+    up at the slab's. Returns (beam, how far the edge must go to its axis
+    m) or None - none there, or the edge already on the axis."""
+    info = _single_slope(floor)
+    if info is None:
+        return None
+    face, outer, holes, arrow, slope, z_tail, h, hi = info
+    bb = floor.get_BoundingBox(None)
+    pad = reach / FT
+    near = DB.Outline(DB.XYZ(bb.Min.X - pad, bb.Min.Y - pad, bb.Min.Z - pad),
+                      DB.XYZ(bb.Max.X + pad, bb.Max.Y + pad, bb.Max.Z + pad))
+    best = None
+    for e in (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+              .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(near))):
+        c = getattr(e.Location, "Curve", None)
+        if not isinstance(c, DB.Line):
+            continue
+        d = c.Direction
+        if abs(d.X * h[0] + d.Y * h[1]) > 0.05:  # not along the edge
+            continue
+        # the stretch of the edge it runs along (another span of a ridge on
+        # the same axis does not count)
+        along = (-h[1], h[0])
+        ends = sorted((q.X * FT * along[0] + q.Y * FT * along[1]) for q in (c.GetEndPoint(0), c.GetEndPoint(1)))
+        span = [x * along[0] + y * along[1] for x, y in outer]
+        if min(ends[1], max(span)) - max(ends[0], min(span)) < 0.10:
+            continue
+        p = c.GetEndPoint(0)
+        axis = p.X * FT * h[0] + p.Y * FT * h[1]
+        ebb = e.get_BoundingBox(None)
+        if not (0.0 <= axis - hi <= reach) or ebb.Max.Z < bb.Max.Z - 0.05 / FT:
+            continue
+        if best is None or axis - hi < best[1]:
+            best = (e, axis - hi)
+    if best is None or best[1] < 0.005:
+        return None
+    return best
+
+
+def fit_to_ridge(doc, floor, join=True):
+    """Remake a sloped floor (inside an open Transaction) with its high edge
+    carried to its ridge beam's axis - the beam then cuts it, so it ends on
+    the beam's sloped side with no wedge left under it. Same plane, type
+    and parameters. Returns the new floor, or None when there is nothing to
+    fit."""
+    found = ridge_beam(doc, floor)
+    info = _single_slope(floor)
+    if found is None or info is None:
+        return None
+    beam, extend = found
+    face, outer, holes, arrow, slope, z_tail, h, hi = info
+    outer = sc.push_edge(outer, h, hi, hi + extend)
+    level = doc.GetElement(floor.LevelId)
+    ftype = doc.GetElement(floor.GetTypeId())
+    loops = [sg._curve_loop(outer, level.Elevation)] + [sg._curve_loop(q, level.Elevation) for q in holes]
+    (ax, ay), (bx, by) = arrow
+    bx, by = bx + h[0] * extend, by + h[1] * extend
+    line = DB.Line.CreateBound(DB.XYZ(ax / FT, ay / FT, level.Elevation), DB.XYZ(bx / FT, by / FT, level.Elevation))
+    new = DB.Floor.Create(doc, List[DB.CurveLoop](loops), ftype.Id, level.Id, True, line, slope)
+    new.get_Parameter(DB.BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM).Set((z_tail - level.Elevation * FT) / FT)
+    s = new.get_Parameter(DB.BuiltInParameter.FLOOR_PARAM_IS_STRUCTURAL)
+    if s is not None and not s.IsReadOnly:
+        s.Set(1)
+    copy_parameters(floor, new)
+    doc.Delete(floor.Id)
+    doc.Regenerate()
+    if join:  # with the beams it touches; the ridge beam always cuts it
+        join_beams_cutting(doc, new)
+    if not DB.JoinGeometryUtils.AreElementsJoined(doc, new, beam):
+        DB.JoinGeometryUtils.JoinGeometry(doc, new, beam)
+    if not DB.JoinGeometryUtils.IsCuttingElementInJoin(doc, beam, new):
+        DB.JoinGeometryUtils.SwitchJoinOrder(doc, beam, new)
+    return new

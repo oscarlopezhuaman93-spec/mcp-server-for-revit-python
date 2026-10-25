@@ -53,3 +53,9 @@ def test_clip():
 def test_clean_drops_tiny_sides_and_straight_points():
     poly = [(0, 0), (2, 0), (2.0004, 0.0), (4, 0), (4, 3), (0, 3)]
     assert sc.clean(poly) == [(0, 0), (4, 0), (4, 3), (0, 3)]
+
+def test_push_edge_moves_only_the_high_side():
+    from revit_mcp.slab_create import push_edge
+    poly = [(0.0, 18.978), (4.0, 18.978), (4.0, 22.728), (0.0, 22.728)]
+    out = push_edge(poly, (0.0, 1.0), 22.728, 22.928)
+    assert out == [(0.0, 18.978), (4.0, 18.978), (4.0, 22.928), (0.0, 22.928)]

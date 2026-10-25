@@ -167,3 +167,18 @@ def ridge_rise(region_poly, shape, slope, angle=None):
         (ax, ay), (bx, by) = p["arrow"]
         best = max(best, p["slope"] * math.hypot(bx - ax, by - ay))
     return best
+
+
+def push_edge(poly, direction, at, to, tol=0.01):
+    """The outline with its side at `at` (m, along the plan `direction`,
+    a unit (x, y)) moved out to `to`: every corner on that side (within
+    `tol`) pushed along `direction`. A sloped slab's high edge carried to a
+    ridge beam's axis."""
+    dx, dy = direction
+    out = []
+    for x, y in poly:
+        s = x * dx + y * dy
+        if abs(s - at) <= tol:
+            x, y = x + dx * (to - s), y + dy * (to - s)
+        out.append((x, y))
+    return out
