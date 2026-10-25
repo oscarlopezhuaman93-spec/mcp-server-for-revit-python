@@ -44,20 +44,28 @@ class LevelRegions(object):
     """The free spaces of a level at the slab's height: a box over the level's
     supports minus every beam, wall and column, split in its pieces."""
 
-    def __init__(self, doc, level, top_offset, thickness, pad=2.0, gap=0.06):
+    def __init__(self, doc, level, top_offset, thickness, pad=2.0, gap=0.06, column_reach=1.5):
         self.doc = doc
         z_top = level.Elevation * FT + top_offset
         z0, z1 = z_top - thickness + 0.01, z_top - 0.01
         self.z = (z0, z1)
         band = DB.Outline(DB.XYZ(-1e5, -1e5, z0 / FT), DB.XYZ(1e5, 1e5, z1 / FT))
+        # columns reaching up to just under the slab cut it too (where they
+        # stand out of the beams the slab breaks round them)
+        low = DB.Outline(DB.XYZ(-1e5, -1e5, (z0 - column_reach) / FT), DB.XYZ(1e5, 1e5, z1 / FT))
         solids, xs, ys = [], [], []
         for bic in SUPPORTS:
+            column = bic == DB.BuiltInCategory.OST_StructuralColumns
             for e in (DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType()
-                      .WherePasses(DB.BoundingBoxIntersectsFilter(band))):
+                      .WherePasses(DB.BoundingBoxIntersectsFilter(low if column else band))):
                 bb = e.get_BoundingBox(None)
                 if bb is None:
                     continue
                 for s in rf._solids(e):
+                    if column and bb.Max.Z * FT < z1:
+                        s = _raised_to(s, z0, z1)  # its plan shape at the slab
+                        if s is None:
+                            continue
                     solids.append(s)
                 xs += [bb.Min.X * FT, bb.Max.X * FT]
                 ys += [bb.Min.Y * FT, bb.Max.Y * FT]
@@ -128,6 +136,34 @@ class LevelRegions(object):
                 if best is None or a < best[0]:
                     best = (a, p)
         return best[1] if best else None
+
+
+def _raised_to(solid, z0, z1):
+    """A column ending under the slab: its top `z1 - z0` m (the slab's
+    height of it) moved up into the slab band, so its plan shape cuts it."""
+    bb = solid.GetBoundingBox()
+    top = bb.Transform.OfPoint(bb.Max).Z
+    height = (z1 - z0) / FT
+    try:
+        box = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+            List[DB.CurveLoop]([_box_loop(bb, top - height - 0.01)]), DB.XYZ.BasisZ, height + 0.01)
+        piece = DB.BooleanOperationsUtils.ExecuteBooleanOperation(solid, box, DB.BooleanOperationsType.Intersect)
+    except Exception:
+        return None
+    if piece is None or piece.Volume < 1e-9:
+        return None
+    return DB.SolidUtils.CreateTransformed(piece, DB.Transform.CreateTranslation(DB.XYZ(0, 0, z1 / FT - top)))
+
+
+def _box_loop(bb, z):
+    lo, hi = bb.Transform.OfPoint(bb.Min), bb.Transform.OfPoint(bb.Max)
+    x0, x1 = min(lo.X, hi.X) - 1, max(lo.X, hi.X) + 1
+    y0, y1 = min(lo.Y, hi.Y) - 1, max(lo.Y, hi.Y) + 1
+    pts = [DB.XYZ(x0, y0, z), DB.XYZ(x1, y0, z), DB.XYZ(x1, y1, z), DB.XYZ(x0, y1, z)]
+    loop = DB.CurveLoop()
+    for k in range(4):
+        loop.Append(DB.Line.CreateBound(pts[k], pts[(k + 1) % 4]))
+    return loop
 
 
 def _inside(poly, x, y):

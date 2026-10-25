@@ -1,102 +1,129 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Crear Losas"
-        Height="880" Width="1560" MinWidth="1150" MinHeight="620"
-        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
-    <DockPanel Margin="12">
-        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
-            <Button DockPanel.Dock="Right" Content="Crear y abrir Acero Losa" Width="200" Height="40" Margin="8,0,0,0"
-                    FontWeight="Bold" Click="create_acero_click"
-                    ToolTip="Crea las losas y las deja seleccionadas: al pulsar Acero Losa ya aparecen."/>
-            <Button DockPanel.Dock="Right" x:Name="button_run" Content="Crear losas" Width="180" Height="40"
-                    FontWeight="Bold" Click="create_click"/>
-            <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="Gray" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="1000"/>
+        Height="820" Width="1380" MinWidth="1050" MinHeight="600"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="GroupBox">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FFD0D7DF"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+                <StackPanel>
+                    <TextBlock Text="MODELADO &#183; CREAR LOSAS" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock x:Name="txt_level" Foreground="#FFB9C9DA" FontSize="11"
+                               Text="Losas en los pa&#241;os entre vigas, muros y columnas, en un rect&#225;ngulo o en un contorno; planas o inclinadas."/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <DockPanel Margin="12">
+            <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+                <Button DockPanel.Dock="Right" x:Name="button_run" Content="CREAR LOSAS" Width="240" Height="40" FontWeight="Bold"
+                        Background="#FF2D8CF0" Foreground="White" BorderThickness="0" Click="create_click"/>
+                <TextBlock DockPanel.Dock="Left" x:Name="txt_status" Foreground="#FF556270" VerticalAlignment="Center"
+                           TextWrapping="Wrap" MaxWidth="1000" FontWeight="Bold"/>
+            </DockPanel>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="360"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <GroupBox Header="1. Tipo de losa (los tipos del proyecto)">
+                        <StackPanel>
+                            <ComboBox x:Name="cbo_type" SelectionChanged="form_changed"/>
+                            <TextBlock x:Name="txt_type" Foreground="Gray" FontSize="11" Margin="0,2,0,6"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Cara superior: " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_top" Width="50" TextChanged="form_changed"/>
+                                <TextBlock Text=" m sobre el nivel" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="2. Agregar losas (en la vista de Revit: planta o 3D)">
+                        <StackPanel>
+                            <Button Content="Pa&#241;os entre vigas, muros y columnas (clic en cada uno)" Height="30" Margin="0,0,0,3"
+                                    FontWeight="Bold" Click="pick_regions_click"
+                                    ToolTip="Clic dentro de cada espacio cerrado por vigas, muros o columnas; Esc termina. En 3D: primero clic en una viga, muro o losa del nivel."/>
+                            <Button Content="Rect&#225;ngulo (clic en dos esquinas)" Height="28" Margin="0,0,0,3" Click="pick_rect_click"/>
+                            <Button Content="Contorno (clic en cada v&#233;rtice, Esc cierra)" Height="28" Margin="0,0,0,3" Click="pick_poly_click"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <TextBlock Text="Desfase del borde: " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_edge" Width="50" TextChanged="form_changed"
+                                         ToolTip="0: a la cara de las vigas y muros. Positivo: hacia afuera (m), por ejemplo la mitad del ancho de la viga para llegar al eje."/>
+                                <TextBlock Text=" m (0 = a la cara)" VerticalAlignment="Center" Foreground="Gray"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="3. Losas por crear">
+                        <StackPanel>
+                            <ListBox x:Name="list_regions" Height="150" SelectionChanged="region_selected"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="Quitar" Padding="8,0" Click="remove_click"/>
+                                <Button Content="Quitar todas" Padding="8,0" Margin="4,0,0,0" Click="clear_click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="4. Forma de la losa elegida">
+                        <StackPanel>
+                            <ComboBox x:Name="cbo_shape" SelectionChanged="shape_changed"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,2">
+                                <TextBlock Text="Pendiente " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_slope" Width="44" TextChanged="shape_changed"/>
+                                <TextBlock Text=" %   o cumbrera " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_ridge" Width="44" TextChanged="shape_changed"
+                                         ToolTip="Altura de la cumbrera (o del borde alto) sobre los aleros, en m. Vac&#237;o: usa la pendiente."/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
+                                <TextBlock Text="Direcci&#243;n " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_angle" Width="44" TextChanged="shape_changed"
+                                         ToolTip="Una agua: hacia d&#243;nde sube. Dos / cuatro aguas: la direcci&#243;n de la cumbrera (grados desde X). Vac&#237;o: a lo largo del lado m&#225;s largo."/>
+                                <TextBlock Text="&#176;  " VerticalAlignment="Center"/>
+                                <Button Content="Girar 90&#176;" Padding="6,0" Click="turn_click"/>
+                            </StackPanel>
+                            <CheckBox x:Name="chk_all" Content="Aplicar la forma a todas las losas de la lista" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="5. Al crear">
+                        <CheckBox x:Name="chk_join" Content="Unir con las vigas, muros y columnas que toca" IsChecked="True"/>
+                    </GroupBox>
+                </StackPanel>
+                </ScrollViewer>
+
+                <GroupBox Grid.Column="1" Header="PLANTA">
+                    <DockPanel>
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="fit_click"/>
+                            <TextBlock Foreground="Gray" FontSize="10" VerticalAlignment="Center" TextWrapping="Wrap"
+                                       Text="Clic en una losa para elegirla. Gris: vigas, muros y columnas a la altura de la losa; l&#237;neas: ejes. Rueda: zoom; bot&#243;n central: mover."/>
+                        </DockPanel>
+                        <Border BorderBrush="#FFD0D7DF" BorderThickness="1" Background="White" ClipToBounds="True">
+                            <Canvas x:Name="canvas_plan" Background="White" SizeChanged="resized"
+                                    MouseWheel="plan_wheel" MouseDown="plan_down" MouseUp="plan_up" MouseMove="plan_move"/>
+                        </Border>
+                    </DockPanel>
+                </GroupBox>
+            </Grid>
         </DockPanel>
-
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="350"/>
-                <ColumnDefinition Width="1.5*"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
-            <StackPanel>
-                <TextBlock Text="1. Nivel" FontWeight="Bold"/>
-                <ComboBox x:Name="cbo_level" Margin="0,2,0,8" SelectionChanged="level_changed"/>
-                <TextBlock Text="2. Tipo de losa (los tipos del proyecto)" FontWeight="Bold"/>
-                <ComboBox x:Name="cbo_type" Margin="0,2,0,2" SelectionChanged="form_changed"/>
-                <TextBlock x:Name="txt_type" Foreground="Gray" FontSize="11" Margin="0,0,0,8"/>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                    <TextBlock Text="Cara superior: " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_top" Width="50" TextChanged="form_changed"/>
-                    <TextBlock Text=" m sobre el nivel" VerticalAlignment="Center"/>
-                </StackPanel>
-
-                <TextBlock Text="3. Agregar losas (en la vista de planta de Revit)" FontWeight="Bold"/>
-                <Button Content="Paños entre vigas y muros (clic en cada uno)" Height="28" Margin="0,3,0,2" Click="pick_regions_click"
-                        ToolTip="Clic dentro de cada espacio cerrado por vigas, muros o columnas; Esc termina."/>
-                <Button Content="Rect&#225;ngulo (clic en dos esquinas)" Height="28" Margin="0,2,0,2" Click="pick_rect_click"/>
-                <Button Content="Contorno (clic en cada v&#233;rtice, Esc cierra)" Height="28" Margin="0,2,0,2" Click="pick_poly_click"/>
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,8">
-                    <TextBlock Text="Desfase del borde: " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_edge" Width="50" TextChanged="form_changed"
-                             ToolTip="0: a la cara de las vigas y muros. Positivo: hacia afuera (m), por ejemplo la mitad del ancho de la viga para llegar al eje."/>
-                    <TextBlock Text=" m (0 = a la cara)" VerticalAlignment="Center" Foreground="Gray"/>
-                </StackPanel>
-
-                <TextBlock Text="4. Losas por crear" FontWeight="Bold"/>
-                <ListBox x:Name="list_regions" Height="150" Margin="0,2,0,2" SelectionChanged="region_selected"/>
-                <StackPanel Orientation="Horizontal">
-                    <Button Content="Quitar" Padding="8,0" Click="remove_click"/>
-                    <Button Content="Quitar todas" Padding="8,0" Margin="4,0,0,0" Click="clear_click"/>
-                </StackPanel>
-
-                <TextBlock Text="5. Forma de la losa elegida" FontWeight="Bold" Margin="0,10,0,2"/>
-                <ComboBox x:Name="cbo_shape" SelectionChanged="shape_changed"/>
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,2">
-                    <TextBlock Text="Pendiente " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_slope" Width="44" TextChanged="shape_changed"/>
-                    <TextBlock Text=" %   o cumbrera " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_ridge" Width="44" TextChanged="shape_changed"
-                             ToolTip="Altura de la cumbrera (o del borde alto) sobre los aleros, en m. Vac&#237;o: usa la pendiente."/>
-                    <TextBlock Text=" m" VerticalAlignment="Center"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
-                    <TextBlock Text="Direcci&#243;n " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_angle" Width="44" TextChanged="shape_changed"
-                             ToolTip="Una agua: hacia d&#243;nde sube. Dos / cuatro aguas: la direcci&#243;n de la cumbrera (grados desde X). Vac&#237;o: a lo largo del lado m&#225;s largo."/>
-                    <TextBlock Text="&#176;  " VerticalAlignment="Center"/>
-                    <Button Content="Girar 90&#176;" Padding="6,0" Click="turn_click"/>
-                </StackPanel>
-                <CheckBox x:Name="chk_all" Content="Aplicar la forma a todas las losas de la lista" Margin="0,4,0,0"/>
-
-                <TextBlock Text="6. Al crear" FontWeight="Bold" Margin="0,10,0,2"/>
-                <CheckBox x:Name="chk_join" Content="Unir con las vigas, muros y columnas que toca" IsChecked="True"/>
-            </StackPanel>
-            </ScrollViewer>
-
-            <DockPanel Grid.Column="1" Margin="0,0,6,0">
-                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-                    <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="fit_click"/>
-                    <TextBlock FontWeight="Bold" VerticalAlignment="Center" Text="PLANTA   "/>
-                    <TextBlock Foreground="Gray" FontSize="10" VerticalAlignment="Center"
-                               Text="Clic en una losa para elegirla. Gris: vigas y muros del nivel; l&#237;neas: ejes. Rueda: zoom; bot&#243;n central: mover."/>
-                </DockPanel>
-                <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
-                    <Canvas x:Name="canvas_plan" Background="White" SizeChanged="resized"
-                            MouseWheel="plan_wheel" MouseDown="plan_down" MouseUp="plan_up" MouseMove="plan_move"/>
-                </Border>
-            </DockPanel>
-
-            <DockPanel Grid.Column="2">
-                <TextBlock DockPanel.Dock="Top" x:Name="txt_cut" FontWeight="Bold" Margin="0,0,0,4" Text="CORTE DE LA LOSA ELEGIDA"/>
-                <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="10" TextWrapping="Wrap" Margin="0,3,0,0"
-                           Text="Las losas inclinadas de dos y cuatro aguas se crean como una losa por cada plano, que se encuentran en la cumbrera (as&#237; las toma bien Acero Losa)."/>
-                <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
-                    <Canvas x:Name="canvas_cut" Background="White" SizeChanged="resized"/>
-                </Border>
-            </DockPanel>
-        </Grid>
     </DockPanel>
 </Window>

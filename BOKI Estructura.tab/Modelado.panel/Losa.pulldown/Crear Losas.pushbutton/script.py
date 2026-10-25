@@ -31,7 +31,7 @@ reload(sf)
 
 from pyrevit import revit, DB, forms
 from Autodesk.Revit.Exceptions import OperationCanceledException
-from Autodesk.Revit.UI.Selection import ObjectSnapTypes
+from Autodesk.Revit.UI.Selection import ObjectSnapTypes, ObjectType
 from System.Collections.Generic import List
 from System.Windows.Controls import ListBoxItem
 from System.Windows.Input import MouseButton
@@ -71,13 +71,13 @@ class CrearWindow(forms.WPFWindow):
         self._fitted = None
         self._frame = None
         self._filling = True
-        self.levels = sorted(DB.FilteredElementCollector(doc).OfClass(DB.Level), key=lambda l: l.Elevation)
-        self.cbo_level.ItemsSource = [l.Name for l in self.levels]
         self.types = sg.floor_types(doc)
         self.cbo_type.ItemsSource = sorted(self.types)
         self.cbo_shape.ItemsSource = [n for _, n in SHAPE_NAMES]
-        lv = [l for l in self.levels if l.Id.IntegerValue == state.level_id]
-        self.cbo_level.SelectedItem = (lv[0] if lv else self.levels[0]).Name
+        level = self.level()
+        self.txt_level.Text = (u"Nivel {} (el de la vista activa) · losas en paños, rectángulo o contorno; planas o inclinadas."
+                               .format(level.Name) if level is not None else
+                               u"Vista 3D: el nivel se toma de la primera viga, muro o losa que toques al agregar.")
         if state.type_name not in self.types:
             loss = [n for n in sorted(self.types) if u"LOSA" in n.upper()]
             state.type_name = loss[0] if loss else sorted(self.types)[0]
@@ -93,8 +93,9 @@ class CrearWindow(forms.WPFWindow):
 
     # -- form ----------------------------------------------------------------------
     def level(self):
-        name = self.cbo_level.SelectedItem
-        return [l for l in self.levels if l.Name == name][0]
+        """The level the slabs go on: the active plan view's, or the one
+        taken from the first element touched in a 3D view."""
+        return doc.GetElement(DB.ElementId(self.state.level_id)) if self.state.level_id else None
 
     @staticmethod
     def _num(text, default):
@@ -107,13 +108,6 @@ class CrearWindow(forms.WPFWindow):
         t = self.types.get(self.cbo_type.SelectedItem)
         if t is not None:
             self.txt_type.Text = u"Espesor {:.2f} m".format(sg.type_thickness(t))
-
-    def level_changed(self, sender, args):
-        if self._filling:
-            return
-        self.state.level_id = self.level().Id.IntegerValue
-        self.nav.reset()
-        self.redraw()
 
     def form_changed(self, sender, args):
         if self._filling:
@@ -208,7 +202,6 @@ class CrearWindow(forms.WPFWindow):
 
     def redraw(self):
         self._draw_plan()
-        self._draw_cut()
 
     def _grids(self, box):
         x0, x1, y0, y1 = box
@@ -234,10 +227,18 @@ class CrearWindow(forms.WPFWindow):
             cache[key] = sg.LevelRegions(doc, self.level(), st.top, key[2])
         return cache[key]
 
+    def _wide_regions(self):
+        """The same, its openings up to 15 cm closed (beams that meet with a
+        larger gap): the second try for a click no closed space holds."""
+        st = self.state
+        t = self.types.get(st.type_name)
+        thick = sg.type_thickness(t) if t else 0.2
+        return sg.LevelRegions(doc, self.level(), st.top, thick, gap=0.15)
+
     def _draw_plan(self):
         canvas = self.canvas_plan
         canvas.Children.Clear()
-        if canvas.ActualWidth < 10:
+        if canvas.ActualWidth < 10 or self.level() is None:
             return
         try:
             lr = self._regions_of_level()
@@ -285,50 +286,6 @@ class CrearWindow(forms.WPFWindow):
             cx = sum(p[0] for p in r["poly"]) / len(r["poly"])
             cy = sum(p[1] for p in r["poly"]) / len(r["poly"])
             rv._text(canvas, frame, cx, cy, u"{}".format(i + 1), brush=brush((30, 30, 30)), size=14, bold=True)
-
-    def _draw_cut(self):
-        canvas = self.canvas_cut
-        canvas.Children.Clear()
-        r = self._region()
-        if r is None or canvas.ActualWidth < 10:
-            return
-        t = self.types.get(self.state.type_name)
-        h = sg.type_thickness(t) if t else 0.20
-        ps = sc.pieces(r["poly"], r["shape"], r["slope"], r.get("angle"), r.get("ridge"))
-        # the cut across the ridge (along the slope), through the middle
-        ang = r.get("angle")
-        if ang is None:
-            ang = sc.long_side_angle(r["poly"]) + (90.0 if r["shape"] == sc.ONE else 0.0)
-        across = ang if r["shape"] == sc.ONE else ang + 90.0
-        q, x0, x1, y0, y1 = sc.frame(r["poly"], across)
-        ym = (y0 + y1) / 2.0
-        prof = []
-        n = 80
-        for k in range(n + 1):
-            u = x0 + (x1 - x0) * k / float(n)
-            x, y = sc.rotate([(u, ym)], across)[0]
-            z = 0.0
-            for p in ps:
-                if p["arrow"] and _inside(p["poly"], x, y):
-                    (ax, ay), (bx, by) = p["arrow"]
-                    L = math.hypot(bx - ax, by - ay) or 1.0
-                    z = p["slope"] * ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / L
-            prof.append((u - x0, z))
-        top = max(z for _, z in prof)
-        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, -0.5, -1.2, x1 - x0 + 0.5, top + 0.8)
-        frame = fitted
-        band = [(u, z) for u, z in prof] + [(u, z - h) for u, z in reversed(prof)]
-        rv._polygon(canvas, frame, band, brush((223, 227, 232)), brush((40, 40, 40)))
-        for u in (0.0, x1 - x0):
-            rv._rect(canvas, frame, u - 0.12, -1.0, u + 0.12, -h, brush((200, 203, 208)), brush((140, 140, 150)))
-        rv._text(canvas, frame, (x1 - x0) / 2.0, top + 0.45, u"{}: {}".format(
-            dict(SHAPE_NAMES)[r["shape"]], u"cumbrera / alto +{:.2f} m".format(top) if top > 1e-3 else u"plana"),
-            brush=brush((180, 30, 30)), size=12, bold=True)
-        if r["shape"] != sc.FLAT:
-            rv._text(canvas, frame, (x1 - x0) / 2.0, top + 0.2, u"pendiente {:g} %".format(round(ps[0]["slope"] * 100, 1)),
-                     brush=brush((180, 30, 30)), size=11)
-        rv._text(canvas, frame, (x1 - x0) / 2.0, -1.1, u"{:.2f} m".format(x1 - x0), size=11)
-        self.txt_cut.Text = u"CORTE DE LA LOSA {} (a lo largo de la pendiente)".format(self.state.selected + 1)
 
     # -- mouse ---------------------------------------------------------------------------
     def plan_wheel(self, sender, args):
@@ -388,11 +345,6 @@ class CrearWindow(forms.WPFWindow):
             return
         self._go("create")
 
-    def create_acero_click(self, sender, args):
-        if not self.state.regions:
-            forms.alert(u"Agrega primero las losas (paños, rectángulo o contorno).", title=u"Crear Losas")
-            return
-        self._go("create_acero")
 
 
 def _inside(poly, x, y):
@@ -406,28 +358,79 @@ def new_region(state, poly, holes=None):
     state.selected = len(state.regions) - 1
 
 
+def prepare_view(state):
+    """Planta: its level. 3D: the level of the first beam, wall or slab
+    clicked, and a work plane at the slab's top so the clicks land on it.
+    False when cancelled."""
+    view = doc.ActiveView
+    if isinstance(view, DB.View3D):
+        if state.level_id is None:
+            try:
+                ref = uidoc.Selection.PickObject(ObjectType.Element, u"Vista 3D: clic en una viga, muro o losa del nivel")
+            except OperationCanceledException:
+                return False
+            level = level_of(doc.GetElement(ref.ElementId))
+            if level is None:
+                forms.alert(u"Ese elemento no tiene nivel: elige una viga, un muro o una losa.", title=u"Crear Losas")
+                return False
+            state.level_id = level.Id.IntegerValue
+        level = doc.GetElement(DB.ElementId(state.level_id))
+        with revit.Transaction(u"Crear Losas - plano de trabajo"):
+            plane = DB.Plane.CreateByNormalAndOrigin(DB.XYZ.BasisZ, DB.XYZ(0, 0, level.Elevation + state.top / FT))
+            view.SketchPlane = DB.SketchPlane.Create(doc, plane)
+        return True
+    level = getattr(view, "GenLevel", None)
+    if level is None:
+        forms.alert(u"Abre una vista en planta del nivel (o una vista 3D).", title=u"Crear Losas")
+        return False
+    state.level_id = level.Id.IntegerValue
+    return True
+
+
+def level_of(e):
+    """The level a slab touching this element sits on: a floor's own, a
+    beam's reference level, a wall's top."""
+    if isinstance(e, DB.Floor):
+        return doc.GetElement(e.LevelId)
+    for bip in (DB.BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM, DB.BuiltInParameter.WALL_HEIGHT_TYPE):
+        p = e.get_Parameter(bip)
+        if p is not None and p.AsElementId() != DB.ElementId.InvalidElementId:
+            return doc.GetElement(p.AsElementId())
+    lid = getattr(e, "LevelId", None)
+    return doc.GetElement(lid) if lid and lid != DB.ElementId.InvalidElementId else None
+
+
 def pick_point(prompt):
     p = uidoc.Selection.PickPoint(ObjectSnapTypes.Endpoints | ObjectSnapTypes.Intersections |
                                   ObjectSnapTypes.Nearest | ObjectSnapTypes.Midpoints, prompt)
     return p.X * FT, p.Y * FT
 
 
-def pick_regions(state, level_regions):
-    found, open_ = 0, 0
+def pick_regions(state, window):
+    found, open_, again = 0, 0, 0
+    level_regions = window._regions_of_level()
+    wide = None
     while True:
         try:
             x, y = pick_point(u"Clic dentro de cada paño (Esc termina)")
         except OperationCanceledException:
             break
+        if any(_inside(r["poly"], x, y) for r in state.regions):
+            again += 1  # this paño is already in the list
+            continue
         r = level_regions.at(x, y)
+        if r is None:  # a gap between beams left it open: closed up to 15 cm
+            wide = wide or window._wide_regions()
+            r = wide.at(x, y)
         if r is None:
             open_ += 1
             continue
         new_region(state, r["outer"], r["holes"])
         found += 1
-    state.message = u"{} paño(s) agregado(s).{}".format(
-        found, u" {} clic(s) fuera de un paño cerrado (abierto hacia afuera o sin vigas/muros alrededor): "
-               u"usa Rectángulo o Contorno.".format(open_) if open_ else u"")
+    state.message = u"{} paño(s) agregado(s).{}{}".format(
+        found, u" {} ya estaba(n) en la lista.".format(again) if again else u"",
+        u" {} clic(s) fuera de un paño cerrado (abierto hacia afuera o sin vigas/muros alrededor): "
+        u"usa Rectángulo o Contorno.".format(open_) if open_ else u"")
 
 
 def pick_rect(state):
@@ -481,12 +484,12 @@ def create_all(state, types):
     except Exception:
         t.RollBack()
         raise
-    failed += [u"Aviso de Revit: {}".format(m) for m in sorted(set(warnings.messages))]
-    return made, joined, failed
+    return made, joined, failed  # Revit's warnings (overlaps...) dropped: the slabs are made
 
 
 class _Warnings(DB.IFailuresPreprocessor):
-    """Revit's warnings (overlapping floors...) noted, not shown one by one."""
+    """Revit's warnings (overlapping floors, a sketch line slightly off
+    axis...) dropped: the slabs are made without a dialog."""
 
     def __init__(self):
         self.messages = []
@@ -502,27 +505,26 @@ class _Warnings(DB.IFailuresPreprocessor):
 # --- main -------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
+    if isinstance(doc.ActiveView, DB.View3D):
+        state.level_id = None  # taken from the first element touched
     xaml = os.path.join(SCRIPT_DIR, "CrearForm.xaml")
     while True:
         window = CrearWindow(xaml, state)
         window.ShowDialog()
-        if window.action == "regions":
-            pick_regions(state, window._regions_of_level())
-            continue
-        if window.action == "rect":
-            pick_rect(state)
-            continue
-        if window.action == "poly":
-            pick_poly(state)
+        if window.action in ("regions", "rect", "poly"):
+            if prepare_view(state):
+                if window.action == "regions":
+                    pick_regions(state, window)
+                elif window.action == "rect":
+                    pick_rect(state)
+                else:
+                    pick_poly(state)
             continue
         break
-    if window.action in ("create", "create_acero"):
+    if window.action == "create":
         made, joined, failed = create_all(state, window.types)
-        if window.action == "create_acero" and made:
+        if made:
             uidoc.Selection.SetElementIds(List[DB.ElementId]([f.Id for f in made]))
-        msg = u"Losas creadas: {}.  Uniones con vigas/muros: {}.".format(len(made), joined)
-        if window.action == "create_acero":
-            msg += u"\n\nLas losas quedaron seleccionadas: pulsa Acero Losa."
-        if failed:
-            msg += u"\n\nNo se pudo crear:\n- " + u"\n- ".join(failed)
-        forms.alert(msg, title=u"Crear Losas")
+        if failed:  # only what really could not be made
+            forms.alert(u"Losas creadas: {}.\n\nNo se pudo crear:\n- ".format(len(made)) + u"\n- ".join(failed),
+                        title=u"Crear Losas")
