@@ -1,0 +1,102 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rampa vehicular" Height="780" Width="1300" MinWidth="1000" MinHeight="600"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="GroupBox">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FFD0D7DF"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+                <StackPanel>
+                    <TextBlock Text="MODELADO &#183; RAMPA VEHICULAR" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock Foreground="#FFB9C9DA" FontSize="11"
+                               Text="Dibuja el eje en la planta de Revit (rectas y arcos); se crea como losa del tipo elegido, con transiciones y la curva alabeada como en obra."/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <DockPanel Margin="12">
+            <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+                <Button DockPanel.Dock="Right" Content="CREAR RAMPA" Width="240" Height="40" FontWeight="Bold"
+                        Background="#FF2D8CF0" Foreground="White" BorderThickness="0" Click="create_click"/>
+                <Button DockPanel.Dock="Right" Content="Cancelar" Width="110" Height="40" Margin="0,0,8,0" Click="cancel_click"/>
+                <TextBlock x:Name="txt_status" VerticalAlignment="Center" FontWeight="Bold" TextWrapping="Wrap" MaxWidth="800"/>
+            </DockPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="370"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <GroupBox Header="Losa (tipo de Revit)">
+                            <StackPanel>
+                                <ComboBox x:Name="cbo_type" SelectionChanged="config_changed"/>
+                                <TextBlock x:Name="txt_type" Foreground="Gray" FontSize="11" Margin="0,3,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+                        <GroupBox Header="Niveles y pendiente">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="160"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/>
+                                    <RowDefinition Height="30"/><RowDefinition Height="30"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Inicio (abajo):" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="1" x:Name="cbo_base" VerticalAlignment="Center" SelectionChanged="config_changed"/>
+                                <TextBlock Grid.Row="1" Text="Fin (arriba):" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="cbo_top" VerticalAlignment="Center" SelectionChanged="config_changed"/>
+                                <TextBlock Grid.Row="2" Text="Ancho (m):" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" x:Name="txt_width" Text="3.50" VerticalAlignment="Center" TextChanged="config_changed"/>
+                                <TextBlock Grid.Row="3" Text="Transici&#243;n inicio/fin (m):" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_transition" Text="3.60" VerticalAlignment="Center" TextChanged="config_changed"
+                                         ToolTip="Tramo al inicio y al final con la mitad de la pendiente (RNE A.010)."/>
+                                <TextBlock Grid.Row="4" Text="Pendiente m&#225;xima (%):" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_max" Text="15" VerticalAlignment="Center" TextChanged="config_changed"/>
+                            </Grid>
+                        </GroupBox>
+                        <GroupBox Header="Boceto del eje (en la planta de Revit)">
+                            <StackPanel>
+                                <Button Content="&#9998;  + Recta" Height="34" FontWeight="Bold" Background="#FF2D8CF0" Foreground="White"
+                                        BorderThickness="0" Click="add_line_click"
+                                        ToolTip="Revit abre la planta del nivel de inicio. La primera vez: clic en el inicio y en el fin. Despu&#233;s sigue desde el fin del tramo anterior: un clic en su fin."/>
+                                <Button Content="&#9998;  + Arco (punto del arco y fin)" Height="34" Margin="0,4,0,0" FontWeight="Bold"
+                                        Background="#FF2D8CF0" Foreground="White" BorderThickness="0" Click="add_arc_click"
+                                        ToolTip="Sigue desde el fin del tramo anterior: clic en un punto del arco y clic en su fin."/>
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="Deshacer &#250;ltimo" Padding="10,2" Click="undo_click"/>
+                                    <Button Content="Borrar eje" Padding="10,2" Margin="6,0,0,0" Click="clear_click"/>
+                                </StackPanel>
+                                <TextBlock x:Name="txt_summary" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+                        <GroupBox Header="Al crear">
+                            <CheckBox x:Name="chk_join" IsChecked="True" Content="Unir con vigas, muros y columnas que toca"/>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions><RowDefinition Height="1.5*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <GroupBox Header="PLANTA (eje y losa)">
+                        <Canvas x:Name="canvas_plan" Background="White" ClipToBounds="True" SizeChanged="resized"/>
+                    </GroupBox>
+                    <GroupBox Grid.Row="1" Header="PERFIL LONGITUDINAL (por el eje)">
+                        <Canvas x:Name="canvas_profile" Background="White" ClipToBounds="True" SizeChanged="resized"/>
+                    </GroupBox>
+                </Grid>
+            </Grid>
+        </DockPanel>
+    </DockPanel>
+</Window>

@@ -317,14 +317,25 @@ class EscaleraWindow(forms.WPFWindow):
 
 # --- drawing in the plan -------------------------------------------------------
 def plan_view_of(level):
-    """A plan view of the level (one that exists, else a new floor plan)."""
-    for v in DB.FilteredElementCollector(doc).OfClass(DB.ViewPlan):
-        if not v.IsTemplate and v.GenLevel is not None and v.GenLevel.Id == level.Id \
-                and v.ViewType in (DB.ViewType.FloorPlan, DB.ViewType.EngineeringPlan):
-            return v
+    """The plan to draw in: the active view when it is a plan of this level;
+    else a plan of the level showing a CAD (linked or imported) - the
+    drawing to trace over -; else any plan of it; else a new floor plan."""
+    active = doc.ActiveView
+    plans = [v for v in DB.FilteredElementCollector(doc).OfClass(DB.ViewPlan)
+             if not v.IsTemplate and v.GenLevel is not None and v.GenLevel.Id == level.Id
+             and v.ViewType in (DB.ViewType.FloorPlan, DB.ViewType.EngineeringPlan)]
+    if any(v.Id == active.Id for v in plans):
+        return active
+    for v in plans:
+        try:
+            if DB.FilteredElementCollector(doc, v.Id).OfClass(DB.ImportInstance).GetElementCount():
+                return v
+        except Exception:
+            pass
+    if plans:
+        return plans[0]
     vft = next(t for t in DB.FilteredElementCollector(doc).OfClass(DB.ViewFamilyType)
-               if t.ViewFamily == DB.ViewFamily.FloorPlan)
-    with revit.Transaction(u"BOKI Escalera - planta"):
+               if t.ViewFamily == DB.ViewFamily.FloorPlan)    with revit.Transaction(u"BOKI Escalera - planta"):
         return DB.ViewPlan.Create(doc, vft.Id, level.Id)
 
 
