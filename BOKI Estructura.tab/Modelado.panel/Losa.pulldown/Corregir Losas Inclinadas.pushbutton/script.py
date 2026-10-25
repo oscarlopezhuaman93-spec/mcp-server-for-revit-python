@@ -87,7 +87,8 @@ class State(object):
         self.scope = "all"
         self.picked = []  # floor ids picked
         self.items = None  # analyzed floors of the scope
-        self.shape = self.ridge = self.join = True
+        self.ridge = self.join = True
+        self.shape = False  # remaking a floor gives a new one (its shape points lost): only when asked
         self.selected = 0
 
 
@@ -343,14 +344,12 @@ def pick_floors(state):
 
 
 def correct(state):
-    """Every floor to do: its shape remade, then fitted to its ridge beam."""
-    made, failed = [], []
-    t = DB.Transaction(doc, u"Corregir losas inclinadas")
-    opts = t.GetFailureHandlingOptions()
-    opts.SetFailuresPreprocessor(rsl.DropFailing())
-    opts.SetForcedModalHandling(False)
-    t.SetFailureHandlingOptions(opts)
-    t.Start()
+    """Every floor to do: remade with a slope arrow only when asked (a new
+    floor), then fitted to its ridge beam in place (the same floor, its
+    shape points kept). Returns (the floors corrected, failures)."""
+    done, failed = [], []
+    tg = DB.TransactionGroup(doc, u"Corregir losas inclinadas")
+    tg.Start()
     try:
         for it in state.todo:
             f = it["floor"]
@@ -358,22 +357,26 @@ def correct(state):
             try:
                 floors = [f]
                 if state.shape and it["shape"]:
+                    t = DB.Transaction(doc, u"Rehacer losa con flecha")
+                    opts = t.GetFailureHandlingOptions()
+                    opts.SetFailuresPreprocessor(rsl.DropFailing())
+                    opts.SetForcedModalHandling(False)
+                    t.SetFailureHandlingOptions(opts)
+                    t.Start()
                     rsl.delete_bricks(doc, f)
                     floors = sf.fix_floor(doc, f, join=state.join)
+                    t.Commit()
                 if state.ridge:
-                    out = []
                     for g in floors:
-                        fitted = sf.fit_to_ridge(doc, g, join=state.join)
-                        out.append(fitted or g)
-                    floors = out
-                made += [g for g in floors if g.Id.IntegerValue != fid]
+                        sf.fit_to_ridge_in_place(doc, g, join=state.join)
+                done += floors
             except Exception as e:
                 failed.append(u"id {}: {}".format(fid, e))
-        t.Commit()
+        tg.Assimilate()
     except Exception:
-        t.RollBack()
+        tg.RollBack()
         raise
-    return made, failed
+    return done, failed
 
 
 if __name__ == "__main__":

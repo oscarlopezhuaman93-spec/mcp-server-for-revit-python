@@ -59,12 +59,13 @@
                     </GroupBox>
                     <GroupBox DockPanel.Dock="Bottom" Header="Corregir">
                         <StackPanel TextElement.FontWeight="Normal">
-                            <CheckBox x:Name="chk_shape" IsChecked="True" Click="options_changed" Margin="0,4,0,4"
-                                      Content="Forma: losa con flecha de pendiente (espesor real)"/>
-                            <CheckBox x:Name="chk_ridge" IsChecked="True" Click="options_changed" Margin="0,0,0,4"
-                                      Content="Ajustar a vigas cumbrera (hasta el eje, la viga corta)"/>
-                            <CheckBox x:Name="chk_join" IsChecked="True" Click="options_changed"
+                            <CheckBox x:Name="chk_ridge" IsChecked="True" Click="options_changed" Margin="0,4,0,4"
+                                      Content="Ajustar a vigas cumbrera (la misma losa, con sus puntos)"/>
+                            <CheckBox x:Name="chk_join" IsChecked="True" Click="options_changed" Margin="0,0,0,4"
                                       Content="Unir con vigas que la cortan"/>
+                            <CheckBox x:Name="chk_shape" IsChecked="False" Click="options_changed"
+                                      Content="Rehacer con flecha de pendiente (espesor real; crea losa nueva)"
+                                      ToolTip="Solo para las hechas con edici&#243;n de forma que quieras con el espesor perpendicular a la cara: se crea otra losa (otro n&#250;mero de elemento) y se pierden sus puntos de forma."/>
                         </StackPanel>
                     </GroupBox>
                     <GroupBox Header="Losas a corregir">

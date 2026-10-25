@@ -270,3 +270,79 @@ def fit_to_ridge(doc, floor, join=True):
     if not DB.JoinGeometryUtils.IsCuttingElementInJoin(doc, beam, new):
         DB.JoinGeometryUtils.SwitchJoinOrder(doc, beam, new)
     return new
+
+
+def fit_to_ridge_in_place(doc, floor, join=True):
+    """The same floor (no transaction open: it opens its own) with its high
+    edge carried to its ridge beam's axis by editing its sketch - its id,
+    parameters, steel and shape points kept; the shape points moved with
+    the edge are raised to the slab's plane there - and the beam cutting it.
+    Returns the ridge beam, or None when there is nothing to fit."""
+    found = ridge_beam(doc, floor)
+    info = _single_slope(floor)
+    if found is None or info is None:
+        return None
+    beam, extend = found
+    face, outer, holes, arrow, slope, z_tail, h, hi = info
+    n, o = face.FaceNormal, face.Origin
+
+    def plane_z(x, y):  # the slab's top plane over (x, y) (ft)
+        return o.Z - (n.X * (x - o.X) + n.Y * (y - o.Y)) / n.Z
+
+    def on_edge(p):
+        return abs((p.X * h[0] + p.Y * h[1]) * FT - hi) < 0.01
+
+    push = DB.XYZ(h[0] * extend / FT, h[1] * extend / FT, 0)
+    quiet = _Quiet()
+    scope = DB.SketchEditScope(doc, u"Ajustar losa a la cumbrera")
+    scope.Start(floor.SketchId)
+    t = DB.Transaction(doc, u"Ajustar losa a la cumbrera")
+    t.Start()
+    sketch = doc.GetElement(floor.SketchId)
+    for eid in sketch.GetAllElements():
+        mc = doc.GetElement(eid)
+        c = getattr(mc, "GeometryCurve", None)
+        if c is None:
+            continue
+        ends = [c.GetEndPoint(0), c.GetEndPoint(1)]
+        moved = [p + push if on_edge(p) else p for p in ends]
+        if all(a.IsAlmostEqualTo(b) for a, b in zip(ends, moved)):
+            continue
+        if not isinstance(c, DB.Line):
+            t.RollBack()
+            scope.Cancel()
+            raise Exception(u"el borde alto no es recto")
+        mc.SetGeometryCurve(DB.Line.CreateBound(moved[0], moved[1]), True)
+    t.Commit()
+    scope.Commit(quiet)
+    t = DB.Transaction(doc, u"Ajustar losa a la cumbrera")
+    options = t.GetFailureHandlingOptions()
+    options.SetFailuresPreprocessor(quiet)
+    t.SetFailureHandlingOptions(options)
+    t.Start()
+    editor = floor.GetSlabShapeEditor()
+    if editor is not None and editor.IsEnabled:
+        level = doc.GetElement(floor.LevelId)
+        base = level.Elevation + floor.get_Parameter(DB.BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM).AsDouble()
+        for v in editor.SlabShapeVertices:
+            p = v.Position
+            if abs((p.X * h[0] + p.Y * h[1]) * FT - (hi + extend)) < 0.01:
+                editor.ModifySubElement(v, plane_z(p.X, p.Y) - base)
+    if join:
+        join_beams_cutting(doc, floor)
+    if not DB.JoinGeometryUtils.AreElementsJoined(doc, floor, beam):
+        DB.JoinGeometryUtils.JoinGeometry(doc, floor, beam)
+    if not DB.JoinGeometryUtils.IsCuttingElementInJoin(doc, beam, floor):
+        DB.JoinGeometryUtils.SwitchJoinOrder(doc, beam, floor)
+    t.Commit()
+    return beam
+
+
+class _Quiet(DB.IFailuresPreprocessor):
+    """Warnings dropped: no dialog stops the correction."""
+
+    def PreprocessFailures(self, accessor):
+        for f in accessor.GetFailureMessages():
+            if f.GetSeverity() == DB.FailureSeverity.Warning:
+                accessor.DeleteWarning(f)
+        return DB.FailureProcessingResult.Continue
