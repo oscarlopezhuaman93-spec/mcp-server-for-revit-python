@@ -79,6 +79,10 @@ def create_run(doc, base_level, top_level, info, run, riser, tread, width, messa
     # meets the landing); to the upper floor, with its riser
     created.BeginsWithRiser = True
     created.EndsWithRiser = not run.get("top_tread")
+    if run.get("from_landing"):
+        # rising from a landing: its waist goes on down to the landing's
+        # bottom face, so the two are one piece of concrete
+        created.ExtensionBelowRiserBase = -run["from_landing"] / FT  # negative: down
     t.Commit()
     scope.Commit(_Quiet(messages))
     return doc.GetElement(stairs_id)
@@ -121,8 +125,10 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
     """The whole stair: its runs, then its landings in one transaction.
     Returns ([Stairs], [Floor], messages)."""
     messages = []
-    runs = [create_run(doc, base_level, top_level, info, r, plan["riser"], tread, width, messages)
-            for r in plan["runs"]]
+    runs = []
+    for k, r in enumerate(plan["runs"]):
+        r = dict(r, from_landing=info.landing if k else 0.0)
+        runs.append(create_run(doc, base_level, top_level, info, r, plan["riser"], tread, width, messages))
     floors = []
     if plan["landings"]:
         t = DB.Transaction(doc, u"BOKI Escalera - descansos")
