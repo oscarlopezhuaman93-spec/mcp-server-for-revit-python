@@ -335,7 +335,8 @@ def plan_view_of(level):
     if plans:
         return plans[0]
     vft = next(t for t in DB.FilteredElementCollector(doc).OfClass(DB.ViewFamilyType)
-               if t.ViewFamily == DB.ViewFamily.FloorPlan)    with revit.Transaction(u"BOKI Escalera - planta"):
+               if t.ViewFamily == DB.ViewFamily.FloorPlan)
+    with revit.Transaction(u"BOKI Escalera - planta"):
         return DB.ViewPlan.Create(doc, vft.Id, level.Id)
 
 
