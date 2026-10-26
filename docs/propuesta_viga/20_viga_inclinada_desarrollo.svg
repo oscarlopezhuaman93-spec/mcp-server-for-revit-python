@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1080" font-family="Segoe UI, Arial" font-size="14">
+  <rect width="1000" height="1080" fill="#F3F5F8"/>
+  <rect width="1000" height="56" fill="#16324F"/>
+  <text x="20" y="36" fill="white" font-size="20" font-weight="bold">ACERO VIGA · VIGAS INCLINADAS (DOS AGUAS) — PROPUESTA</text>
+  <text x="920" y="36" fill="#FFB347" font-size="20" font-weight="bold">BOKI</text>
+
+  <!-- PANEL 1 -->
+  <text x="20" y="90" fill="#16324F" font-size="16" font-weight="bold">1. Desarrollo automático (elevación)</text>
+  <rect x="20" y="100" width="960" height="520" fill="white" stroke="#D0D7DF"/>
+  <!-- columns -->
+  <rect x="40" y="520" width="70" height="90" fill="#E8ECF1" stroke="#888"/>
+  <rect x="890" y="520" width="70" height="90" fill="#E8ECF1" stroke="#888"/>
+  <text x="44" y="604" font-size="11" fill="#555">columna</text>
+  <text x="894" y="604" font-size="11" fill="#555">columna</text>
+  <!-- straight beam at eave -->
+  <rect x="110" y="520" width="120" height="40" fill="#E8ECF1" stroke="#888"/>
+  <rect x="770" y="520" width="120" height="40" fill="#E8ECF1" stroke="#888"/>
+  <text x="122" y="577" font-size="11" fill="#555">viga recta</text>
+  <text x="782" y="577" font-size="11" fill="#555">viga recta</text>
+  <!-- sloped beams -->
+  <polygon points="40,520 500,185 960,520 936,552 500,234 64,552" fill="#F7F8FA" stroke="#555" stroke-width="1.5"/>
+  <!-- stirrups -->
+  <g stroke="#1AA39A" stroke-width="1.4">
+    <line x1="84" y1="496" x2="102" y2="522"/><line x1="100" y1="485" x2="118" y2="511"/><line x1="116" y1="473" x2="134" y2="499"/>
+    <line x1="140" y1="456" x2="158" y2="482"/><line x1="164" y1="438" x2="182" y2="464"/><line x1="188" y1="421" x2="206" y2="447"/>
+    <line x1="230" y1="390" x2="248" y2="416"/><line x1="280" y1="354" x2="298" y2="380"/><line x1="330" y1="317" x2="348" y2="343"/>
+    <line x1="372" y1="287" x2="390" y2="313"/><line x1="396" y1="269" x2="414" y2="295"/><line x1="420" y1="252" x2="438" y2="278"/>
+    <line x1="444" y1="234" x2="462" y2="260"/><line x1="460" y1="222" x2="478" y2="248"/>
+    <line x1="916" y1="496" x2="898" y2="522"/><line x1="900" y1="485" x2="882" y2="511"/><line x1="884" y1="473" x2="866" y2="499"/>
+    <line x1="860" y1="456" x2="842" y2="482"/><line x1="836" y1="438" x2="818" y2="464"/><line x1="812" y1="421" x2="794" y2="447"/>
+    <line x1="770" y1="390" x2="752" y2="416"/><line x1="720" y1="354" x2="702" y2="380"/><line x1="670" y1="317" x2="652" y2="343"/>
+    <line x1="628" y1="287" x2="610" y2="313"/><line x1="604" y1="269" x2="586" y2="295"/><line x1="580" y1="252" x2="562" y2="278"/>
+    <line x1="556" y1="234" x2="538" y2="260"/><line x1="540" y1="222" x2="522" y2="248"/>
+  </g>
+  <!-- top bars: continuous over the ridge, bent down into the column -->
+  <polyline points="56,600 56,530 500,198 944,530 944,600" fill="none" stroke="#1F3FD6" stroke-width="3"/>
+  <!-- bottom bars: cross the ridge and anchor along the other beam -->
+  <polyline points="76,605 76,543 520,219 572,257" fill="none" stroke="#D63F1F" stroke-width="3"/>
+  <polyline points="924,605 924,543 480,219 428,257" fill="none" stroke="#D63F1F" stroke-width="3"/>
+  <!-- callouts -->
+  <g font-size="12">
+    <circle cx="500" cy="198" r="16" fill="none" stroke="#16324F" stroke-dasharray="3,2"/>
+    <text x="380" y="150" fill="#1F3FD6" font-weight="bold">A · acero superior continuo,</text>
+    <text x="380" y="166" fill="#1F3FD6" font-weight="bold">doblado en la cumbrera</text>
+    <text x="590" y="290" fill="#D63F1F" font-weight="bold">B · acero inferior cruza la cumbrera</text>
+    <text x="590" y="306" fill="#D63F1F" font-weight="bold">y se ancla en la otra viga (Ld)</text>
+    <text x="130" y="640" fill="#16324F" font-weight="bold">C · en el apoyo (columna / viga recta) el acero</text>
+    <text x="130" y="656" fill="#16324F" font-weight="bold">    baja con gancho de 90° dentro del nudo</text>
+    <text x="250" y="470" fill="#1AA39A" font-weight="bold" transform="rotate(-36 250 470)">Ø3/8": 1@.05, 7@.10, Rto @.20 c/extr.</text>
+  </g>
+  <rect x="660" y="112" width="310" height="70" fill="#FFF8EC" stroke="#FFB347"/>
+  <text x="672" y="132" font-size="12">Se reconoce la cadena de vigas inclinadas</text>
+  <text x="672" y="150" font-size="12">que se tocan (cumbrera) y sus apoyos.</text>
+  <text x="672" y="168" font-size="12">Un solo "Generar" arma todo el pórtico.</text>
+
+  <!-- PANEL 2 -->
+  <text x="20" y="660" fill="#16324F" font-size="16" font-weight="bold" transform="translate(0,30)">2. Por boceto (dibujo manual en la vista de elevación/corte)</text>
+  <rect x="20" y="700" width="960" height="360" fill="white" stroke="#D0D7DF"/>
+  <rect x="40" y="720" width="300" height="320" fill="#F3F5F8" stroke="#D0D7DF"/>
+  <text x="56" y="746" font-weight="bold" fill="#16324F">Pestaña "Boceto"</text>
+  <rect x="56" y="760" width="268" height="32" fill="#2D8CF0"/><text x="70" y="781" fill="white" font-weight="bold">✎ Dibujar barra (clic a clic)</text>
+  <text x="56" y="816" font-size="12">Diámetro:  [ Ø5/8" ▾ ]   Cantidad: [ 2 ]</text>
+  <text x="56" y="840" font-size="12">Posición:  ( ) superior  ( ) inferior</text>
+  <text x="56" y="864" font-size="12">Gancho inicio: [ 90° ▾ ]  fin: [ 90° ▾ ]</text>
+  <text x="56" y="888" font-size="12">☑ Ajustar al recubrimiento</text>
+  <text x="56" y="912" font-size="12">☑ Doblez con radio de norma</text>
+  <text x="56" y="944" font-size="12" fill="#555">Barras dibujadas:</text>
+  <text x="56" y="964" font-size="12">• 2Ø5/8"+1Ø1/2" sup.  12.4 m</text>
+  <text x="56" y="984" font-size="12">• 2Ø5/8"+1Ø1/2" inf.   7.1 m (×2)</text>
+  <rect x="56" y="998" width="120" height="28" fill="white" stroke="#2D8CF0"/><text x="68" y="1017" font-size="12" fill="#1F6FC5">Deshacer último</text>
+
+  <!-- sketch on the elevation -->
+  <polygon points="380,980 640,790 900,980 885,1000 640,822 395,1000" fill="#F7F8FA" stroke="#555"/>
+  <polyline points="392,1030 392,986 640,804 888,986 888,1030" fill="none" stroke="#1F3FD6" stroke-width="2.5" stroke-dasharray="7,4"/>
+  <g fill="#FFB347" stroke="#16324F">
+    <circle cx="392" cy="1030" r="6"/><circle cx="392" cy="986" r="6"/><circle cx="640" cy="804" r="6"/>
+    <circle cx="888" cy="986" r="6"/><circle cx="888" cy="1030" r="6"/>
+  </g>
+  <g font-size="12" font-weight="bold" fill="#16324F">
+    <text x="372" y="1048">1</text><text x="370" y="984">2</text><text x="634" y="788">3</text><text x="900" y="984">4</text><text x="900" y="1048">5</text>
+  </g>
+  <text x="560" y="740" font-size="12">Clics en la vista: cada punto es un doblez.</text>
+  <text x="560" y="758" font-size="12">Se crea una barra real (forma libre) en el plano</text>
+  <text x="560" y="776" font-size="12">de la viga, cortada a 9 m con empalme si excede.</text>
+</svg>

@@ -11,6 +11,7 @@ __author__ = "Revit MCP"
 
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -29,6 +30,8 @@ import beam_extras as bx
 import rebar_columns as rc
 import rebar_beams as rb
 import rebar_views as rv
+import sloped_plan as sp
+import rebar_sloped as rsl
 import utils as fw_utils
 
 # pyRevit keeps one interpreter across clicks: reload so edits on disk
@@ -41,6 +44,8 @@ reload(bx)
 reload(rc)
 reload(rb)
 reload(rv)
+reload(sp)
+reload(rsl)
 
 from pyrevit import revit, DB, forms, script
 from Autodesk.Revit.Exceptions import OperationCanceledException
@@ -796,6 +801,9 @@ class AceroWindow(forms.WPFWindow):
     # -- actions -----------------------------------------------------------
     def pick_click(self, sender, args):
         self._leave("pick")
+
+    def sketch_click(self, sender, args):
+        self._leave("sketch")
 
     def run_click(self, sender, args):
         # No "Guardar configuracion" button: generating saves the form and
@@ -2978,6 +2986,223 @@ def pick_beams(state):
         state.active = id_of(doc.GetElement(DB.ElementId(state.picked_ids[0])).GetTypeId())
 
 
+class SketchState(object):
+    """The Boceto bar being drawn: its beam and its points (world, ft)."""
+
+    def __init__(self):
+        self.beam_id = None
+        self.points = []
+        self.key = u'5/8"'
+        self.count = 2
+        self.cover = 4.0
+        self.message = None
+
+
+class BocetoWindow(forms.WPFWindow):
+    """A longitudinal bar drawn point by point in a view (each point a
+    bend), its segment lengths typed in, created on the beam."""
+
+    def __init__(self, xaml_file_path, sketch):
+        forms.WPFWindow.__init__(self, xaml_file_path)
+        self.sketch = sketch
+        self.action = None
+        keys = rs.bar_diameter_keys()
+        self.cbo_d.ItemsSource = List[str](keys)
+        self.cbo_d.SelectedItem = sketch.key if sketch.key in keys else keys[0]
+        self.txt_n.Text = str(sketch.count)
+        self.txt_cover.Text = u"{:g}".format(sketch.cover)
+        self.boxes = []
+        beam = doc.GetElement(DB.ElementId(sketch.beam_id)) if sketch.beam_id else None
+        self.txt_host.Text = (u"Viga {} - {} puntos".format(sketch.beam_id, len(sketch.points)) if beam
+                              else u"Sin barra dibujada.")
+        self._segments()
+        self._status(sketch.message or u"", error=False)
+        sketch.message = None
+
+    def _status(self, text, error=True):
+        self.txt_status.Text = text
+        self.txt_status.Foreground = brush(176, 32, 32) if error else brush(22, 50, 79)
+
+    def _plane_points(self):
+        """(u, z) in m of the points in the beam's vertical plane."""
+        if not self.sketch.points:
+            return []
+        beam = doc.GetElement(DB.ElementId(self.sketch.beam_id))
+        o, e, _ = rsl.beam_plane(beam)
+        return [((p - o).DotProduct(e) * rc.FT, p.Z * rc.FT) for p in self.sketch.points]
+
+    def _segments(self):
+        self.pnl_segments.Children.Clear()
+        self.boxes = []
+        pts = self._plane_points()
+        for k, length in enumerate(sp.segment_lengths(pts)):
+            row = DockPanel()
+            row.Margin = Thickness(0, 0, 0, 3)
+            label = TextBlock()
+            label.Text = u"Tramo {}:".format(k + 1)
+            label.Width = 70
+            label.VerticalAlignment = VerticalAlignment.Center
+            box = TextBox()
+            box.Text = u"{:.3f}".format(length)
+            row.Children.Add(label)
+            row.Children.Add(box)
+            self.pnl_segments.Children.Add(row)
+            self.boxes.append(box)
+        self.txt_total.Text = (u"Longitud total: {:.2f} m".format(sum(sp.segment_lengths(pts))) if pts else u"")
+        self.redraw()
+
+    def _read(self):
+        try:
+            self.sketch.key = self.cbo_d.SelectedItem
+            self.sketch.count = max(1, int(self.txt_n.Text))
+            self.sketch.cover = float(self.txt_cover.Text.replace(u",", u"."))
+            return True
+        except ValueError:
+            self._status(u"Cantidad y recubrimiento deben ser numeros.")
+            return False
+
+    def apply_click(self, sender, args):
+        if not self.sketch.points:
+            return
+        try:
+            lengths = [float(b.Text.replace(u",", u".")) for b in self.boxes]
+        except ValueError:
+            self._status(u"Las longitudes deben ser numeros (m).")
+            return
+        pts = [(p.X, p.Y, p.Z) for p in self.sketch.points]
+        new = sp.resize_path(pts, [L / rc.FT for L in lengths])
+        self.sketch.points = [DB.XYZ(*p) for p in new]
+        self._segments()
+        self._status(u"Longitudes aplicadas.", error=False)
+
+    def draw_click(self, sender, args):
+        if self._read():
+            self.action = "draw"
+            self.Close()
+
+    def create_click(self, sender, args):
+        if not self.sketch.points or len(self.sketch.points) < 2:
+            self._status(u"Primero dibuja la barra en la vista.")
+            return
+        if self._read():
+            self.apply_click(None, None)
+            self.action = "create"
+            self.Close()
+
+    def close_click(self, sender, args):
+        self.action = None
+        self.Close()
+
+    def resized(self, sender, args):
+        self.redraw()
+
+    def redraw(self):
+        canvas = self.canvas
+        canvas.Children.Clear()
+        pts = self._plane_points()
+        w, h = canvas.ActualWidth, canvas.ActualHeight
+        if len(pts) < 2 or w < 10 or h < 10:
+            return
+        us, zs = [p[0] for p in pts], [p[1] for p in pts]
+        span = max(max(us) - min(us), max(zs) - min(zs), 0.1)
+        scale = min((w - 80) / span, (h - 80) / span)
+        cx, cz = (max(us) + min(us)) / 2.0, (max(zs) + min(zs)) / 2.0
+
+        def at(p):
+            return Point(w / 2.0 + (p[0] - cx) * scale, h / 2.0 - (p[1] - cz) * scale)
+        line = Polyline()
+        line.Points = PointCollection([at(p) for p in pts])
+        line.Stroke = brush(31, 63, 214)
+        line.StrokeThickness = 3
+        line.StrokeLineJoin = PenLineJoin.Round
+        canvas.Children.Add(line)
+        for k, p in enumerate(pts):
+            q = at(p)
+            dot = Ellipse()
+            dot.Width = dot.Height = 10
+            dot.Fill = brush(255, 179, 71)
+            dot.Stroke = brush(22, 50, 79)
+            Canvas.SetLeft(dot, q.X - 5)
+            Canvas.SetTop(dot, q.Y - 5)
+            canvas.Children.Add(dot)
+        for k, (a, b) in enumerate(zip(pts, pts[1:])):
+            qa, qb = at(a), at(b)
+            text = TextBlock()
+            text.Text = u"{}: {:.2f}".format(k + 1, math.hypot(b[0] - a[0], b[1] - a[1]))
+            text.FontWeight = FontWeights.Bold
+            text.Foreground = brush(22, 50, 79)
+            Canvas.SetLeft(text, (qa.X + qb.X) / 2.0 + 6)
+            Canvas.SetTop(text, (qa.Y + qb.Y) / 2.0 - 18)
+            canvas.Children.Add(text)
+
+
+def sketch_draw(sketch):
+    """Pick the beam (unless one is drawn on), then the bar's points in
+    the active view on the beam's vertical plane, Esc to finish."""
+    uidoc = revit.uidoc
+    try:
+        ref = uidoc.Selection.PickObject(ObjectType.Element, _BeamFilter(), u"Selecciona la viga de la barra")
+    except OperationCanceledException:
+        return
+    beam = doc.GetElement(ref.ElementId)
+    o, e, across = rsl.beam_plane(beam)
+    view = uidoc.ActiveView
+    t = DB.Transaction(doc, u"Plano de boceto")
+    t.Start()
+    try:
+        view.SketchPlane = DB.SketchPlane.Create(doc, DB.Plane.CreateByNormalAndOrigin(across, o))
+        t.Commit()
+    except Exception:
+        t.RollBack()
+        sketch.message = u"Dibuja en una elevacion, corte o vista 3D donde se vea la viga."
+        return
+    points = []
+    while True:
+        try:
+            points.append(uidoc.Selection.PickPoint(
+                u"Punto {} de la barra (cada punto un doblez; Esc para terminar)".format(len(points) + 1)))
+        except OperationCanceledException:
+            break
+    if len(points) < 2:
+        sketch.message = u"Se necesitan al menos dos puntos."
+        return
+    sketch.beam_id = id_of(beam.Id)
+    sketch.points = rsl.onto_plane(points, beam)
+
+
+def sketch_create(sketch):
+    beam = doc.GetElement(DB.ElementId(sketch.beam_id))
+    t = DB.Transaction(doc, u"Acero Viga - boceto")
+    t.Start()
+    try:
+        rb.ensure_parameters(doc)
+        bar_type = rc._bar_type(rc.BarTypes(doc), sketch.key, rb.BEAM_MARK)
+        bars = rsl.sketch_bar(doc, beam, bar_type, sketch.points, sketch.count, sketch.cover / 100.0, sketch.key)
+        t.Commit()
+        total = sum(sp.segment_lengths([(p.X, p.Y, p.Z) for p in sketch.points])) * rc.FT
+        sketch.message = u"Creadas {} barra(s) {} de {:.2f} m en la viga {}.".format(
+            len(bars), sketch.key, total, sketch.beam_id)
+        sketch.points = []
+    except Exception as e:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        sketch.message = u"No se pudo crear la barra: {}".format(e)
+
+
+def sketch_flow():
+    sketch = SketchState()
+    xaml_sketch = os.path.join(SCRIPT_DIR, "BocetoForm.xaml")
+    while True:
+        window = BocetoWindow(xaml_sketch, sketch)
+        window.ShowDialog()
+        if window.action == "draw":
+            sketch_draw(sketch)
+        elif window.action == "create":
+            sketch_create(sketch)
+        else:
+            return
+
+
 AUTO_TYPE = u"(automatico)"
 
 
@@ -3002,6 +3227,9 @@ while True:
     window.ShowDialog()
     if window.action == "pick":
         pick_beams(state)
+        continue
+    if window.action == "sketch":
+        sketch_flow()
         continue
     if window.action != "run":
         script.exit()
@@ -3068,17 +3296,25 @@ t.Start()
 try:
     rb.ensure_parameters(doc)
     done = []
+    # gable frames: two sloped beams meeting at a ridge get their bars bent
+    # across it (rsl), their stirrups as any beam
+    ridge = rsl.ridge_pairs(with_spec)
+    in_ridge = set(id(l) for a, b, _, _ in ridge for l in (a, b))
+
+    def settings_of(line):
+        key = tuple(id_of(e.Id) for e in line.elements)
+        return state.line_edits.get(key) or rb.read_line_settings(line)
     with forms.ProgressBar(title="Acero: {value} de {max_value} vigas") as pb:
         for i, line in enumerate(with_spec):
             bt = by_id[id_of(line.type_id)]
             sub = DB.SubTransaction(doc)
             sub.Start()
             try:
-                key = tuple(id_of(e.Id) for e in line.elements)
-                line_settings = state.line_edits.get(key) or rb.read_line_settings(line)
+                line_settings = settings_of(line)
                 created, found = rb.generate_line(
                     doc, line, specs[bt.id], rb.anchor_of(bt.config()), bar_types, hooks,
-                    rebar_shapes, splice, legs, line_settings=line_settings)
+                    rebar_shapes, splice, legs, line_settings=line_settings,
+                    longitudinal=id(line) not in in_ridge)
                 sub.Commit()
                 done.append((line, bt.name, created))
                 warnings += [u"{} (viga {}): {}".format(bt.name, id_of(line.elements[0].Id), w) for w in found]
@@ -3086,6 +3322,27 @@ try:
                 sub.RollBack()
                 warnings.append(u"Viga {} ({}): {}".format(id_of(line.elements[0].Id), bt.name, e))
             pb.update_progress(i + 1, len(with_spec))
+    by_line = dict((id(line), created) for line, _, created in done)
+    for pair in ridge:
+        a, b = pair[0], pair[1]
+        if id(a) not in by_line or id(b) not in by_line:
+            continue
+        ta, tb = by_id[id_of(a.type_id)], by_id[id_of(b.type_id)]
+        sub = DB.SubTransaction(doc)
+        sub.Start()
+        try:
+            created, found = rsl.generate_pair(
+                doc, pair, specs[ta.id], specs[tb.id], rb.anchor_of(ta.config()), rb.anchor_of(tb.config()),
+                bar_types, splice, legs, settings_of(a), settings_of(b))
+            sub.Commit()
+            for element_id, items in created.items():
+                for line in (a, b):
+                    if element_id in by_line[id(line)]:
+                        by_line[id(line)][element_id].extend(items)
+            warnings += [u"{} (cumbrera {}): {}".format(ta.name, id_of(a.elements[0].Id), w) for w in found]
+        except Exception as e:
+            sub.RollBack()
+            warnings.append(u"Viga {} (cumbrera): {}".format(id_of(a.elements[0].Id), e))
 
     doc.Regenerate()  # bar lengths are only known after a regeneration
     for line, type_name, created in done:

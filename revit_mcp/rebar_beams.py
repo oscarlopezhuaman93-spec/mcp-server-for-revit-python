@@ -90,20 +90,33 @@ class BeamSection(object):
             raise spec.SpecError(u"la viga {} no es recta".format(element_id_value(beam.Id)))
         p0 = curve.GetEndPoint(0)
         d = (curve.GetEndPoint(1) - p0).Normalize()
-        if abs(d.Z) > 1e-3:
-            raise spec.SpecError(u"la viga {} esta inclinada".format(element_id_value(beam.Id)))
+        if abs(d.Z) > 0.97:
+            raise spec.SpecError(u"la viga {} esta vertical".format(element_id_value(beam.Id)))
         across = DB.XYZ.BasisZ.CrossProduct(d).Normalize()
+        # "up" of the section: vertical for a level beam, square to the
+        # axis (in its vertical plane) for a sloped one
+        up = d.CrossProduct(across).Normalize()
         best = None
-        for solid in rc._solids(beam.get_Geometry(DB.Options())):
+        solids = rc._solids(beam.get_Geometry(DB.Options()))
+        for solid in solids:
             for face in solid.Faces:
                 if isinstance(face, DB.PlanarFace) and abs(abs(face.FaceNormal.DotProduct(d)) - 1.0) < 1e-3:
                     loop = max(face.EdgeLoops, key=lambda lp: lp.Size)
                     pts = [edge.AsCurve().GetEndPoint(0) for edge in loop]
-                    poly = [((q - p0).DotProduct(across), q.Z - p0.Z) for q in pts]
+                    poly = [((q - p0).DotProduct(across), (q - p0).DotProduct(up)) for q in pts]
                     if best is None or face.Area > best[0]:
                         best = (face.Area, poly)
+        if best is None and abs(d.Z) > 1e-3:
+            # a sloped beam cut plumb at its ends: its section's box
+            pts = [edge.AsCurve().GetEndPoint(k) for solid in solids for edge in solid.Edges for k in (0, 1)]
+            if pts:
+                xs = [(q - p0).DotProduct(across) for q in pts]
+                ys = [(q - p0).DotProduct(up) for q in pts]
+                best = (0.0, [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys))])
         if best is None:
             raise spec.SpecError(u"no se encontro la seccion de la viga {}".format(element_id_value(beam.Id)))
+        self.up = up
+        self.sloped = abs(d.Z) > 1e-3
         poly = best[1]
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
@@ -146,6 +159,10 @@ class BeamLine(object):
         if (sec.direction - d).GetLength() > 1e-6:  # the section read from a reversed curve
             sec.direction = d
             sec.across = DB.XYZ.BasisZ.CrossProduct(d).Normalize()
+            sec.center = (-sec.center[0], sec.center[1])
+            sec.polygon_m = [(-x, y) for x, y in sec.polygon_m]
+            sec.up = d.CrossProduct(sec.across).Normalize()
+        self.sloped = sec.sloped
         ys = [p[1] for p in sec.polygon_m]
         self.ref_bottom, self.ref_top = min(ys), max(ys)  # the reference (deepest end) section
         self._read_profile()
@@ -179,6 +196,9 @@ class BeamLine(object):
         self.variable = any(abs(y - self.ref_bottom) > 0.01 for _, y in self.bottom_points) or \
             any(abs(y - self.ref_top) > 0.01 for _, y in self.top_points)
         self.breaks = sorted(set(s for s, _ in self.bottom_points + self.top_points))
+        if self.sloped:  # its plumb-cut ends aren't a haunch: one section all along
+            self.bottom_points, self.top_points = [(0.0, self.ref_bottom)], [(0.0, self.ref_top)]
+            self.variable, self.breaks = False, [0.0]
 
     def depth_at(self, s):
         """(bottom, top) of the section at s (local y)."""
@@ -205,14 +225,14 @@ class BeamLine(object):
         sec = self.section
         return (self.origin + self.direction * (s / FT)
                 + sec.across * (sec.center[0] + x / FT)
-                + DB.XYZ.BasisZ * (sec.center[1] + y / FT))
+                + sec.up * (sec.center[1] + y / FT))
 
     def local(self, p):
         """(x, y, s) in m of a world point."""
         q = p - self.origin
         sec = self.section
         return ((q.DotProduct(sec.across) - sec.center[0]) * FT,
-                (q.Z - sec.center[1]) * FT,
+                (q.DotProduct(sec.up) - sec.center[1]) * FT,
                 q.DotProduct(self.direction) * FT)
 
     def element_at(self, s):
@@ -239,9 +259,9 @@ class BeamLine(object):
 
 
 def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
-    """Group beam elements into beam lines: same type, straight and level,
+    """Group beam elements into beam lines: same type, straight (level or sloped),
     collinear (within tol_m) and one after the other with gaps up to
-    gap_m. Elements that aren't straight or level stay out."""
+    gap_m. Elements that aren't straight stay out."""
     items = []
     for b in beams:
         loc = getattr(b, "Location", None)
@@ -249,8 +269,6 @@ def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
         if not isinstance(curve, DB.Line):
             continue
         p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
-        if abs(p1.Z - p0.Z) * FT > tol_m:
-            continue
         items.append((b, p0, p1))
     lines = []  # [(type id, origin, direction, [(t0, t1, element)])]
     for b, p0, p1 in items:
@@ -428,7 +446,7 @@ def _share(line, created, rebar, key, kind, s_start, s_end):
 
 
 def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, splice=None, legs=None,
-                  supports=None, line_settings=None):
+                  supports=None, line_settings=None, longitudinal=True):
     """Create a beam line's rebar (inside an active Transaction): per clear
     span the stirrups and ties of the drawing with the type's distribution
     from each support face; the longitudinal bars of the drawing along the
@@ -439,6 +457,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     end thirds outside the confinement zone).
     `line_settings` (bx, optional): each span's own stirrup distribution
     and the extra bars (bastones, balancines); None: the type's only.
+    `longitudinal` False: the stirrups only (a sloped frame's bars are
+    bent across its ridge, rebar_sloped).
     Returns ({element id: [(rebar, key, kind, share)]}, warnings)."""
     design = beam_spec.design
     supports = line_supports(doc, line) if supports is None else supports
@@ -516,6 +536,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                         rc._tag(rebar, host)
                         created[element_id_value(host.Id)].append((rebar, family.key, kind, 1.0))
 
+    if not longitudinal:
+        return created, warnings
     # longitudinal bars along the whole line
     cover = beam_spec.cover_m
     bar_start, bar_end = start_face + cover, end_face - cover

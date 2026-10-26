@@ -46,6 +46,8 @@
             <Button DockPanel.Dock="Right" x:Name="button_run" Content="GENERAR ACERO" Width="240" Height="40"
                     FontWeight="Bold" Click="run_click" Background="#FF2D8CF0" Foreground="White" BorderThickness="0"
                     ToolTip="Guarda la configuraci&#243;n en el tipo y genera el acero de las vigas seleccionadas, cada una completa con todos sus tramos (si no hay ninguna seleccionada, de todas las vigas de los tipos marcados)."/>
+            <Button DockPanel.Dock="Left" Content="&#9998;  Boceto de barra" Width="170" Height="40" FontWeight="Bold" Click="sketch_click"
+                    ToolTip="Dibuja una barra punto a punto en una elevaci&#243;n o corte (cada punto un doblez) y controla la longitud de cada tramo."/>
             <Button DockPanel.Dock="Right" Content="Abrir archivo..." Width="130" Height="40" Margin="0,0,8,0" Click="file_open_click"
                     ToolTip="Carga una configuraci&#243;n guardada (estribos, barras y dibujo de la secci&#243;n)."/>
             <Button DockPanel.Dock="Right" Content="Guardar en archivo..." Width="150" Height="40" Margin="0,0,8,0" Click="file_save_click"
