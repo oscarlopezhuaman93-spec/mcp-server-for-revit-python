@@ -43,3 +43,11 @@ def test_arc_edges_at_width():
     for (x, y, z) in arc["left"]:
         assert abs(math.hypot(x, y) - (6.75 - 1.75)) < 1e-6  # counterclockwise: the left edge inside
     assert abs(seg_length(U_RAMP[1]) - math.pi * 6.75) < 1e-9
+
+
+def test_arc_inner_edge_steeper_than_axis():
+    from revit_mcp.ramp_plan import arc_slopes
+    seg = {"kind": "arc", "a": (10.0, 0.0), "m": (0.0, 10.0), "b": (-10.0, 0.0)}
+    r, inner, outer = arc_slopes([seg], 4.0, 0.10)[0]
+    assert abs(r - 10.0) < 1e-9
+    assert abs(inner - 0.125) < 1e-9 and abs(outer - 0.10 * 10 / 12) < 1e-9

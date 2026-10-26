@@ -82,6 +82,38 @@ class Profile(object):
         return [b for b in (self.transition, self.length - self.transition) if 0 < b < self.length]
 
 
+def arc_slopes(segments, width, slope):
+    """Per arc segment (radius of the axis, inner edge slope, outer edge
+    slope): along an arc the inner edge is shorter, so steeper - slope x
+    R / (R - width/2) - than the axis (the client's figure for a circular
+    ramp)."""
+    out = []
+    for seg in segments:
+        if seg["kind"] != "arc":
+            continue
+        arc = arc_through(seg["a"], seg["m"], seg["b"])
+        if arc is None:
+            continue
+        r = arc[1]
+        h = width / 2.0
+        inner = slope * r / (r - h) if r > h else float("inf")
+        out.append((r, inner, slope * r / (r + h)))
+    return out
+
+
+def report_lines(plan, segments, width):
+    """The ramp's figures as text lines (window summary, final report)."""
+    lines = [u"Longitud por el eje: {:.2f} m".format(plan["length"]),
+             u"Desnivel: {:.2f} m".format(plan["profile"].rise),
+             u"Pendiente por el eje: {:.1f} %".format(plan["slope"] * 100),
+             u"Transiciones: {:.1f} % en {:.2f} m (inicio y fin)".format(
+                 plan["transition_slope"] * 100, plan["transition"])]
+    for k, (r, inner, outer) in enumerate(arc_slopes(segments, width, plan["slope"])):
+        lines.append(u"Curva {} (R eje {:.2f} m): borde interior {:.1f} %, exterior {:.1f} %".format(
+            k + 1, r, inner * 100, outer * 100))
+    return lines
+
+
 def plan_ramp(segments, width, rise, transition, max_slope=MAX_SLOPE, arc_step=1.0):
     """{"length", "slope", "transition_slope", "pieces", "warnings"}: the
     pieces bottom up, each {"kind", "seg", "u0", "u1", "s0", "s1", "z0", "z1"}

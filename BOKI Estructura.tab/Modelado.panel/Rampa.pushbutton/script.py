@@ -146,16 +146,18 @@ class RampaWindow(forms.WPFWindow):
             self.txt_summary.Text = u""
             self._status(s.message or u"Pulsa + Recta y marca el eje en la planta del nivel de inicio.", False)
             return
-        lines = [u"Longitud por el eje: {:.2f} m".format(plan["length"]),
-                 u"Desnivel: {:.2f} m".format(plan["profile"].rise),
-                 u"Pendiente: {:.1f} %  ·  transiciones {:.1f} % ({:.2f} m)".format(
-                     plan["slope"] * 100, plan["transition_slope"] * 100, plan["transition"]),
+        lines = rp.report_lines(plan, s.segments, s.width) + [
                  u"Tramos: {} recta(s), {} arco(s)  ·  piezas de losa: {}".format(
                      sum(1 for g in s.segments if g["kind"] == "line"), sum(1 for g in s.segments if g["kind"] == "arc"),
                      len(plan["pieces"]))]
         self.txt_summary.Text = u"\n".join(lines)
+        steep = [inner for _, inner, _ in rp.arc_slopes(s.segments, s.width, plan["slope"])
+                 if inner * 100 > s.max_slope + 1e-6]
         if plan["warnings"]:
             self._status(u"  ".join(plan["warnings"]), True)
+        elif steep:
+            self._status(u"Por el eje {:.1f} %, pero el borde interior de la curva llega a {:.1f} % (> {:g} %): "
+                         u"agranda el radio o alarga el eje".format(plan["slope"] * 100, max(steep) * 100, s.max_slope), True)
         else:
             self._status(u"✔ Pendiente {:.1f} % ≤ {:g} % (RNE A.010)".format(plan["slope"] * 100, s.max_slope), False)
         self._draw_plan(plan)
@@ -392,9 +394,23 @@ if __name__ == "__main__":
         tg.Start()
         try:
             floors, messages = rcr.create_ramp(doc, base, ftype, plan, join=state.join)
+            # the slope written on each piece (Comentarios), to answer the client
+            note = u"Rampa: pendiente {:.1f} % por el eje, transiciones {:.1f} %".format(
+                plan["slope"] * 100, plan["transition_slope"] * 100)
+            t = DB.Transaction(doc, u"Pendiente en comentarios")
+            t.Start()
+            for f in floors:
+                p = f.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+                if p is not None and not p.IsReadOnly:
+                    p.Set(note)
+            t.Commit()
             tg.Assimilate()
         except Exception as e:
             tg.RollBack()
             forms.alert(u"No se pudo crear la rampa:\n{}".format(e), title=u"Rampa")
             raise SystemExit
         uidoc.Selection.SetElementIds(List[DB.ElementId]([f.Id for f in floors]))
+        forms.alert(u"\n".join([u"Rampa creada ({} piezas de losa).".format(len(floors)), u""]
+                              + rp.report_lines(plan, state.segments, state.width)
+                              + [u"", u"La pendiente quedó en el parámetro Comentarios de cada losa."]),
+                    title=u"Rampa - datos para el cliente")
