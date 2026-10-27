@@ -137,7 +137,8 @@ class CorregirWindow(forms.WPFWindow):
             if self.chk_shape.IsChecked and it["shape"]:
                 what.append(u"forma")
             if self.chk_ridge.IsChecked and it["ridge"]:
-                what.append(u"cumbrera +{:.0f} cm".format(it["ridge"][1] * 100))
+                what.append(u"cumbrera +{:.0f} cm".format(it["ridge"][1] * 100) if it["ridge"][1] >= 0.005
+                            else u"unir a la cumbrera")
             row = ListBoxItem()
             row.Content = u"Losa {}  ·  {}".format(f.Id.IntegerValue, u" + ".join(what))
             row.Tag = k

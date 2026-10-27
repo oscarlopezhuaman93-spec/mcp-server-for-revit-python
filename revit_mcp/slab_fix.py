@@ -227,13 +227,34 @@ def ridge_beam(doc, floor, reach=0.8):
         p = c.GetEndPoint(0)
         axis = p.X * FT * h[0] + p.Y * FT * h[1]
         ebb = e.get_BoundingBox(None)
-        if not (0.0 <= axis - hi <= reach) or ebb.Max.Z < bb.Max.Z - 0.05 / FT:
+        if not (-0.01 <= axis - hi <= reach) or ebb.Max.Z < bb.Max.Z - 0.05 / FT:
             continue
         if best is None or axis - hi < best[1]:
-            best = (e, axis - hi)
-    if best is None or best[1] < 0.005:
+            best = (e, max(0.0, axis - hi))
+    if best is None:
         return None
-    return best
+    if DB.JoinGeometryUtils.AreElementsJoined(doc, floor, best[0]) and \
+            DB.JoinGeometryUtils.IsCuttingElementInJoin(doc, best[0], floor):
+        return None  # done: the beam cuts it (its edge read on the cut face)
+    # at the axis already: only the join is missing
+    return (best[0], 0.0) if best[1] < RIDGE_GAP_M + 0.002 else best
+
+
+def join_across_ridge(doc, floor, beam):
+    """Join the floor with the other floors meeting at the same ridge beam
+    (the two sides of a gable), so no seam is left between them."""
+    bb = beam.get_BoundingBox(None)
+    pad = 0.05 / FT
+    near = DB.Outline(DB.XYZ(bb.Min.X - pad, bb.Min.Y - pad, bb.Min.Z - pad),
+                      DB.XYZ(bb.Max.X + pad, bb.Max.Y + pad, bb.Max.Z + pad))
+    for other in (DB.FilteredElementCollector(doc).OfClass(DB.Floor)
+                  .WherePasses(DB.BoundingBoxIntersectsFilter(near))):
+        if other.Id == floor.Id or DB.JoinGeometryUtils.AreElementsJoined(doc, floor, other):
+            continue
+        try:
+            DB.JoinGeometryUtils.JoinGeometry(doc, floor, other)
+        except Exception:
+            pass  # they don't touch
 
 
 def fit_to_ridge(doc, floor, join=True):
@@ -272,11 +293,18 @@ def fit_to_ridge(doc, floor, join=True):
     return new
 
 
+RIDGE_GAP_M = 0.005  # the edge this short of a ridge beam's axis when it can't end on it
+
+
 def fit_to_ridge_in_place(doc, floor, join=True):
     """The same floor (no transaction open: it opens its own) with its high
     edge carried to its ridge beam's axis by editing its sketch - its id,
-    parameters, steel and shape points kept; the shape points moved with
-    the edge are raised to the slab's plane there - and the beam cutting it.
+    parameters, steel and shape points kept; the shape points on the moved
+    edge raised to the slab's plane there - and the beam cutting it.
+    A ridge beam shaped to the slabs (its top on theirs, a V bottom) has
+    edges right on its axis: Revit can't cut a slab ending exactly there
+    ("No es posible cortar elemento unido"), so the edge then stops
+    RIDGE_GAP_M short of the axis (inside the beam, out of sight).
     Returns the ridge beam, or None when there is nothing to fit."""
     found = ridge_beam(doc, floor)
     info = _single_slope(floor)
@@ -284,16 +312,45 @@ def fit_to_ridge_in_place(doc, floor, join=True):
         return None
     beam, extend = found
     face, outer, holes, arrow, slope, z_tail, h, hi = info
-    n, o = face.FaceNormal, face.Origin
+    axis = hi + extend
+    plane = (face.FaceNormal, face.Origin)  # the face itself dies with a regeneration
+    quiet = _Quiet()
+    if extend >= 0.005:
+        _move_edge(doc, floor, h, hi, axis, plane, quiet)
+    _quiet_transaction(doc, quiet, lambda: _join_ridge(doc, floor, beam, join))
+    if not _ridge_cuts(doc, floor, beam):
+        _move_edge(doc, floor, h, axis, axis - RIDGE_GAP_M, plane, quiet)
+        _quiet_transaction(doc, quiet, lambda: _join_ridge(doc, floor, beam, join))
+    return beam
+
+
+def _ridge_cuts(doc, floor, beam):
+    J = DB.JoinGeometryUtils
+    return J.AreElementsJoined(doc, floor, beam) and J.IsCuttingElementInJoin(doc, beam, floor)
+
+
+def _quiet_transaction(doc, quiet, work):
+    t = DB.Transaction(doc, u"Unir losa a la cumbrera")
+    options = t.GetFailureHandlingOptions()
+    options.SetFailuresPreprocessor(quiet)
+    t.SetFailureHandlingOptions(options)
+    t.Start()
+    work()
+    t.Commit()
+
+
+def _move_edge(doc, floor, h, at, to, plane, quiet):
+    """Move the floor's sketch edge lying at `at` (m along h) to `to`, and
+    its shape points there onto the slab's top plane."""
+    push = DB.XYZ(h[0] * (to - at) / FT, h[1] * (to - at) / FT, 0)
+    n, o = plane
 
     def plane_z(x, y):  # the slab's top plane over (x, y) (ft)
         return o.Z - (n.X * (x - o.X) + n.Y * (y - o.Y)) / n.Z
 
     def on_edge(p):
-        return abs((p.X * h[0] + p.Y * h[1]) * FT - hi) < 0.01
+        return abs((p.X * h[0] + p.Y * h[1]) * FT - at) < 0.01
 
-    push = DB.XYZ(h[0] * extend / FT, h[1] * extend / FT, 0)
-    quiet = _Quiet()
     scope = DB.SketchEditScope(doc, u"Ajustar losa a la cumbrera")
     scope.Start(floor.SketchId)
     t = DB.Transaction(doc, u"Ajustar losa a la cumbrera")
@@ -315,34 +372,43 @@ def fit_to_ridge_in_place(doc, floor, join=True):
         mc.SetGeometryCurve(DB.Line.CreateBound(moved[0], moved[1]), True)
     t.Commit()
     scope.Commit(quiet)
-    t = DB.Transaction(doc, u"Ajustar losa a la cumbrera")
-    options = t.GetFailureHandlingOptions()
-    options.SetFailuresPreprocessor(quiet)
-    t.SetFailureHandlingOptions(options)
-    t.Start()
-    editor = floor.GetSlabShapeEditor()
-    if editor is not None and editor.IsEnabled:
+
+    def raise_points():
+        editor = floor.GetSlabShapeEditor()
+        if editor is None or not editor.IsEnabled:
+            return
         level = doc.GetElement(floor.LevelId)
         base = level.Elevation + floor.get_Parameter(DB.BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM).AsDouble()
         for v in editor.SlabShapeVertices:
             p = v.Position
-            if abs((p.X * h[0] + p.Y * h[1]) * FT - (hi + extend)) < 0.01:
+            if abs((p.X * h[0] + p.Y * h[1]) * FT - to) < 0.01:
                 editor.ModifySubElement(v, plane_z(p.X, p.Y) - base)
+    _quiet_transaction(doc, quiet, raise_points)
+
+
+def _join_ridge(doc, floor, beam, join):
+    """The beams it touches (optional), the ridge beam always cutting it,
+    and the floor on the other side of the ridge."""
     if join:
         join_beams_cutting(doc, floor)
     if not DB.JoinGeometryUtils.AreElementsJoined(doc, floor, beam):
         DB.JoinGeometryUtils.JoinGeometry(doc, floor, beam)
     if not DB.JoinGeometryUtils.IsCuttingElementInJoin(doc, beam, floor):
         DB.JoinGeometryUtils.SwitchJoinOrder(doc, beam, floor)
-    t.Commit()
-    return beam
+    join_across_ridge(doc, floor, beam)
 
 
 class _Quiet(DB.IFailuresPreprocessor):
     """Warnings dropped: no dialog stops the correction."""
 
     def PreprocessFailures(self, accessor):
+        resolved = False
         for f in accessor.GetFailureMessages():
             if f.GetSeverity() == DB.FailureSeverity.Warning:
                 accessor.DeleteWarning(f)
-        return DB.FailureProcessingResult.Continue
+            elif f.HasResolutions():
+                # a join Revit can't make ("No es posible cortar elemento
+                # unido"): that join undone, the rest of the work kept
+                accessor.ResolveFailure(f)
+                resolved = True
+        return DB.FailureProcessingResult.ProceedWithCommit if resolved else DB.FailureProcessingResult.Continue
