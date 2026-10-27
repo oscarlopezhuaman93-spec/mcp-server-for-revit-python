@@ -67,7 +67,11 @@ def analyze(floor):
         ridge = sf.ridge_beam(doc, floor)
     except Exception:
         ridge = None
-    return {"floor": floor, "shape": shape, "ridge": ridge}
+    try:
+        thick = sf.thickness_need(floor)  # Revit's plumb thickness: thinner than nominal square to the slope
+    except Exception:
+        thick = None
+    return {"floor": floor, "shape": shape, "ridge": ridge, "thick": thick}
 
 
 def all_sloped():
@@ -118,7 +122,8 @@ class CorregirWindow(forms.WPFWindow):
         return s.items
 
     def _todo(self, item):
-        return (self.chk_shape.IsChecked and item["shape"]) or (self.chk_ridge.IsChecked and item["ridge"])
+        return (self.chk_shape.IsChecked and item["shape"]) or \
+            (self.chk_ridge.IsChecked and (item["ridge"] or item["thick"]))
 
     def refresh(self):
         s = self.state
@@ -139,6 +144,9 @@ class CorregirWindow(forms.WPFWindow):
             if self.chk_ridge.IsChecked and it["ridge"]:
                 what.append(u"cumbrera +{:.0f} cm".format(it["ridge"][1] * 100) if it["ridge"][1] >= 0.005
                             else u"unir a la cumbrera")
+            if self.chk_ridge.IsChecked and it["thick"]:
+                what.append(u"espesor {:.0f} cm real (hoy {:.1f})".format(
+                    it["thick"][0] * 100, it["thick"][0] ** 2 / it["thick"][1] * 100))
             row = ListBoxItem()
             row.Content = u"Losa {}  ·  {}".format(f.Id.IntegerValue, u" + ".join(what))
             row.Tag = k
@@ -369,6 +377,12 @@ def correct(state):
                     t.Commit()
                 if state.ridge:
                     for g in floors:
+                        # its nominal thickness square to the slope (flush with
+                        # a ridge beam of the same depth), then onto the beam
+                        t = DB.Transaction(doc, u"Espesor real de la losa")
+                        t.Start()
+                        sf.apply_true_thickness(doc, g)
+                        t.Commit()
                         sf.fit_to_ridge_in_place(doc, g, join=state.join)
                 done += floors
             except Exception as e:

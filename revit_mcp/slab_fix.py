@@ -178,6 +178,53 @@ def fix_floor(doc, floor, join=True):
     return made
 
 
+TRUE_MARK = u"perp."  # in the name of the types made by thickness_type
+
+
+def thickness_need(floor):
+    """Revit measures a sloped floor's thickness plumb: a 0.20 m type is
+    only 0.20 cos(slope) square to the slope, thinner than the beams it
+    meets (0.20 square). (nominal m, plumb m wanted) when the floor needs
+    a type plumb-thicker by 1 / cos(slope), else None."""
+    tops = _top_faces(floor)
+    if len(tops) != 1 or abs(tops[0].FaceNormal.Z) > 0.999:
+        return None
+    ftype = floor.Document.GetElement(floor.GetTypeId())
+    if TRUE_MARK in (ftype.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString() or u""):
+        return None
+    p = ftype.get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_DEFAULT_THICKNESS_PARAM)
+    nominal = p.AsDouble() * FT if p is not None else 0.0
+    cos = abs(tops[0].FaceNormal.Z)
+    if nominal <= 0 or nominal / cos - nominal < 0.001:
+        return None
+    return nominal, nominal / cos
+
+
+def apply_true_thickness(doc, floor):
+    """Give the floor (inside an open Transaction) a copy of its type
+    thick enough plumb for its nominal thickness square to the slope -
+    the top stays, the bottom goes down. The copy is shared by the floors
+    of the same type and slope. Returns the type, or None."""
+    need = thickness_need(floor)
+    if need is None:
+        return None
+    nominal, plumb = need
+    ftype = doc.GetElement(floor.GetTypeId())
+    deg = math.degrees(math.acos(min(1.0, nominal / plumb)))
+    name = u"{} ({:.1f}° {} {:.0f} cm)".format(
+        ftype.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString(), deg, TRUE_MARK, nominal * 100)
+    new = next((t for t in DB.FilteredElementCollector(doc).OfClass(DB.FloorType)
+                if t.get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString() == name), None)
+    if new is None:
+        new = ftype.Duplicate(name)
+        cs = new.GetCompoundStructure()
+        k = cs.StructuralMaterialIndex if cs.StructuralMaterialIndex >= 0 else 0
+        cs.SetLayerWidth(k, cs.GetLayerWidth(k) + (plumb - nominal) / FT)
+        new.SetCompoundStructure(cs)
+    floor.ChangeTypeId(new.Id)
+    return new
+
+
 def _single_slope(floor):
     """(face, outline, holes, arrow, slope, tail height, climb (x, y), high
     side m) of a floor with one sloped planar top, else None."""
