@@ -142,8 +142,7 @@ class CorregirWindow(forms.WPFWindow):
             if self.chk_shape.IsChecked and it["shape"]:
                 what.append(u"forma")
             if self.chk_ridge.IsChecked and it["ridge"]:
-                what.append(u"cumbrera +{:.0f} cm".format(it["ridge"][1] * 100) if it["ridge"][1] >= 0.005
-                            else u"unir a la cumbrera")
+                what.append(u"ajustar a la cumbrera {}".format(it["ridge"][0].Id.IntegerValue))
             if self.chk_ridge.IsChecked and it["thick"]:
                 what.append(u"espesor {:.0f} cm real (hoy {:.1f})".format(
                     it["thick"][0] * 100, it["thick"][0] ** 2 / it["thick"][1] * 100))
