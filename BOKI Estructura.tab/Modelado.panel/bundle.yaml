@@ -1,4 +1,4 @@
-background:
+﻿background:
   panel: "#335A8AD8"
   title: "#FF5A8AD8"
   slideout: "#335A8AD8"
@@ -6,4 +6,4 @@ layout:
   - Losa
   - Escalera
   - Rampa
-  - Ajustar Columnas
+  - Ajustar Elementos
