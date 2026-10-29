@@ -128,11 +128,17 @@ if where == NODE:
 top = where.startswith(u"Parte superior")
 uidoc.Selection.SetElementIds(List[DB.ElementId]())  # else the picked elements start as targets
 try:
-    targets =[doc.GetElement(r) for r in uidoc.Selection.PickObjects(
-        ObjectType.Element, _Model(),
-        u"Elige el elemento o los elementos donde se ajustan (ej. las dos vigas de una cumbrera) y pulsa Finalizar")]
-    if not targets:
-        raise SystemExit
+    # one click is enough; more clicks add targets (a ridge: both beams), Esc ends
+    targets = [doc.GetElement(uidoc.Selection.PickObject(
+        ObjectType.Element, _Model(), u"Clic en el elemento donde se ajustan (viga, losa, techo...)"))]
+    while True:
+        try:
+            more = doc.GetElement(uidoc.Selection.PickObject(
+                ObjectType.Element, _Model(), u"Otro elemento destino (opcional) - Esc para continuar"))
+        except OperationCanceledException:
+            break
+        if more.Id not in [x.Id for x in targets]:
+            targets.append(more)
     ids = set(x.Id for x in targets)
     elements = [e for e in picked if e.Id not in ids]
     if not elements:
