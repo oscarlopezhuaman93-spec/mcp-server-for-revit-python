@@ -56,7 +56,8 @@ with revit.Transaction(u"BOKI Ajustar columnas"):
                 ColumnAttachment.RemoveColumnAttachment(c, 1 if top else 0)
             ColumnAttachment.AddColumnAttachment(doc, c, target, 1 if top else 0,
                                                  ColumnAttachmentCutStyle.CutColumn,
-                                                 ColumnAttachmentJustification.Minimum, 0.0)
+                                                 # up to the face's highest point, cut along it: flush, no gap
+                                                 ColumnAttachmentJustification.Maximum, 0.0)
             done += 1
         except Exception as e:
             failed.append(u"{}: {}".format(c.Id.IntegerValue, e))
