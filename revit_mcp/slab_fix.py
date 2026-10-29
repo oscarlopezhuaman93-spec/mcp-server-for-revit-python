@@ -323,7 +323,9 @@ def fit_to_ridge(doc, floor, join=True):
 
 
 RIDGE_GAP_M = 0.005  # the edge this short of a ridge beam's axis when it can't end on it
-SEAT_GAP_M = 0.004  # ...and this past the vertex of a beam as deep as the slab (any overlap: faces on faces, refused)
+# the edge on the vertex of a beam as deep as the slab, else these past it -
+# the first Revit lets the beam cut (an overlap puts faces on faces)
+SEAT_GAPS_M = (0.0, 0.0005, 0.001, 0.002, 0.004)
 
 
 def fit_to_ridge_in_place(doc, floor, join=True):
@@ -334,10 +336,9 @@ def fit_to_ridge_in_place(doc, floor, join=True):
     A ridge beam as deep as the slab (its top on the slab's top, a V
     bottom on its bottom): faces on faces, Revit can't cut the slab
     ("No es posible cortar elemento unido"). The edge then goes to the
-    beam's bottom vertex on the slab's side (SEAT_GAP_M past it: a slab
-    overlapping it at all has its top on the beam's), and the beam cuts
-    the wedge above: the slab ends on the beam's sloped face, its
-    thickness kept.
+    beam's bottom vertex on the slab's side (or the first of SEAT_GAPS_M
+    past it Revit accepts), and the beam cuts the wedge above: the slab
+    ends on the beam's sloped face, closed, its thickness kept.
     (Failing that, RIDGE_GAP_M short of the axis.)
     Returns the ridge beam, or None when there is nothing to fit."""
     found = ridge_beam(doc, floor)
@@ -350,10 +351,15 @@ def fit_to_ridge_in_place(doc, floor, join=True):
     plane = (face.FaceNormal, face.Origin)  # the face itself dies with a regeneration
     quiet = _Quiet()
     seat = _beam_seat(floor, beam, h, axis)
-    target = seat - SEAT_GAP_M if seat is not None else axis
-    if abs(target - hi) >= 0.001:
-        _move_edge(doc, floor, h, hi, target, plane, quiet)
-    _quiet_transaction(doc, quiet, lambda: _join_ridge(doc, floor, beam, join))
+    at = hi
+    for gap in (SEAT_GAPS_M if seat is not None else (None,)):
+        target = seat - gap if seat is not None else axis
+        if abs(target - at) >= 0.0001:
+            _move_edge(doc, floor, h, at, target, plane, quiet)
+            at = target
+        _quiet_transaction(doc, quiet, lambda: _join_ridge(doc, floor, beam, join))
+        if _ridge_cuts(doc, floor, beam):
+            break
     if not _ridge_cuts(doc, floor, beam) and seat is None:
         _move_edge(doc, floor, h, axis, axis - RIDGE_GAP_M, plane, quiet)
         _quiet_transaction(doc, quiet, lambda: _join_ridge(doc, floor, beam, join))
