@@ -649,6 +649,16 @@ class Section(object):
 
         self.transform = t
         self.center = (cx, cy)
+        self.flip = (1.0, 1.0)
+        if getattr(column, "Mirrored", False) and not self.is_circle:
+            # a mirrored column: its section is the family's one mirrored. The
+            # steel is drawn on the family's: placed with that mirror (x or y)
+            sym = _symbol_polygon(column.Symbol)
+            if sym is not None:
+                for f in ((-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0), (1.0, 1.0)):
+                    if _same_polygon([(f[0] * x, f[1] * y) for x, y in sym], polygon_ft):
+                        self.flip, polygon_ft = f, sym
+                        break
         self.polygon_m = [(x * FT, y * FT) for x, y in polygon_ft]
         self.b = max(xs) - min(xs)
         self.h = max(ys) - min(ys)
@@ -718,10 +728,37 @@ class Section(object):
     def point_m(self, x_m, y_m, z_world):
         """World point at a local section offset (meters, from the section
         center) and world elevation z (ft)."""
+        fx, fy = getattr(self, "flip", (1.0, 1.0))
         p = self.transform.OfPoint(
-            DB.XYZ(self.center[0] + x_m / FT, self.center[1] + y_m / FT, 0.0)
+            DB.XYZ(self.center[0] + fx * x_m / FT, self.center[1] + fy * y_m / FT, 0.0)
         )
         return DB.XYZ(p.X, p.Y, z_world)
+
+
+def _symbol_polygon(symbol):
+    """The section of a column family type (its bottom face, centered), ft."""
+    try:
+        solids = list(_solids(symbol.get_Geometry(DB.Options())))
+    except Exception:
+        return None
+    if not solids:
+        return None
+    solid = max(solids, key=lambda s: s.Volume)
+    faces = [f for f in solid.Faces if isinstance(f, DB.PlanarFace) and f.FaceNormal.Z < -0.999]
+    if not faces:
+        return None
+    loop = list(max(faces, key=lambda f: f.Area).GetEdgesAsCurveLoops())[0]
+    pts = [c.GetEndPoint(0) for c in loop]
+    xs, ys = [p.X for p in pts], [p.Y for p in pts]
+    cx, cy = (max(xs) + min(xs)) / 2.0, (max(ys) + min(ys)) / 2.0
+    return [(p.X - cx, p.Y - cy) for p in pts]
+
+
+def _same_polygon(a, b, tol=1e-4):
+    """The same vertex set (any start, any direction)."""
+    if len(a) != len(b):
+        return False
+    return all(any(abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol for q in b) for p in a)
 
 
 NUCLEUS_WORDS = (u"NUDO", u"NUCLEO", u"NÚCLEO")
