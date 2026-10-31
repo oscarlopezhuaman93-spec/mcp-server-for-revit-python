@@ -954,13 +954,53 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
         leg = spec.leg_m(column_spec.leg_bottom_cm.get(key))
         if leg:
             ends["leg_bottom"] = leg
-            ends["dir_bottom"] = spec.leg_vector(x, y, half_b, half_h, column_spec.dir_bottom)
+            ends["dir_bottom"] = leg_toward_concrete(doc, section, bottom_column, x, y, half_b, half_h, leg,
+                                                     section.z_bottom - (ends["anchor"] - d) / FT)
     leg = spec.leg_m(column_spec.leg_top_cm.get(key))
     if leg and not column_above(doc, top_column, Section(top_column)):
         ends["top_drop"] = column_spec.cover_m + d
         ends["leg_top"] = leg
-        ends["dir_top"] = spec.leg_vector(x, y, half_b, half_h, column_spec.dir_top)
+        top_section = Section(top_column)
+        ends["dir_top"] = leg_toward_concrete(doc, top_section, top_column, x, y, half_b, half_h, leg,
+                                              top_section.z_top - (column_spec.cover_m + d) / FT)
     return ends
+
+
+LEG_CONCRETE = (DB.BuiltInCategory.OST_StructuralFoundation, DB.BuiltInCategory.OST_Floors,
+                DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_Walls)
+
+
+def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world):
+    """The rule agreed with the user: a bar's leg turns out of the column
+    (square to its nearest face) only where a footing, slab, beam or wall
+    is there at the leg's level to take it; else in, never out of the
+    concrete. Returns the unit local vector."""
+    out = spec.leg_vector(x, y, half_b, half_h, spec.LEG_OUT)
+    reach = max(leg * 0.7, 0.05)
+    probe = section.point_m(x + out[0] * reach, y + out[1] * reach, z_world)
+    r = 0.02 / FT
+    outline = DB.Outline(DB.XYZ(probe.X - r, probe.Y - r, probe.Z - r), DB.XYZ(probe.X + r, probe.Y + r, probe.Z + r))
+    cats = List[DB.BuiltInCategory](list(LEG_CONCRETE))
+    for e in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
+              .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        if e.Id == column.Id:
+            continue
+        for solid in _solids(e.get_Geometry(DB.Options())):
+            try:
+                if solid.IsInside(probe) if hasattr(solid, "IsInside") else _inside(solid, probe):
+                    return out
+            except Exception:
+                if _inside(solid, probe):
+                    return out
+    return (-out[0], -out[1])
+
+
+def _inside(solid, point):
+    """Point in a closed solid: a ray straight up crosses it an odd number of times."""
+    ray = DB.Line.CreateBound(point, point + DB.XYZ(0.0, 0.0, 1000.0))
+    hits = solid.IntersectWithCurve(ray, DB.SolidCurveIntersectionOptions())
+    return hits.SegmentCount > 0 and any(
+        hits.GetCurveSegment(k).GetEndPoint(0).DistanceTo(point) < 1e-6 for k in range(hits.SegmentCount))
 
 
 def _half_sizes(section):

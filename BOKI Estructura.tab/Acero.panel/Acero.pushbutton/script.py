@@ -353,6 +353,8 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_izaje.ItemsSource = List[str](STIRRUP_DIAMETERS)
         self.cbo_dir_bot.ItemsSource = List[str](list(rs.LEG_DIRS))
         self.cbo_dir_top.ItemsSource = List[str](list(rs.LEG_DIRS))
+        # the legs turn toward the concrete next to the column (rc.leg_toward_concrete): no choice
+        self.cbo_dir_bot.Visibility = self.cbo_dir_top.Visibility = Visibility.Collapsed
         # "Ø acero" of the sketch: which stirrup family a new stirrup/tie
         # uses. A new longitudinal bar takes the diameter of the "Barras"
         # option chosen.
@@ -1805,10 +1807,10 @@ class AceroWindow(forms.WPFWindow):
                 extra["anchor"] = (float(anchor) if anchor not in (None, u"") else
                                    depth - rc.FOUNDATION_COVER_M - 0.03)
                 extra["leg_bot"] = max([rs.leg_m(v) for v in (ends.get("bot") or {}).values()] or [0.0])
-                extra["dir_bot"] = ends.get("dir_bot") or rs.LEG_OUT
+                extra["leg_host"] = (column, section)  # the leg turns toward the concrete there (rc.leg_toward_concrete)
             if index == len(columns) - 1 and not rc.column_above(doc, column, section):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
-                extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
+                extra["top_host"] = (column, section)
             joint = []
             # the joint always has edge stirrups: at "Estribo en nucleo", else
             # at the edge "rto" (rc.generate_column), apart or inside the column
@@ -1927,12 +1929,15 @@ class AceroWindow(forms.WPFWindow):
                     leg = rs.leg_m((ends.get("bot") or {}).get(key))
                     if leg:
                         kw["leg_bottom"] = leg
-                        kw["dir_bottom"] = rs.leg_vector(x, y, half[0], half[1], first.get("dir_bot"))
+                        col, sec = first["leg_host"]
+                        kw["dir_bottom"] = rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
+                                                                  sec.z_bottom - first["anchor"] / rc.FT)
                 leg = rs.leg_m((ends.get("top") or {}).get(key))
                 if points[-1][2] > top - 1e-6 and last.get("leg_top") is not None and leg:
                     kw["top_drop"] = 0.05
                     kw["leg_top"] = leg
-                    kw["dir_top"] = rs.leg_vector(x, y, half[0], half[1], last.get("dir_top"))
+                    col, sec = last["top_host"]
+                    kw["dir_top"] = rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg, sec.z_top - 0.05 / rc.FT)
                 done.append((rs.bar_with_ends(points, **kw), radius))
             bar_paths = done
         xs = [p[0] for p in base.polygon_m]
