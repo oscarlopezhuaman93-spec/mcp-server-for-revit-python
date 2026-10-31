@@ -551,6 +551,16 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
         leg = max(leg0, leg1)
         lap = 0.0
+        # a bottom bar's hook goes inside the top bars' one (not on it, as built):
+        # its end set back the clear spacing (E.060: 2.5 cm) plus the two half diameters
+        bar_start, bar_end = start_face + cover, end_face - cover  # this bar's own (set back below)
+        b0, b1 = bar_start, bar_end
+        if not top:
+            top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
+            gap = (top_d + d) / 2.0 + 0.025
+            b0 += gap if leg0 > 0 else 0.0
+            b1 -= gap if leg1 > 0 else 0.0
+        bar_start, bar_end = b0, b1
         pieces = [(bar_start, bar_end)]
         # the hook legs count in a bar's length (a 9 m bar holds them)
         if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:
@@ -581,6 +591,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             )
             rc._tag(rebar, host)
             _share(line, created, rebar, key, rc.LONGITUDINAL, s0, s1)
+    bar_start, bar_end = start_face + cover, end_face - cover
     # extra bars: bastones over the supports (top), balancines in the spans
     # (bottom); where one reaches a beam end it takes the main bars' anchorage
     for extra in (line_settings or {}).get("extras", []):
