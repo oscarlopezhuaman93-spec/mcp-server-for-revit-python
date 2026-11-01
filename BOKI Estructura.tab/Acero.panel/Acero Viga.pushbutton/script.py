@@ -3312,6 +3312,9 @@ try:
     # across it (rsl), their stirrups as any beam
     ridge = rsl.ridge_pairs(with_spec)
     in_ridge = set(id(l) for a, b, _, _ in ridge for l in (a, b))
+    # a deep beam and a flat one on one axis: their top bars run on, lapped
+    # past the support between them (rb.mixed_continuations)
+    mixed = rb.mixed_continuations(with_spec)
 
     def settings_of(line):
         key = tuple(id_of(e.Id) for e in line.elements)
@@ -3326,7 +3329,7 @@ try:
                 created, found = rb.generate_line(
                     doc, line, specs[bt.id], rb.anchor_of(bt.config()), bar_types, hooks,
                     rebar_shapes, splice, legs, line_settings=line_settings,
-                    longitudinal=id(line) not in in_ridge)
+                    longitudinal=id(line) not in in_ridge, continue_top=mixed.get(id(line)))
                 sub.Commit()
                 done.append((line, bt.name, created))
                 warnings += [u"{} (viga {}): {}".format(bt.name, id_of(line.elements[0].Id), w) for w in found]
