@@ -48,22 +48,20 @@
                             </StackPanel>
                         </GroupBox>
                         <GroupBox Header="Mover">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="44"/><ColumnDefinition Width="44"/><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="34"/><RowDefinition Height="34"/></Grid.RowDefinitions>
-                                <Button Grid.Column="1" Grid.Row="0" Content="&#9650;" Margin="2" Tag="up" Click="move_click" ToolTip="Subir"/>
-                                <Button Grid.Column="0" Grid.Row="1" Content="&#9664;" Margin="2" Tag="left" Click="move_click" ToolTip="A un lado"/>
-                                <TextBox Grid.Column="1" Grid.Row="1" x:Name="txt_step" Text="2" Margin="2" VerticalContentAlignment="Center"
-                                         HorizontalContentAlignment="Center" ToolTip="Paso en cm"/>
-                                <Button Grid.Column="2" Grid.Row="1" Content="&#9654;" Margin="2" Tag="right" Click="move_click" ToolTip="Al otro lado"/>
-                                <Button Grid.Column="1" Grid.Row="2" Content="&#9660;" Margin="2" Tag="down" Click="move_click" ToolTip="Bajar"/>
-                                <StackPanel Grid.Column="3" Grid.RowSpan="3" Margin="8,0,0,0" VerticalAlignment="Center">
-                                    <Button Content="&#10229; a lo largo" Height="28" Tag="back" Click="move_click"/>
-                                    <Button Content="a lo largo &#10230;" Height="28" Margin="0,4,0,0" Tag="fwd" Click="move_click"/>
-                                </StackPanel>
-                            </Grid>
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,6">
+                                    <TextBlock Text="Paso (cm):" VerticalAlignment="Center" Width="80"/>
+                                    <TextBox x:Name="txt_step" Text="2" Width="60" HorizontalAlignment="Left"/>
+                                </DockPanel>
+                                <UniformGrid Columns="2">
+                                    <Button Content="Subir" Height="28" Margin="2" Tag="up" Click="move_click"/>
+                                    <Button Content="Bajar" Height="28" Margin="2" Tag="down" Click="move_click"/>
+                                    <Button Content="Izquierda" Height="28" Margin="2" Tag="left" Click="move_click"/>
+                                    <Button Content="Derecha" Height="28" Margin="2" Tag="right" Click="move_click"/>
+                                    <Button Content="Atr&#225;s (a lo largo)" Height="28" Margin="2" Tag="back" Click="move_click"/>
+                                    <Button Content="Adelante (a lo largo)" Height="28" Margin="2" Tag="fwd" Click="move_click"/>
+                                </UniformGrid>
+                            </StackPanel>
                         </GroupBox>
                         <GroupBox Header="Recubrimiento">
                             <StackPanel>
