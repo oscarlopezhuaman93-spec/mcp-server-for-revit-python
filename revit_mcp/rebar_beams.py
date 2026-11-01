@@ -549,6 +549,12 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         hooked = anchor == ANCHOR_HOOK
         leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked)
         leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+        # a leg never leaves the concrete: in a shallow beam (a chata) it is
+        # cut to the depth there is, less the cover on the far face
+        room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
+        if room > 0:
+            leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
+            leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
         leg = max(leg0, leg1)
         lap = 0.0
         # a bottom bar's hook goes inside the top bars' one (not on it, as built):
