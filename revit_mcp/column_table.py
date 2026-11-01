@@ -362,6 +362,38 @@ def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
                 d.circle(px, py, max(0.35, r * 0.6), u"BOKI Cuadro Barra")
     d.polyline([P(p) for p in poly], True, u"BOKI Cuadro Concreto")
     d.text(x0 + 3.0, y1 - 4.0, u"ESC. 1/ {}".format(scale), u"BOKI Cuadro Escala", align=u"left")
+    annotate = getattr(d, "annotate", None)
+    if callable(annotate) and design:
+        notes = section_notes(item, P, diameters_mm)
+        notes["scale"] = scale
+        annotate(notes)
+
+
+def section_notes(item, P, diameters_mm):
+    """What a drawn section is dimensioned and labeled with (paper mm):
+    {"outline", "labels": [(text, (x, y) pointed at)]} - a label per bar
+    diameter (count and Ø, at its outermost bar on the right) and one for
+    the stirrups (Ø and distribution)."""
+    design = item.design
+    labels = []
+    by_key = {}
+    for x, y, key in design["bars"]:
+        by_key.setdefault(key, []).append((x, y))
+    for key in sorted(by_key, key=lambda k: -diameters_mm.get(k, 0)):
+        pts = by_key[key]
+        far = max(pts, key=lambda p: (p[0], p[1]))
+        labels.append((u"{}Ø{}".format(len(pts), key), P(far)))
+    stirrups = design.get("stirrups", [])
+    if stirrups:
+        pts = list(stirrups[0][1])
+        right = max(pts, key=lambda p: p[0])
+        lower = min((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
+        upper = max((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
+        mid = (right[0], (lower[1] + upper[1]) / 2.0)
+        diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
+        dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
+        labels.append((u"Est. Ø{}".format(diam), P(mid)))  # its distribution is in its own row
+    return {"outline": [P(p) for p in item.polygon], "labels": labels}
 
 
 def draw_table(d, items, title, scale, detail, diameters_mm):

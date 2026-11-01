@@ -93,6 +93,7 @@ class ColumnType(object):
         self.type = column_type
         self.name = _name(column_type)
         self.mark = rc.type_mark(self.name) or self.name
+        self.base_mark = self.mark  # from the name: when the chosen parameter is empty
         self.columns = columns
         self.cfg = rc.read_type_config(column_type)
         try:
@@ -169,9 +170,12 @@ class RevitDrawer(object):
     """The drawer (column_table) on a legend: detail lines, filled regions,
     text notes."""
 
-    def __init__(self, view, transparency=0):
+    def __init__(self, view, transparency=0, dim_type=None, label_type=None):
         self.view = view
         self.transparency = transparency  # % for the colored bands
+        self.dim_type = dim_type  # the project's dimension type for the sections (None: none)
+        self.label_type = label_type  # the text type of the bar labels
+        self.outline = []  # the last section's outline lines (dimensioned)
         self.f = view.Scale / 304.8  # paper mm -> feet in the view
         styles = doc.Settings.Categories.get_Item(DB.BuiltInCategory.OST_Lines).SubCategories
         self.styles = dict((s.Name, s.GetGraphicsStyle(DB.GraphicsStyleType.Projection)) for s in styles)
@@ -186,6 +190,9 @@ class RevitDrawer(object):
         gs = self.styles.get(style)
         if gs is not None:
             c.LineStyle = gs
+        if style == u"BOKI Cuadro Concreto":
+            self.outline.append(c)
+        return c
 
     def line(self, a, b, style):
         if math.hypot(b[0] - a[0], b[1] - a[1]) * self.f < 0.003:
@@ -247,6 +254,50 @@ class RevitDrawer(object):
         for arc in self._arcs(cx, cy, r):
             self._curve(arc, style)
 
+    def annotate(self, notes):
+        """The section's dimensions (the project's dimension type, on its
+        outline lines: a chain of the widths under it, of the heights on its
+        left) and its labels (notes with a leader to the bars / stirrup)."""
+        lines, self.outline = self.outline, []
+        pts = notes["outline"]
+        x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+        y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+        if self.dim_type is not None and lines:
+            for vertical, at in ((True, y1 + 6.0), (False, x0 - 6.0)):
+                refs, seen = DB.ReferenceArray(), []
+                for c in sorted(lines, key=lambda c: (c.GeometryCurve.GetEndPoint(0).X if vertical
+                                                      else -c.GeometryCurve.GetEndPoint(0).Y)):
+                    g = c.GeometryCurve
+                    d = g.GetEndPoint(1) - g.GetEndPoint(0)
+                    if (abs(d.X) < 1e-6) != vertical:
+                        continue
+                    key = round(g.GetEndPoint(0).X if vertical else g.GetEndPoint(0).Y, 5)
+                    if key in seen:
+                        continue
+                    seen.append(key)
+                    refs.Append(g.Reference)
+                if refs.Size < 2:
+                    continue
+                line = (DB.Line.CreateBound(self.p(x0, at), self.p(x1, at)) if vertical
+                        else DB.Line.CreateBound(self.p(at, y0), self.p(at, y1)))
+                try:
+                    doc.Create.NewDimension(self.view, line, refs, self.dim_type)
+                except Exception:
+                    pass  # a section Revit won't dimension: left without
+        ttype = self.label_type or self.text_types.get(u"BOKI Cuadro 2mm")
+        tid = ttype.Id if ttype else doc.GetDefaultElementTypeId(DB.ElementTypeGroup.TextNoteType)
+        for k, (text, target) in enumerate(notes["labels"]):
+            at = (x1 + 9.0, y0 + 3.0 + k * 7.0)
+            opts = DB.TextNoteOptions(tid)
+            opts.HorizontalAlignment = DB.HorizontalTextAlignment.Left
+            note = DB.TextNote.Create(doc, self.view.Id, self.p(*at), text, opts)
+            try:
+                leader = note.AddLeader(DB.TextNoteLeaderTypes.TNLT_STRAIGHT_L)
+                leader.End = self.p(*target)
+                leader.Elbow = self.p(at[0] - 3.0, at[1])
+            except Exception:
+                pass
+
     def text(self, x, y, text, kind, rotate=False, align=u"center"):
         ttype = self.text_types.get(kind)
         opts = DB.TextNoteOptions(ttype.Id if ttype else doc.GetDefaultElementTypeId(DB.ElementTypeGroup.TextNoteType))
@@ -276,7 +327,7 @@ def new_legend(name, scale):
     return view
 
 
-def make(items, title, scale, detail, transparency=20):
+def make(items, title, scale, detail, transparency=20, dim_name=None, label_name=None):
     t = DB.Transaction(doc, "Cuadro de columnas")
     t.Start()
     try:
@@ -287,7 +338,11 @@ def make(items, title, scale, detail, transparency=20):
                         title="Cuadro de columnas")
             return None
         ensure_styles()
-        ct.draw_table(RevitDrawer(view, transparency), items, title, scale, detail, MM)
+        dims = dict((_name(t), t) for t in DB.FilteredElementCollector(doc).OfClass(DB.DimensionType)
+                    if t.StyleType == DB.DimensionStyleType.Linear)
+        texts = dict((_name(t), t) for t in DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType))
+        ct.draw_table(RevitDrawer(view, transparency, dims.get(dim_name), texts.get(label_name)),
+                      items, title, scale, detail, MM)
         t.Commit()
     except Exception:
         t.RollBack()
@@ -367,6 +422,30 @@ class CanvasDrawer(object):
         e.Stroke = self._color(style)
         e.StrokeThickness = 1.0
 
+    def annotate(self, notes):
+        """The preview of the section's dimensions and labels (what the legend
+        gets as Revit dimensions and leader notes)."""
+        pts = notes["outline"]
+        x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+        y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+        k = notes.get("scale", 10) / 1000.0  # m per paper mm
+        style = u"BOKI Cuadro Grilla"
+        yd, xd = y1 + 6.0, x0 - 6.0
+        self.line((x0, yd), (x1, yd), style)
+        self.line((xd, y0), (xd, y1), style)
+        for x in (x0, x1):
+            self.line((x, y1 + 1.0), (x, yd + 1.5), style)
+            self.line((x - 1.0, yd + 1.0), (x + 1.0, yd - 1.0), style)
+        for y in (y0, y1):
+            self.line((x0 - 1.0, y), (xd - 1.5, y), style)
+            self.line((xd - 1.0, y + 1.0), (xd + 1.0, y - 1.0), style)
+        self.text((x0 + x1) / 2.0, yd + 2.5, u"{:.2f}".format((x1 - x0) * k), u"BOKI Cuadro 2mm")
+        self.text(xd - 2.5, (y0 + y1) / 2.0, u"{:.2f}".format((y1 - y0) * k), u"BOKI Cuadro 2mm", rotate=True)
+        for n, (text, target) in enumerate(notes["labels"]):
+            at = (x1 + 9.0, y0 + 3.0 + n * 7.0)
+            self.line(target, (at[0] - 3.0, at[1]), style)
+            self.line((at[0] - 3.0, at[1]), (at[0] - 0.5, at[1]), style)
+            self.text(at[0], at[1], text, u"BOKI Cuadro 2mm", align=u"left")
     def text(self, x, y, text, kind, rotate=False, align=u"center"):
         size = TEXTS.get(kind, (2.0, C_TEXT))[0]
         tb = TextBlock()
@@ -384,6 +463,10 @@ class CanvasDrawer(object):
         self.canvas.Children.Add(tb)
 
 
+NAME_OPTION = u"(nombre del tipo)"
+NO_DIMS = u"(sin cotas)"
+
+
 class CuadroWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, types):
         forms.WPFWindow.__init__(self, xaml_file_path)
@@ -397,6 +480,23 @@ class CuadroWindow(forms.WPFWindow):
         self.cbo_detail.SelectedItem = ct.DETAIL_HIGH
         self.cbo_alpha.ItemsSource = [str(v) for v in TRANSPARENCIES]
         self.cbo_alpha.SelectedItem = u"20"
+        # the TIPO row: a type parameter with the code (Marca de tipo...), or the name
+        names = sorted(set(p.Definition.Name for t in types for p in t.type.Parameters
+                           if p.StorageType == DB.StorageType.String))
+        self.cbo_param.ItemsSource = [NAME_OPTION] + names
+        mark = next((n for n in names if n.lower() in (u"marca de tipo", u"type mark")), None)
+        self.cbo_param.SelectedItem = mark if mark and any(
+            (t.type.LookupParameter(mark).AsString() or u"").strip() for t in types
+            if t.type.LookupParameter(mark)) else NAME_OPTION
+        dims = sorted(_name(t) for t in DB.FilteredElementCollector(doc).OfClass(DB.DimensionType)
+                      if t.StyleType == DB.DimensionStyleType.Linear)
+        self.cbo_dim.ItemsSource = [NO_DIMS] + dims
+        linear = [n for n in dims if u"arc" not in n.lower() and u"angul" not in n.lower() and u"radi" not in n.lower()] or dims
+        self.cbo_dim.SelectedItem = next((n for n in linear if u"2.5" in n), linear[0] if linear else NO_DIMS)
+        texts = sorted(_name(t) for t in DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType))
+        self.cbo_label.ItemsSource = texts
+        self.cbo_label.SelectedItem = next((n for n in texts if u"2.5" in n), u"BOKI Cuadro 2mm" if u"BOKI Cuadro 2mm" in texts
+                                           else (texts[0] if texts else None))
         self.boxes = []
         for t in types:
             cb = CheckBox()
@@ -414,6 +514,11 @@ class CuadroWindow(forms.WPFWindow):
         return [t for cb, t in self.boxes if cb.IsChecked]
 
     def options(self):
+        param = self.cbo_param.SelectedItem
+        for t in self.types:  # the TIPO row from the chosen parameter
+            p = t.type.LookupParameter(param) if param and param != NAME_OPTION else None
+            value = (p.AsString() or u"").strip() if p is not None else u""
+            t.mark = value or t.base_mark
         return (self.chosen(), (self.txt_title.Text or u"").strip() or TITLE,
                 int(self.cbo_scale.SelectedItem or 10), self.cbo_detail.SelectedItem or ct.DETAIL_HIGH,
                 int(self.cbo_alpha.SelectedItem or 20))
@@ -463,7 +568,8 @@ class CuadroWindow(forms.WPFWindow):
         if not items:
             forms.alert(u"Marca al menos un tipo.", title="Cuadro de columnas")
             return
-        self.result = (items, title, scale, detail, alpha)
+        dim = self.cbo_dim.SelectedItem
+        self.result = (items, title, scale, detail, alpha, None if dim == NO_DIMS else dim, self.cbo_label.SelectedItem)
         self.Close()
 
 

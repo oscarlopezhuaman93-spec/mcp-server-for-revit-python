@@ -35,6 +35,19 @@
                                   ToolTip="Transparencia (%) de las bandas de color: t&#237;tulo, fila de tipos y columna de nombres."/>
                         <TextBlock Text=" %" VerticalAlignment="Center"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="Fila TIPO desde:" VerticalAlignment="Center" Width="100"/>
+                        <ComboBox x:Name="cbo_param" Width="180" SelectionChanged="options_changed"
+                                  ToolTip="Par&#225;metro del tipo de columna con el c&#243;digo (ej. Marca de tipo). Vac&#237;o en un tipo: se usa su nombre."/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Cota de secci&#243;n:" VerticalAlignment="Center" Width="100"/>
+                        <ComboBox x:Name="cbo_dim" Width="180" ToolTip="Tipo de cota del proyecto para acotar cada secci&#243;n."/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Texto etiquetas:" VerticalAlignment="Center" Width="100"/>
+                        <ComboBox x:Name="cbo_label" Width="180" ToolTip="Tipo de texto del proyecto para las etiquetas de barras y estribos."/>
+                    </StackPanel>
                     <TextBlock Text="Tipos de columna a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
                         <Button Content="Con armado" Padding="6,1" Click="check_with_steel"/>
@@ -43,7 +56,7 @@
                     </StackPanel>
                 </StackPanel>
                 <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
-                           Text="El cuadro sale sin cotas ni anotaciones en las secciones (se agregan a mano). Los datos salen de lo guardado en Acero Columna para cada tipo."/>
+                           Text="Cada secci&#243;n sale acotada con el tipo de cota elegido y con etiquetas de barras y estribo. Los datos salen de lo guardado en Acero Columna para cada tipo."/>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="panel_types"/>
                 </ScrollViewer>
