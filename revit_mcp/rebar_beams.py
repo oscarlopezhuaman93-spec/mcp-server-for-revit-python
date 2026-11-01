@@ -329,36 +329,38 @@ SUPPORT_CATEGORIES = (
 
 
 def mixed_continuations(lines, gap_m=0.6, tol_m=0.03):
-    """Beam lines of different types on one axis, one after the other (a
-    deep beam and a flat one, a support between): {id(line): [start,
-    end]} True where its top bars run on into the next line (same top
-    face) instead of a hook - the top steel continuous over the mixed
-    line, lapped there."""
-    out = dict((id(l), [False, False]) for l in lines)
+    """Beam lines of different types on one axis meeting at a support (a
+    deep beam and a flat one): {id(line): {"top": [start, end], "bot":
+    [start, end]}} True where the bars of that face run on into the next
+    line - the face the two share (same top, or same bottom: flat beams
+    hung level with the deep one's soffit) - lapped past the support
+    instead of a hook."""
+    out = dict((id(l), {"top": [False, False], "bot": [False, False], "reach": [0.0, 0.0]}) for l in lines)
     for i, a in enumerate(lines):
         for b in lines[i + 1:]:
             if a.type_id == b.type_id or getattr(a, "sloped", False) or getattr(b, "sloped", False):
                 continue
             if abs(abs(a.direction.DotProduct(b.direction)) - 1.0) > 1e-3:
                 continue
-            ea = [a.point(0, a.ref_top, 0.0), a.point(0, a.ref_top, a.length)]
-            eb = [b.point(0, b.ref_top, 0.0), b.point(0, b.ref_top, b.length)]
-            off = eb[0] - ea[0]
+            ca = [a.point(0, 0, 0.0), a.point(0, 0, a.length)]
+            cb = [b.point(0, 0, 0.0), b.point(0, 0, b.length)]
+            off = cb[0] - ca[0]
             perp = off - a.direction * off.DotProduct(a.direction)
             if DB.XYZ(perp.X, perp.Y, 0).GetLength() * FT > tol_m:
                 continue  # not on the same axis
-            best = None
-            for ka in (0, 1):
-                for kb in (0, 1):
-                    dist = ea[ka].DistanceTo(eb[kb]) * FT
-                    if best is None or dist < best[0]:
-                        best = (dist, ka, kb)
-            dist, ka, kb = best
-            if dist <= gap_m and abs(ea[ka].Z - eb[kb].Z) * FT <= tol_m:
-                out[id(a)][ka] = True
-                out[id(b)][kb] = True
+            dist, ka, kb = min(((DB.XYZ(ca[i0].X - cb[j0].X, ca[i0].Y - cb[j0].Y, 0).GetLength() * FT, i0, j0)
+                                for i0 in (0, 1) for j0 in (0, 1)), key=lambda r: r[0])
+            if dist > gap_m:
+                continue
+            sa, sb = (0.0 if ka == 0 else a.length), (0.0 if kb == 0 else b.length)
+            # how far a bar may run on: to the far end of the next line, less the cover
+            out[id(a)]["reach"][ka] = b.length - 0.05  # measured from the far face of the support
+            out[id(b)]["reach"][kb] = a.length - 0.05
+            for face, ya, yb in (("top", a.ref_top, b.ref_top), ("bot", a.ref_bottom, b.ref_bottom)):
+                if abs(a.point(0, ya, sa).Z - b.point(0, yb, sb).Z) * FT <= tol_m:
+                    out[id(a)][face][ka] = True
+                    out[id(b)][face][kb] = True
     return out
-
 
 def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
     """What the beam line rests on, along it: columns and walls running
@@ -479,8 +481,8 @@ def _share(line, created, rebar, key, kind, s_start, s_end):
 
 def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, splice=None, legs=None,
                   supports=None, line_settings=None, longitudinal=True, continue_top=None):
-    # continue_top [start, end] (mixed_continuations): the top bars run on
-    # there into the next beam line, a lap past the support, no hook
+    # continue_top {"top"/"bot": [start, end]} (mixed_continuations): that face's bars run
+    # on there into the next beam line, a lap past the support, no hook
     """Create a beam line's rebar (inside an active Transaction): per clear
     span the stirrups and ties of the drawing with the type's distribution
     from each support face; the longitudinal bars of the drawing along the
@@ -584,12 +586,14 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked)
         leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
         start_run = end_run = 0.0
-        if top and continue_top:
+        runs = (continue_top or {}).get("top" if top else "bot") or [False, False]
+        if any(runs):
             run_on = (splice["laps"].get(key) if splice else None) or spec.e060_lap_cm(key) / 100.0
-            if continue_top[0]:
-                leg0, start_run = 0.0, run_on
-            if continue_top[1]:
-                leg1, end_run = 0.0, run_on
+            reach = continue_top.get("reach") or [run_on, run_on]
+            if runs[0]:
+                leg0, start_run = 0.0, min(run_on, reach[0])
+            if runs[1]:
+                leg1, end_run = 0.0, min(run_on, reach[1])
         # a leg never leaves the concrete: in a shallow beam (a chata) it is
         # cut to the depth there is, less the cover on the far face
         room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
