@@ -370,7 +370,8 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
     doc = model.element.Document
     # the room under the 5 cm on top, across the face (the type's thickness is vertical)
     room = model.thickness_across - 0.05  # what fits under the 5 cm on top, across the face
-    sizes = _brick_sizes(types, ribbed_plan["bricks"], room)
+    bricks = trim_bricks(model, ribbed_plan)  # none out of the slab at a sloped / curved edge
+    sizes = _brick_sizes(types, bricks, room)
     symbols = bf.ensure_loaded(doc, sorted(set(sizes.values())), folder)
     if not symbols:
         return 0
@@ -383,7 +384,7 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
     along = model.direction(axis)
     tag = BRICK_TAG + str(model.element.Id.IntegerValue)
     placed = 0
-    for b in ribbed_plan["bricks"]:
+    for b in bricks:
         name, largo, ancho, altura = sizes[(b["type"], round(b.get("largo") or types[b["type"]][1], 3),
                                             round(b.get("ancho") or types[b["type"]][2], 3))]
         sym = symbols.get(name)
