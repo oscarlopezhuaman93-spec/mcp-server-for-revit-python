@@ -66,6 +66,10 @@ class EditarWindow(forms.WPFWindow):
         self.boxes = []
         self._segments()
         self._check()
+        # the arrows work at once: the focus on the drawing, not in a box
+        self.canvas.Focusable = True
+        self.Loaded += lambda s, a: self.canvas.Focus()
+        self.canvas.MouseDown += lambda s, a: self.canvas.Focus()
 
     def _cover(self):
         try:
@@ -123,6 +127,23 @@ class EditarWindow(forms.WPFWindow):
         self._segments()
         self._check()
         self._status(u"Longitudes aplicadas (falta 'Aplicar en Revit').")
+
+    KEYS = {"Up": "up", "Down": "down", "Left": "left", "Right": "right", "PageUp": "fwd", "Prior": "fwd",
+            "PageDown": "back", "Next": "back"}
+
+    def window_key(self, sender, args):
+        """The keyboard's arrows move the bar a step (Re Pag / Av Pag: along);
+        a box being typed in keeps its keys."""
+        if isinstance(args.OriginalSource, TextBox):
+            return
+        tag = self.KEYS.get(str(args.Key))
+        if tag is None:
+            return
+
+        class _Key(object):
+            Tag = tag
+        self.move_click(_Key(), None)
+        args.Handled = True
 
     def move_click(self, sender, args):
         try:

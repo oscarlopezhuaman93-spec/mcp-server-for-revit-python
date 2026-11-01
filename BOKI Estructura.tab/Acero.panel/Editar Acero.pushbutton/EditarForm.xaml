@@ -1,7 +1,8 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Editar Acero" Height="600" Width="980" MinWidth="820" MinHeight="520"
-        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8"
+        PreviewKeyDown="window_key">
     <Window.Resources>
         <Style TargetType="GroupBox">
             <Setter Property="Background" Value="White"/>
@@ -53,14 +54,13 @@
                                     <TextBlock Text="Paso (cm):" VerticalAlignment="Center" Width="80"/>
                                     <TextBox x:Name="txt_step" Text="2" Width="60" HorizontalAlignment="Left"/>
                                 </DockPanel>
-                                <UniformGrid Columns="2">
-                                    <Button Content="Subir" Height="28" Margin="2" Tag="up" Click="move_click"/>
-                                    <Button Content="Bajar" Height="28" Margin="2" Tag="down" Click="move_click"/>
-                                    <Button Content="Izquierda" Height="28" Margin="2" Tag="left" Click="move_click"/>
-                                    <Button Content="Derecha" Height="28" Margin="2" Tag="right" Click="move_click"/>
-                                    <Button Content="Atr&#225;s (a lo largo)" Height="28" Margin="2" Tag="back" Click="move_click"/>
-                                    <Button Content="Adelante (a lo largo)" Height="28" Margin="2" Tag="fwd" Click="move_click"/>
-                                </UniformGrid>
+                                <Border Background="#FFFFF8EC" BorderBrush="#FFFFB347" BorderThickness="1" Padding="8,6">
+                                    <StackPanel>
+                                        <TextBlock Text="Usa las flechas de tu teclado" FontWeight="Bold" Foreground="#FF16324F"/>
+                                        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"
+                                                   Text="Arriba / abajo / izquierda / derecha mueven la barra un paso. Re Pag / Av Pag la mueven a lo largo."/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </GroupBox>
                         <GroupBox Header="Recubrimiento">
