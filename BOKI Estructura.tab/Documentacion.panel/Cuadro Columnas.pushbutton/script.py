@@ -254,6 +254,30 @@ class RevitDrawer(object):
         for arc in self._arcs(cx, cy, r):
             self._curve(arc, style)
 
+    def _plain_leader(self, ttype):
+        """A copy of the chosen text type with a plain leader (a line, no
+        arrowhead): "BOKI Cuadro Etiqueta", the user's own type left as is."""
+        name = u"BOKI Cuadro Etiqueta"
+        own = self.text_types.get(name)
+        if own is None:
+            own = ttype.Duplicate(name)
+            self.text_types[name] = own
+        for bip in (DB.BuiltInParameter.TEXT_SIZE, DB.BuiltInParameter.TEXT_FONT, DB.BuiltInParameter.LINE_COLOR,
+                    DB.BuiltInParameter.TEXT_STYLE_BOLD, DB.BuiltInParameter.TEXT_WIDTH_SCALE):
+            a, b = ttype.get_Parameter(bip), own.get_Parameter(bip)
+            if a is None or b is None or b.IsReadOnly:
+                continue
+            if a.StorageType == DB.StorageType.Double:
+                b.Set(a.AsDouble())
+            elif a.StorageType == DB.StorageType.Integer:
+                b.Set(a.AsInteger())
+            elif a.StorageType == DB.StorageType.String:
+                b.Set(a.AsString() or u"")
+        arrow = own.get_Parameter(DB.BuiltInParameter.LEADER_ARROWHEAD)
+        if arrow is not None and not arrow.IsReadOnly:
+            arrow.Set(DB.ElementId.InvalidElementId)  # "Ninguna": a line
+        return own
+
     def annotate(self, notes):
         """The section's dimensions (the project's dimension type, on its
         outline lines: a chain of the widths under it, of the heights on its
@@ -285,6 +309,7 @@ class RevitDrawer(object):
                 except Exception:
                     pass  # a section Revit won't dimension: left without
         ttype = self.label_type or self.text_types.get(u"BOKI Cuadro 2mm")
+        ttype = self._plain_leader(ttype) if ttype else None
         tid = ttype.Id if ttype else doc.GetDefaultElementTypeId(DB.ElementTypeGroup.TextNoteType)
         for k, (text, target) in enumerate(notes["labels"]):
             at = (x1 + 9.0, y0 + 3.0 + k * 7.0)
