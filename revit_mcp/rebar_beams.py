@@ -557,13 +557,13 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
         leg = max(leg0, leg1)
         lap = 0.0
-        # a bottom bar's hook goes inside the top bars' one (not on it, as built):
-        # its end set back the clear spacing (E.060: 2.5 cm) plus the two half diameters
+        # a bottom bar's hook goes inside the top bars' one, side by side (not
+        # on it, as built): its end set back the two half diameters + 5 mm
         bar_start, bar_end = start_face + cover, end_face - cover  # this bar's own (set back below)
         b0, b1 = bar_start, bar_end
         if not top:
             top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
-            gap = (top_d + d) / 2.0 + 0.025
+            gap = (top_d + d) / 2.0 + 0.005
             b0 += gap if leg0 > 0 else 0.0
             b1 -= gap if leg1 > 0 else 0.0
         bar_start, bar_end = b0, b1
