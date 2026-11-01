@@ -1,0 +1,85 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Editar Acero" Height="600" Width="980" MinWidth="820" MinHeight="520"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="GroupBox">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FFD0D7DF"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold" VerticalAlignment="Center"/>
+                <StackPanel>
+                    <TextBlock Text="ACERO &#183; EDITAR ACERO" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock x:Name="txt_info" Foreground="#FFB9C9DA" FontSize="11"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <DockPanel Margin="12">
+            <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+                <Button DockPanel.Dock="Right" Content="APLICAR EN REVIT" Width="220" Height="40" FontWeight="Bold"
+                        Background="#FF2D8CF0" Foreground="White" BorderThickness="0" Click="apply_click"/>
+                <Button DockPanel.Dock="Right" Content="Cancelar" Width="110" Height="40" Margin="0,0,8,0" Click="cancel_click"/>
+                <TextBlock x:Name="txt_status" VerticalAlignment="Center" FontWeight="Bold" TextWrapping="Wrap" MaxWidth="560"/>
+            </DockPanel>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="330"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <ScrollViewer Grid.Column="0" Margin="0,0,10,0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <GroupBox Header="Longitud de cada tramo (m)">
+                            <StackPanel>
+                                <StackPanel x:Name="pnl_segments"/>
+                                <Button Content="Aplicar longitudes" Height="28" Margin="0,6,0,0" Click="lengths_click"/>
+                                <TextBlock x:Name="txt_total" FontWeight="Bold" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </GroupBox>
+                        <GroupBox Header="Mover">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="44"/><ColumnDefinition Width="44"/><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="34"/><RowDefinition Height="34"/><RowDefinition Height="34"/></Grid.RowDefinitions>
+                                <Button Grid.Column="1" Grid.Row="0" Content="&#9650;" Margin="2" Tag="up" Click="move_click" ToolTip="Subir"/>
+                                <Button Grid.Column="0" Grid.Row="1" Content="&#9664;" Margin="2" Tag="left" Click="move_click" ToolTip="A un lado"/>
+                                <TextBox Grid.Column="1" Grid.Row="1" x:Name="txt_step" Text="2" Margin="2" VerticalContentAlignment="Center"
+                                         HorizontalContentAlignment="Center" ToolTip="Paso en cm"/>
+                                <Button Grid.Column="2" Grid.Row="1" Content="&#9654;" Margin="2" Tag="right" Click="move_click" ToolTip="Al otro lado"/>
+                                <Button Grid.Column="1" Grid.Row="2" Content="&#9660;" Margin="2" Tag="down" Click="move_click" ToolTip="Bajar"/>
+                                <StackPanel Grid.Column="3" Grid.RowSpan="3" Margin="8,0,0,0" VerticalAlignment="Center">
+                                    <Button Content="&#10229; a lo largo" Height="28" Tag="back" Click="move_click"/>
+                                    <Button Content="a lo largo &#10230;" Height="28" Margin="0,4,0,0" Tag="fwd" Click="move_click"/>
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+                        <GroupBox Header="Recubrimiento">
+                            <StackPanel>
+                                <DockPanel>
+                                    <TextBlock Text="Recubrimiento (cm):" VerticalAlignment="Center" Width="130"/>
+                                    <TextBox x:Name="txt_cover" Text="4"/>
+                                </DockPanel>
+                                <TextBlock x:Name="txt_cover_state" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12"/>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+                <GroupBox Grid.Column="1" Header="BARRA (en su plano) &#183; original gris, editada roja">
+                    <Canvas x:Name="canvas" Background="White" ClipToBounds="True" SizeChanged="resized"/>
+                </GroupBox>
+            </Grid>
+        </DockPanel>
+    </DockPanel>
+</Window>

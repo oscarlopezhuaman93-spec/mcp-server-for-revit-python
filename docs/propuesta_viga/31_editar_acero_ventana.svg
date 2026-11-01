@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Segoe UI, Arial" font-size="13">
+  <rect width="1000" height="620" fill="#F3F5F8"/>
+  <rect width="1000" height="56" fill="#16324F"/>
+  <text x="18" y="26" fill="white" font-size="17" font-weight="bold">ACERO · EDITAR ACERO</text>
+  <text x="18" y="45" fill="#B9C9DA" font-size="11">Barra 2Ø5/8" superior · Viga VP-01 0.25x0.40 (1350645) · recubrimiento 4 cm</text>
+  <text x="925" y="36" fill="#FFB347" font-size="18" font-weight="bold">BOKI</text>
+  <!-- left panel -->
+  <rect x="14" y="70" width="330" height="480" fill="white" stroke="#D0D7DF"/>
+  <text x="26" y="94" font-weight="bold" fill="#16324F">Longitud de cada tramo (m)</text>
+  <g font-size="13">
+    <text x="26" y="124">Pata inicio</text><rect x="150" y="110" width="80" height="22" fill="white" stroke="#999"/><text x="158" y="126">0.250</text>
+    <text x="26" y="154">Tramo recto</text><rect x="150" y="140" width="80" height="22" fill="white" stroke="#999"/><text x="158" y="156">9.570</text>
+    <text x="26" y="184">Pata fin</text><rect x="150" y="170" width="80" height="22" fill="white" stroke="#999"/><text x="158" y="186">0.250</text>
+    <text x="26" y="214" font-weight="bold">Total: 10.07 m · 15.6 kg</text>
+  </g>
+  <text x="26" y="254" font-weight="bold" fill="#16324F">Mover (cm)</text>
+  <g font-size="13" text-anchor="middle">
+    <rect x="120" y="266" width="40" height="30" fill="#2D8CF0"/><text x="140" y="286" fill="white">▲</text>
+    <rect x="76" y="300" width="40" height="30" fill="#2D8CF0"/><text x="96" y="320" fill="white">◀</text>
+    <rect x="120" y="300" width="40" height="30" fill="white" stroke="#2D8CF0"/><text x="140" y="320">2</text>
+    <rect x="164" y="300" width="40" height="30" fill="#2D8CF0"/><text x="184" y="320" fill="white">▶</text>
+    <rect x="120" y="334" width="40" height="30" fill="#2D8CF0"/><text x="140" y="354" fill="white">▼</text>
+    <rect x="232" y="282" width="90" height="30" fill="white" stroke="#2D8CF0"/><text x="277" y="302">⟵ a lo largo</text>
+    <rect x="232" y="318" width="90" height="30" fill="white" stroke="#2D8CF0"/><text x="277" y="338">a lo largo ⟶</text>
+  </g>
+  <rect x="26" y="388" width="306" height="70" fill="#FFF8EC" stroke="#FFB347"/>
+  <text x="36" y="410" font-size="12">✔ Dentro del recubrimiento</text>
+  <text x="36" y="430" font-size="12">Si un cambio la saca, se detiene en el borde</text>
+  <text x="36" y="448" font-size="12">permitido y se avisa aquí.</text>
+  <!-- section + elevation -->
+  <rect x="356" y="70" width="290" height="480" fill="white" stroke="#D0D7DF"/>
+  <text x="368" y="94" font-weight="bold" fill="#16324F">SECCIÓN</text>
+  <rect x="436" y="150" width="130" height="208" fill="#E9EDF2" stroke="#555"/>
+  <rect x="452" y="166" width="98" height="176" fill="none" stroke="#1AA39A" stroke-width="2" rx="6"/>
+  <circle cx="462" cy="176" r="7" fill="#D63F1F"/><circle cx="540" cy="176" r="7" fill="#D63F1F"/>
+  <circle cx="462" cy="332" r="6" fill="#333"/><circle cx="540" cy="332" r="6" fill="#333"/>
+  <rect x="452" y="166" width="98" height="176" fill="none" stroke="#FFB347" stroke-dasharray="4,3"/>
+  <text x="372" y="390" font-size="11" fill="#555">Rojo: la barra elegida · línea naranja: límite del</text>
+  <text x="372" y="406" font-size="11" fill="#555">recubrimiento (no puede salir de ahí)</text>
+  <rect x="660" y="70" width="326" height="480" fill="white" stroke="#D0D7DF"/>
+  <text x="672" y="94" font-weight="bold" fill="#16324F">ELEVACIÓN</text>
+  <rect x="680" y="200" width="290" height="90" fill="#E9EDF2" stroke="#555"/>
+  <polyline points="694,262 694,212 956,212 956,262" fill="none" stroke="#D63F1F" stroke-width="3"/>
+  <g fill="#FFB347" stroke="#16324F"><circle cx="694" cy="262" r="6"/><circle cx="694" cy="212" r="6"/><circle cx="956" cy="212" r="6"/><circle cx="956" cy="262" r="6"/></g>
+  <text x="672" y="320" font-size="11" fill="#555">Los puntos naranja se arrastran para cambiar</text>
+  <text x="672" y="336" font-size="11" fill="#555">longitudes (con imán a 1 cm).</text>
+  <!-- buttons -->
+  <rect x="680" y="562" width="300" height="44" fill="#2D8CF0"/><text x="760" y="590" fill="white" font-weight="bold" font-size="15">APLICAR EN REVIT</text>
+  <rect x="556" y="562" width="114" height="44" fill="white" stroke="#2D8CF0"/><text x="584" y="590" fill="#1F6FC5">Cancelar</text>
+  <text x="18" y="590" font-size="12" fill="#555">Botón: Acero › Editar Acero · clic en una barra o estribo del plugin (columna, viga, losa, zapata, muro).</text>
+</svg>
