@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Cuadro de vigas: the beams' table, drawn like the columns' one
 (column_table: the same drawer, bands, section drawing, dimensions and
-labels) - a column per beam type: TIPO, BXH, ACERO SUPERIOR, ACERO
-INFERIOR, ESTRIBOS and DETALLE SECCION. Pure Python (paper mm)."""
+labels) - a column per beam type: TIPO, BXH,
+ESTRIBOS, DIAMETRO (all the bars counted per diameter) and DETALLE SECCION. Pure Python (paper mm)."""
 import column_table as ct
 
 TIPO_H = 8.0
@@ -23,8 +23,7 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
     for w in widths[:-1]:
         xs.append(xs[-1] + w)
     total = ct.LABEL_W + sum(widths)
-    rows = [(u"TIPO", TIPO_H), (u"BXH", ROW_H), (u"ACERO\nSUPERIOR", ROW_H + 2.0),
-            (u"ACERO\nINFERIOR", ROW_H + 2.0), (u"ESTRIBOS", STIRRUP_H),
+    rows = [(u"TIPO", TIPO_H), (u"BXH", ROW_H), (u"DIAMETRO (Ø)", ROW_H), (u"ESTRIBOS", STIRRUP_H),
             (u"DETALLE\nSECCION", ct.table_section_height([it.polygon for it in items], scale))]
     ys = [ct.TITLE_H]
     for _, h in rows:
@@ -45,12 +44,11 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
         mid = x + w / 2.0
         d.text(mid, ys[0] + TIPO_H / 2.0, item.mark, u"BOKI Cuadro Cabecera")
         d.text(mid, ys[1] + ROW_H / 2.0, ct.shape_text(item.polygon) if item.polygon else u"-", u"BOKI Cuadro 3mm")
-        top, bot = split_bars(item.design["bars"] if item.design else [])
-        d.text(mid, ys[2] + rows[2][1] / 2.0, ct.bars_text(top, diameters_mm) if top else u"-", u"BOKI Cuadro 3mm")
-        d.text(mid, ys[3] + rows[3][1] / 2.0, ct.bars_text(bot, diameters_mm) if bot else u"-", u"BOKI Cuadro 3mm")
+        bars = item.design["bars"] if item.design else []
+        d.text(mid, ys[2] + rows[2][1] / 2.0, ct.bars_text(bars, diameters_mm) if bars else u"-", u"BOKI Cuadro 3mm")
         diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
         dist = ct.spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
-        d.text(mid, ys[4] + STIRRUP_H / 2.0, (u"Ø {}: {}".format(diam, dist) if dist else u"(sin estribos)"),
+        d.text(mid, ys[3] + STIRRUP_H / 2.0, (u"Ø {}: {}".format(diam, dist) if dist else u"(sin estribos)"),
                u"BOKI Cuadro 2mm")
-        ct.draw_section(d, item, x, x + w, ys[5], ys[6], scale, detail, diameters_mm)
+        ct.draw_section(d, item, x, x + w, ys[4], ys[5], scale, detail, diameters_mm)
     return total, bottom

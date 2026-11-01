@@ -470,6 +470,46 @@ def _counterclockwise(points):
     return points if area > 0 else points[:1] + points[:0:-1]  # the first corner kept first: the hooks
 
 
+def seat_in_bends(bars, loops, ds, bend_d):
+    """Corner bars seated in the stirrups' bends: a stirrup is bent round
+    (inner diameter bend_d), so a bar drawn in its sharp corner would overlap
+    the bend; it moves in along the corner's bisector until it touches the
+    bend's inner face (as built). `loops`: the stirrups' centerlines (m);
+    returns the bars [(x, y, key)]."""
+    import math as _m
+    r_in = bend_d / 2.0
+    R = r_in + ds / 2.0  # the bend's centerline radius
+    out = []
+    for x, y, key in bars:
+        rb_ = spec.BAR_DIAMETERS_MM[key] / 2000.0
+        nx, ny = x, y
+        for pts in loops:
+            n = len(pts)
+            for k in range(n):
+                c, a, b = pts[k], pts[k - 1], pts[(k + 1) % n]
+                ua = (a[0] - c[0], a[1] - c[1])
+                ub = (b[0] - c[0], b[1] - c[1])
+                la, lb = _m.hypot(*ua), _m.hypot(*ub)
+                if la < 1e-9 or lb < 1e-9:
+                    continue
+                ua, ub = (ua[0] / la, ua[1] / la), (ub[0] / lb, ub[1] / lb)
+                if abs(ua[0] * ub[0] + ua[1] * ub[1]) > 0.2:
+                    continue  # a right-angled corner only
+                # the bar's offsets from the corner along its two sides
+                ox = (x - c[0]) * ua[0] + (y - c[1]) * ua[1]
+                oy = (x - c[0]) * ub[0] + (y - c[1]) * ub[1]
+                sharp = ds / 2.0 + rb_  # where the sharp corner puts it
+                if not (0 < ox < 2.5 * sharp and 0 < oy < 2.5 * sharp):
+                    continue
+                need = R - (r_in - rb_) / _m.sqrt(2.0)  # tangent to the bend's inner face
+                if need > ox + 1e-5 or need > oy + 1e-5:
+                    gx, gy = max(ox, need), max(oy, need)
+                    nx = c[0] + ua[0] * gx + ub[0] * gy
+                    ny = c[1] + ua[1] * gx + ub[1] * gy
+        out.append((nx, ny, key))
+    return out
+
+
 def _share(line, created, rebar, key, kind, s_start, s_end):
     """List the bar in each element it runs along, with its share."""
     length = max(s_end - s_start, 1e-9)
@@ -578,7 +618,18 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     cover = beam_spec.cover_m
     bar_start, bar_end = start_face + cover, end_face - cover
     confinement = spec.confinement_length(beam_spec.edge.zones)
-    for x, y, key in design["bars"]:
+    # the corner bars seated in the stirrups' bends (no overlap with them)
+    seated = design["bars"]
+    for kind, (family, loops, ties) in groups.items():
+        closed = [pts for pts, is_open, _ in loops if not is_open]
+        if not closed:
+            continue
+        st_type = (rc.named_bar_type(doc, family.type_name, family.key)
+                   or rc._bar_type(bar_types, family.key, BEAM_MARK))
+        ds_m = spec.BAR_DIAMETERS_MM[family.key] / 1000.0
+        bend = getattr(st_type, "StirrupTieBendDiameter", 0.0) * FT or 4.0 * ds_m
+        seated = seat_in_bends(seated, closed, ds_m, bend)
+    for x, y, key in seated:
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         top = y > 0
         # the hook legs: the beam's own at each end, else the table's, else 12 db
