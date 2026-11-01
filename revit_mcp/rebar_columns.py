@@ -1044,7 +1044,27 @@ def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None):
         joint = spec.joint_positions((section.z_top - z_clear_top) * FT, joint_spacing_m)
         for start, n, spacing in spec.group_runs(joint):
             runs.append((z_clear_top + start / FT, n, spacing / FT, 1))
-    return runs
+    return runs + _lap_extra(runs, getattr(section, "lap_zones", None) or [])
+
+
+LAP_ZONES = {}  # column id -> the laps of its stack [(z0_ft, z1_ft)], while generate_stack builds it
+LAP_STIRRUP_M = 0.10  # E.060 (agreed with the user): stirrups at most this far apart along a lap
+
+
+def _lap_extra(runs, zones):
+    """Stirrups added along the bars' laps (`zones` [(z0_ft, z1_ft)]): one
+    halfway between two stirrups farther apart than LAP_STIRRUP_M there -
+    the rest at .20 becomes .10 over the lap, the rule unchanged elsewhere."""
+    if not zones:
+        return []
+    zs = sorted(set(round(z0 + k * s, 6) for z0, n, s, _ in runs for k in range(n)))
+    extra = []
+    for a, b in zip(zs, zs[1:]):
+        if (b - a) * FT > LAP_STIRRUP_M + 1e-6:
+            mid = (a + b) / 2.0
+            if any(lo - 1e-6 <= mid <= hi + 1e-6 for lo, hi in zones):
+                extra.append(mid)
+    return [(start, n, spacing, 1) for start, n, spacing in spec.group_runs(extra)]  # ft, like the runs
 
 
 def _set(rebar, n, spacing_ft):
@@ -1109,6 +1129,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     bars out (a stack makes them continuous, see `generate_stack`).
     Returns [(rebar, diameter_key, kind)]."""
     section = Section(column)
+    section.lap_zones = LAP_ZONES.get(element_id_value(column.Id))  # its laps: stirrups at .10 there (_lap_extra)
     design = column_spec.design
 
     def bar_type_for(key):
@@ -1331,9 +1352,6 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         return dict((element_id_value(c.Id), generate_column(doc, c, column_spec, bar_types, hooks, mark, shapes))
                     for c in stack), []
     created = {}
-    for column in stack:
-        created[element_id_value(column.Id)] = generate_column(
-            doc, column, column_spec, bar_types, hooks, mark, shapes, longitudinal=False)
     sections = [Section(c) for c in stack]
     base = sections[0]
     z0_ft = base.z_bottom
@@ -1351,6 +1369,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         for rank, k in enumerate(sorted(range(len(bars)), key=lambda k: math.atan2(bars[k][1], bars[k][0]))):
             group_of[k] = rank % 2
     groups_cache = {}
+    plans = []
     for index_bar, (x, y, key) in enumerate(bars):
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         ends = bar_ends(doc, column_spec, key, x, y, base, stack[0], stack[-1])
@@ -1391,6 +1410,22 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         if leg_dir:
             out = spec.leg_vector(x, y, *(_half_sizes(base) + (spec.LEG_OUT,)))
             inward = (-out[0], -out[1])
+        plans.append((x, y, key, d, ends, lap, pieces, inward))
+    # the stirrups, closer along the laps (_lap_extra): each lap is the top
+    # `lap` of a piece that goes on
+    zones = []
+    for x, y, key, d, ends, lap, pieces, inward in plans:
+        for z_start, z_end in pieces[:-1]:
+            if lap:
+                zones.append((z0_ft + (z_end - lap) / FT, z0_ft + z_end / FT))
+    for column in stack:
+        LAP_ZONES[element_id_value(column.Id)] = zones
+        try:
+            created[element_id_value(column.Id)] = generate_column(
+                doc, column, column_spec, bar_types, hooks, mark, shapes, longitudinal=False)
+        finally:
+            LAP_ZONES.pop(element_id_value(column.Id), None)
+    for x, y, key, d, ends, lap, pieces, inward in plans:
         for index, (z_start, z_end) in enumerate(pieces):
             path = spec.bar_piece_points(x, y, d, z_start, z_end, lap, index < len(pieces) - 1, inward)
             path = spec.bar_with_ends(
