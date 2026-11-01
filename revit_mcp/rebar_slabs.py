@@ -431,6 +431,50 @@ def place_bricks(model, ribbed_plan, types, folder=None, tilt=None):
     return place_bricks_level(model, ribbed_plan, types)
 
 
+def _in_tris(p, tris, eps=1e-7):
+    """Point (x, y) on the slab's top in plan (its triangles, m); a point
+    on an edge counts in."""
+    x, y = p
+    for t in tris:
+        (ax, ay), (bx, by), (cx, cy) = t[0][:2], t[1][:2], t[2][:2]
+        d1 = (x - bx) * (ay - by) - (ax - bx) * (y - by)
+        d2 = (x - cx) * (by - cy) - (bx - cx) * (y - cy)
+        d3 = (x - ax) * (cy - ay) - (cx - ax) * (y - ay)
+        if (d1 >= -eps and d2 >= -eps and d3 >= -eps) or (d1 <= eps and d2 <= eps and d3 <= eps):
+            return True
+    return False
+
+
+def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10):
+    """A brick at a sloped or curved edge pulled in: its end shortened until
+    its four corners are on the slab (no corner out of the concrete, the
+    rest filled with the slab's concrete, as built); one too short dropped.
+    Returns the bricks kept."""
+    axis = ribbed_plan["axis"]
+    tris = model.slab_tris
+
+    def fits(s0, s1, t0, t1):
+        return all(_in_tris(model.point_xy(axis, s, t), tris) for s in (s0, s1) for t in (t0, t1))
+    kept = []
+    for b in ribbed_plan["bricks"]:
+        s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
+        if fits(s0, s1, t0, t1):
+            kept.append(b)
+            continue
+        while s1 - s0 >= shortest:  # the end that is out moves in
+            out_end = not all(_in_tris(model.point_xy(axis, s1, t), tris) for t in (t0, t1))
+            if out_end:
+                s1 -= step
+            else:
+                s0 += step
+            if fits(s0, s1, t0, t1):
+                nb = dict(b)
+                nb["s0"], nb["s1"], nb["largo"] = s0, s1, round(s1 - s0, 3)
+                kept.append(nb)
+                break
+    return kept
+
+
 def place_bricks_level(model, ribbed_plan, types):
     """Place the bricks of the plan, hosted by the floor, hanging from its top
     face (the family's own drop): the brick's width across the viguetas,
@@ -445,7 +489,7 @@ def place_bricks_level(model, ribbed_plan, types):
     along = model.direction(axis)
     hand = DB.XYZ(along.Y, -along.X, 0.0)
     data = List[FamilyInstanceCreationData]()
-    for b in ribbed_plan["bricks"]:
+    for b in trim_bricks(model, ribbed_plan):
         sym = piece_symbol(doc, types, b["type"], b.get("largo") or types[b["type"]][1],
                            b.get("ancho") or types[b["type"]][2])
         if not sym.IsActive:
