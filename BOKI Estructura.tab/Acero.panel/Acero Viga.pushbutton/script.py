@@ -2281,7 +2281,7 @@ class AceroWindow(forms.WPFWindow):
         best = None
         for i, c in enumerate(cuts):
             d = abs(c - s) * scale
-            if d < 8 and (best is None or d < best[0]):
+            if d < 16 and (best is None or d < best[0]):  # an easy grab
                 best = (d, i)
         return best[1] if best else None
 
@@ -2431,6 +2431,14 @@ class AceroWindow(forms.WPFWindow):
                     return  # the other end may get one too
                 self._end_hook_stage()
                 return
+            near = self._cut_near(s, scale)
+            if near is not None and getattr(self, "_draft", None) is None:
+                # a cut is moved first, whatever tool is on
+                st = self._edit_settings()
+                st["cuts"] = list(cuts)
+                self._drag_cut = near
+                self.canvas_elev.CaptureMouse()
+                return
             if self.tool_draw.IsChecked:
                 s = self._snap(s, scale)
                 if getattr(self, "_draft", None) is None:
@@ -2510,6 +2518,10 @@ class AceroWindow(forms.WPFWindow):
         return end, round(leg / 0.05) * 0.05
 
     def elev_mouse_move(self, sender, args):
+        if getattr(self, "_drag_cut", None) is None and getattr(self, "_beam_now", None):
+            s_h, scale_h = self._elev_s(args)
+            if scale_h:  # over a cut: the cursor says it can be dragged
+                self.canvas_elev.Cursor = Cursors.SizeWE if self._cut_near(s_h, scale_h) is not None else None
         if getattr(self, "_hook_stage", None) is not None and self._elev_data:
             s, scale = self._elev_s(args)
             pick = self._hook_pick(args, scale)
