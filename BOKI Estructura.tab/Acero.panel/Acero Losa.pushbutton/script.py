@@ -1022,11 +1022,22 @@ def place_bricks_only(state, models):
     try:
         fw_params.ensure_parameters(doc, "Acero", [(rsl.PARAM, True, [FLOORS_BIC], True)])
         types = rsl.brick_types(doc)
+        # the slab set up in the window: the others with no setup of their own
+        # take its kind and brick (all the picked slabs get their bricks)
+        ref = state.settings.get(state.active) if state.active else None
+        if not (ref and ref.get("kind") == sr.ALIGERADA):
+            ref = next((s for s in state.settings.values() if s.get("kind") == sr.ALIGERADA), None)
         for element_id in state.picked_ids:
             floor = doc.GetElement(DB.ElementId(element_id))
             model = models.get(element_id) or rsl.SlabModel(floor)
+            p = floor.LookupParameter(rsl.PARAM)
+            own = element_id in state.settings or (p is not None and (p.AsString() or u"").strip())
             settings = settings_for(state, floor, types, model.thickness)
+            if ref is not None and (not own or settings.get("kind") != sr.ALIGERADA):
+                settings["kind"] = sr.ALIGERADA
+                settings["alig"] = dict(ref.get("alig") or {})
             if settings.get("kind") != sr.ALIGERADA:
+                failed.append(u"Losa id {}: no es aligerada (elige 'Aligerada' en su configuración)".format(element_id))
                 continue
             rsl.write_settings(floor, settings)
             try:
