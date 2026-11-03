@@ -186,11 +186,14 @@ def slope_turn(settings):
     return (float(rel) % 180.0) if rel is not None else 0.0
 
 
-def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None):
+def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None, mirror=None):
     """The "start" (m) that lines model_b's viguetas up with model_a's (the
     two waters of a roof: each vigueta goes on across the ridge, as built).
-    model_a planned (rib_a, its angle); model_b planned here with start 0.
-    None when either has no vigueta."""
+    `mirror` (world XYZ -> world XYZ, the reflection across the ridge): the
+    viguetas along the ridge instead, model_b's the mirror image of
+    model_a's - symmetric about the ridge. model_a planned (rib_a, its
+    angle); model_b planned here with start 0. None when either has no
+    vigueta."""
     if not rib_a or not rib_a.get("viguetas"):
         return None
     st0 = dict(settings_b)
@@ -203,10 +206,31 @@ def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None):
     c = rib_a["viguetas"][0]
     x, y = (0.0, c) if rib_a["axis"] == sr.X else (c, 0.0)
     w = model_a.f.world(*(sr.unrotate(x, y, model_a.angle) + (0.0,)))
+    if mirror is not None:
+        w = mirror(w)
     bx, by, _ = model_b.f.local(w)
     rx, ry = sr.rotate_tris([((bx, by),)], model_b.angle)[0][0]
     target = ry if rib_b["axis"] == sr.X else rx
     return round((target - rib_b["viguetas"][0]) % s, 4)
+
+
+def aligned_phase(model_a, rib_a, model_b, settings_b, mirror=None):
+    """The grid (alig "phase", sr.rib_layout) that puts model_b's viguetas
+    on model_a's: across the ridge, or - `mirror`, the reflection across the
+    ridge - symmetric about it. model_a planned (rib_a, its angle); model_b
+    a sloped slab (its frame: down its slope, turned by its own turn). None
+    when model_a has no vigueta."""
+    if not rib_a or not rib_a.get("viguetas"):
+        return None
+    c = rib_a["viguetas"][0]
+    x, y = (0.0, c) if rib_a["axis"] == sr.X else (c, 0.0)
+    w = model_a.f.world(*(sr.unrotate(x, y, model_a.angle) + (0.0,)))
+    if mirror is not None:
+        w = mirror(w)
+    bx, by, _ = model_b.f.local(w)
+    angle_b = model_b.climb_angle() + slope_turn(settings_b)
+    rx, ry = sr.rotate_tris([((bx, by),)], angle_b)[0][0]
+    return round(ry, 4)  # the viguetas run along the frame's x: their positions are its y
 
 
 def read_settings(floor):

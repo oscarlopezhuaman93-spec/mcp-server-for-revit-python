@@ -382,13 +382,34 @@ def bays(slab_tris, support_tris, axis):
     return out
 
 
-def rib_layout(bay, b, s, brick_w, start=0.0):
+def rib_layout(bay, b, s, brick_w, start=0.0, phase=None):
     """(vigueta centers, brick strips [(t0, t1)]) of a bay: the first strip
     `start` m from the face (concrete before it), then vigueta - bricks -
     vigueta... every `s`; the last strip is what is left (a narrower or cut
-    brick)."""
+    brick). `phase` (a position across, in the same frame): the viguetas on
+    the grid phase + k*s instead - the first one where the grid first falls
+    inside the bay, a narrower strip (a cut brick) before it - so two slabs
+    line up whatever their faces (the two waters of a roof)."""
     t0, t1 = bay
     centers, strips = [], []
+    if phase is not None:
+        c = phase + math.ceil((t0 + b / 2.0 - phase) / s - 1e-9) * s
+        if c > t1 - b / 2.0:  # no vigueta of the grid in this bay: its own layout
+            return rib_layout(bay, b, s, brick_w, start)
+        if c - b / 2.0 - t0 > 0.02:
+            strips.append((t0, c - b / 2.0))  # the leftover by the face: a cut brick
+        centers.append(c)
+        t = c + b / 2.0
+        while t < t1 - 0.05:
+            w = min(brick_w, t1 - t)
+            strips.append((t, t + w))
+            t += w
+            if t1 - t > b + 0.05:
+                centers.append(t + b / 2.0)
+                t += max(b, s - brick_w)
+            else:
+                break
+        return centers, strips
     t = t0 + max(0.0, start)
     while t < t1 - 0.05:
         w = min(brick_w, t1 - t)
@@ -507,7 +528,8 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
     warnings, centers, bricks = [], [], []
     cutting = bool(rb.get("cut", True))
     for bay in bays(slab_tris, support_tris, axis):
-        cs, strips = rib_layout(bay, rb["b"], rb["s"], main_w, float(rb.get("start") or 0.0))
+        cs, strips = rib_layout(bay, rb["b"], rb["s"], main_w, float(rb.get("start") or 0.0),
+                                rb.get("phase"))  # phase: lined up with a partner slab
         centers += cs
         for k, (t0, t1) in enumerate(strips):
             w = brick_width(lib, t1 - t0, cutting) if lib else None

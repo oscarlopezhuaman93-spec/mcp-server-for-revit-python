@@ -145,3 +145,16 @@ def test_slab_stopping_at_the_faces_of_its_supports():
     assert bars[0]["s0"] == pytest.approx(-0.15 + 0.02) and bars[0]["s1"] == pytest.approx(3.15 - 0.02)
     tops, _, _, _ = sr.plan_line((0.0, 3.0), sup, sr.SUP, sr.X, st, H, MM)
     assert len(tops) == 2 and tops[0]["s0"] == pytest.approx(-0.13) and tops[0]["s1"] == pytest.approx(1.0)
+
+def test_rib_layout_on_a_grid():
+    """phase: the viguetas on phase + k*s, a cut strip before the first."""
+    from revit_mcp.slab_rebar import rib_layout
+
+    centers, strips = rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, phase=0.47)
+    assert centers[:3] == pytest.approx([0.07, 0.47, 0.87])
+    assert all(abs(((c - 0.47) / 0.40) - round((c - 0.47) / 0.40)) < 1e-6 for c in centers)
+    # the same bay with no phase: as before
+    assert rib_layout((0.0, 2.0), 0.10, 0.40, 0.30) == rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, phase=None)
+    centers, strips = rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, phase=0.25)
+    assert centers[0] == pytest.approx(0.25)
+    assert strips[0] == pytest.approx((0.0, 0.20))  # the cut piece by the face

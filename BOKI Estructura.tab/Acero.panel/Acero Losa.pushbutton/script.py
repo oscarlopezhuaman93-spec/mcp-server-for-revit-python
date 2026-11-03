@@ -1150,8 +1150,7 @@ def generate_all(state, models, splice):
                 if settings.get("kind") == sr.ALIGERADA:
                     # lined up with its partner first: its bars and bricks alike
                     lib = rsl.brick_library(doc, settings, rsl.brick_types(doc))
-                    align_to_partner(element_id, model, settings, bricks_done, lib)
-                    bricks_done[element_id] = (model, model.plan(settings, MM, splice, lib)[1], settings)
+                    laid_out(element_id, model, settings, lib, bricks_done, splice)
                 rsl.write_settings(floor, settings)
                 rc.delete_generated(doc, floor)
                 skip = None
@@ -1238,14 +1237,45 @@ def align_to_partner(element_id, model, settings, done, lib):
         return
     other = partner_of(element_id)
     if other is None or other not in done:
+        settings.setdefault("alig", {})["phase"] = None  # the reference: its own layout
         return
     pm, prib, pst = done[other]
     a = settings.setdefault("alig", {})
     a["rel"] = (pst.get("alig") or {}).get("rel")
-    if rsl.slope_turn(settings) == 0.0:
-        start = rsl.aligned_start(pm, prib, model, settings, MM, lib)
-        if start is not None:
-            a["start"] = start
+    turn = rsl.slope_turn(settings)
+    mirror = None
+    if abs(turn - 90.0) < 1e-6:
+        # along the ridge: the two waters symmetric about it (a vigueta's
+        # mirror across the ridge is the other water's vigueta)
+        roof = rm.RoofModel(pm.element, model.element, {other: pm, element_id: model})
+
+        def mirror(w):
+            s, t = roof.to_frame(w.X * FT, w.Y * FT)
+            x, y = roof.to_world(-s, t)
+            return DB.XYZ(x / FT, y / FT, w.Z)
+    elif turn != 0.0:
+        a["start"], a["phase"] = 0.0, None  # any other turn: no partner to line up with
+        return
+    # on the partner's grid: the first vigueta where it falls, a cut brick by the face
+    a["phase"] = rsl.aligned_phase(pm, prib, model, settings, mirror)
+    a["start"] = 0.0
+
+
+def laid_out(element_id, model, settings, lib, done, splice=None):
+    """The slab's ribbed layout (its rib) lined up in its roof: a partner
+    already done -> on its grid (align_to_partner); the first slab of a
+    two-way roof -> on its own grid run to both faces (a cut brick by each,
+    a vigueta wherever the grid falls), so the other water mirrors it the
+    same whichever slab comes first."""
+    align_to_partner(element_id, model, settings, done, lib)
+    rib = model.plan(settings, MM, splice, lib)[1]
+    a = settings.setdefault("alig", {})
+    if (model.sloped and a.get("phase") is None and partner_of(element_id) is not None
+            and rib and rib.get("viguetas")):
+        a["phase"] = round(rib["viguetas"][0], 4)  # its own grid, from both faces
+        rib = model.plan(settings, MM, splice, lib)[1]
+    done[element_id] = (model, rib, settings)
+    return rib
 
 
 def brick_layouts(state, models, types):
@@ -1286,12 +1316,10 @@ def brick_layouts(state, models, types):
             failed.append(u"Losa id {}: no hay tipo de ladrillo elegido".format(element_id))
             continue
         try:
-            align_to_partner(element_id, model, settings, done, lib)
-            rib = model.plan(settings, MM, None, lib)[1]
+            rib = laid_out(element_id, model, settings, lib, done)
         except Exception as e:
             failed.append(u"Losa id {}: {}".format(element_id, e))
             continue
-        done[element_id] = (model, rib, settings)
         out.append((element_id, model, settings, lib, rib))
     return out, failed
 
