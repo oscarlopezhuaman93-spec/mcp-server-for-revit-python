@@ -2064,6 +2064,91 @@ class AceroWindow(forms.WPFWindow):
             frame.Margin = Thickness(0, 0, 6, 0)
             frame.Child = box
             panel.Children.Add(frame)
+        self._draw_stirrup_plan(panel, line, poly)
+
+    def _draw_stirrup_plan(self, panel, line, poly):
+        """A flat beam (h <= b) or a cantilever: its plan beside the cuts,
+        every stirrup drawn where it is generated (the spans' "tagged"
+        positions of _views_data) and counted."""
+        elev = self._elev_data
+        if not elev or not elev["spans"]:
+            return
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        b, h = max(xs) - min(xs), max(ys) - min(ys)
+        cantilever = any(u"(voladizo)" in lbl[2] for lbl in elev["span_labels"])
+        if h > b + 1e-6 and not cantilever:
+            return
+        s_min = min([sp["a"] for sp in elev["spans"]] + [s["s0"] for s in elev["supports"]])
+        s_max = max([sp["b"] for sp in elev["spans"]] + [s["s1"] for s in elev["supports"]])
+        box = Canvas()
+        box.Width, box.Height = 340, 160
+        box.Background = brush(255, 255, 255)
+        k = min((box.Width - 30) / max(s_max - s_min, 1e-3), 60.0 / max(b, 1e-3))
+        x0, yc = 15.0, 92.0
+
+        def P(s, w):
+            return Point(x0 + (s - s_min) * k, yc - w * k)
+
+        def rect(s0, s1, w0, w1, stroke, fill):
+            shape = Polygon()
+            pc = PointCollection()
+            for q in (P(s0, w0), P(s1, w0), P(s1, w1), P(s0, w1)):
+                pc.Add(q)
+            shape.Points = pc
+            shape.Stroke = stroke
+            shape.Fill = fill
+            box.Children.Add(shape)
+
+        rect(max(s_min, 0.0), min(s_max, elev["length"]), -b / 2.0, b / 2.0, brush(60, 60, 60), brush(236, 238, 241))
+        for sup in elev["supports"]:
+            rect(sup["s0"], sup["s1"], -b / 2.0 - 0.06, b / 2.0 + 0.06, brush(90, 90, 90), brush(205, 205, 210))
+            tag = TextBlock()
+            tag.Text = sup["label"]
+            tag.FontSize = 9
+            q = P((sup["s0"] + sup["s1"]) / 2.0, -b / 2.0 - 0.06)
+            Canvas.SetLeft(tag, q.X - 20)
+            Canvas.SetTop(tag, q.Y + 2)
+            box.Children.Add(tag)
+        for lbl in elev["span_labels"]:
+            if u"(voladizo)" in lbl[2]:
+                free_s = lbl[1] if not any(abs(s["s0"] - lbl[1]) < 0.03 for s in elev["supports"]) else lbl[0]
+                tag = TextBlock()
+                tag.Text = u"borde libre"
+                tag.FontSize = 9
+                q = P(free_s, -b / 2.0)
+                Canvas.SetLeft(tag, q.X - 50)
+                Canvas.SetTop(tag, q.Y + 2)
+                box.Children.Add(tag)
+        cover = elev["cover"]
+        total, key, texts = 0, None, []
+        for sp in elev["spans"]:
+            edge = sp.get("edge")
+            if not edge:
+                continue
+            key = edge["key"]
+            for s_rel, _ in edge["tagged"]:
+                st = Line()
+                p0, p1 = P(sp["a"] + s_rel, -b / 2.0 + cover), P(sp["a"] + s_rel, b / 2.0 - cover)
+                st.X1, st.Y1, st.X2, st.Y2 = p0.X, p0.Y, p1.X, p1.Y
+                st.Stroke = brush(24, 95, 165)
+                st.StrokeThickness = 1.5
+                box.Children.Add(st)
+            total += len(edge["tagged"])
+            texts.append(u"luz {:.2f} m: {} est.".format(sp["b"] - sp["a"], len(edge["tagged"])))
+        label = TextBlock()
+        kind = u" en ".join(n for n, on in ((u"viga chata", h <= b + 1e-6), (u"voladizo", cantilever)) if on)
+        label.Text = u"PLANTA - {}\n{} estribos Ø{}   ({})".format(kind, total, key or u"-", u"; ".join(texts))
+        label.FontSize = 10
+        Canvas.SetLeft(label, 8)
+        Canvas.SetTop(label, 4)
+        box.Children.Add(label)
+        frame = Border()
+        frame.BorderBrush = brush(24, 95, 165)
+        frame.BorderThickness = Thickness(1)
+        frame.Margin = Thickness(0, 0, 6, 0)
+        frame.Child = box
+        panel.Children.Add(frame)
 
     @staticmethod
     def _cut_dot(canvas, center, radius, fill, minimum=4.0):
