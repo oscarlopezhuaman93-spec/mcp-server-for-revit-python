@@ -1068,6 +1068,8 @@ def draw_beam_elevation(canvas, data, frame):
         _text(canvas, frame, s_mid, y_kind, text, brush=_brush(160, 30, 30), size=11, bold=True)
     for m in data.get("mixed") or []:
         _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
+        for s in m.get("stirrups") or []:  # its own stirrups, as its type sets them
+            _line(canvas, frame, (s, m["y0"] * k + cover * 0.5), (s, m["y1"] * k - cover * 0.5), C_EDGE, 1.5)
         # its label over it, in two lines, above the kinds' row (never over a span's)
         width = 3.6 * u
         x = (m["s0"] + m["s1"]) / 2.0 - width / 2.0

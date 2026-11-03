@@ -1756,8 +1756,29 @@ class AceroWindow(forms.WPFWindow):
                 s0, s1 = max(s0, -self.NEIGHBOR_SHOWN_M), min(s1, line.length + self.NEIGHBOR_SHOWN_M)
                 out.append({"s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
                             "label": self._kind_text(other, t.name),
+                            "stirrups": [s for s in self._neighbor_stirrups(line, other, t) if s0 <= s <= s1],
                             "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))})
         return out
+
+    def _neighbor_stirrups(self, line, other, t):
+        """A neighbor beam's stirrups as its own type sets them (its spans,
+        a cantilever from its support), in this line's elevation frame."""
+        try:
+            cfg = t.config()
+            zones, rest = rs.parse_distribution(cfg["EA_Estribo_Borde_Distribucion"])
+            settings = self._line_settings(other)
+            supports = self._supports(other)
+            spans, _, _ = rb.spans_and_ends(other, supports)
+            free = rs.free_ends(spans, [(sp["s0"], sp["s1"]) for sp in supports])
+            out = []
+            for index, (a, b) in enumerate(spans):
+                own = bx.span_text(settings, index, "edge")
+                z, r = rs.parse_distribution(own) if own else (zones, rest)
+                for offset, _ in rs.span_zone_positions(b - a, z, r, free.get(index)):
+                    out.append(line.local(other.point(0.0, 0.0, a + offset))[2])
+            return out
+        except Exception:
+            return []  # not set up: drawn without them
 
     def _open_line(self, tag):
         """A neighbor beam clicked in the elevation: its type and that beam
