@@ -97,7 +97,7 @@ class BeamSection(object):
         # axis (in its vertical plane) for a sloped one
         up = d.CrossProduct(across).Normalize()
         best = None
-        solids = rc._solids(beam.get_Geometry(DB.Options()))
+        solids = list(rc._solids(beam.get_Geometry(DB.Options())))
         for solid in solids:
             for face in solid.Faces:
                 if isinstance(face, DB.PlanarFace) and abs(abs(face.FaceNormal.DotProduct(d)) - 1.0) < 1e-3:
