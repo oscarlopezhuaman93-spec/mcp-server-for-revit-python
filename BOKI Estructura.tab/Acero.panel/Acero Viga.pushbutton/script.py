@@ -1757,7 +1757,8 @@ class AceroWindow(forms.WPFWindow):
                 # drawn as a stub at most NEIGHBOR_SHOWN_M long: this beam keeps its scale
                 s0, s1 = max(s0, -self.NEIGHBOR_SHOWN_M), min(s1, line.length + self.NEIGHBOR_SHOWN_M)
                 xs_o = [p[0] for p in other.section.polygon_m]
-                out.append({"s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
+                out.append({"line": other,  # the neighbor itself (this beam's run on into it)
+                            "s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
                             "x0": min(xs_o), "x1": max(xs_o),
                             "label": self._kind_text(other, t.name),
                             "stirrups": [s for s in self._neighbor_stirrups(line, other, t) if s0 <= s <= s1],
@@ -1958,23 +1959,18 @@ class AceroWindow(forms.WPFWindow):
         # how far a bar made longer may go (rb.generate_line): the far face of
         # the flat beam it runs into less the cover, else its support's
         mixed = self._mixed_neighbors(line)
-        before = [m["s0"] for m in mixed if m["s1"] <= start_face + 0.05]
-        after = [m["s1"] for m in mixed if m["s0"] >= end_face - 0.05]
-        reach_lo = (min(before) + cover) if before else bar_start
-        reach_hi = (max(after) - cover) if after else bar_end
+        # this beam's run on into its neighbors, as generated (rb.mixed_continuations)
+        cont = rb.mixed_continuations([line] + [m["line"] for m in mixed]).get(id(line)) if mixed else None
         for x, y, key in bars:
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             top = y > 0
-            leg0 = bx.hook_leg(settings, 0, key, legs, rs.BAR_DIAMETERS_MM, hooked)
-            leg1 = bx.hook_leg(settings, 1, key, legs, rs.BAR_DIAMETERS_MM, hooked)
+            face = bx.TOP if top else bx.BOTTOM
+            # the bar as generated (rb.main_bar_run, one logic): its hooks cut to the
+            # depth there is, its run on into a neighbor, this face's hand edits
+            leg0, leg1, b_start, b_end = rb.main_bar_run(line, settings, self.design, y, key, cover, start_face,
+                                                         end_face, f["anchor"], legs, splice, cont)
             if not hook_view:
                 hook_view = [(bar_start, leg0, u"hook:0"), (bar_end, leg1, u"hook:1")]
-            # this face's hand edits (a click on the bar): longer / shorter, its legs
-            face = bx.TOP if top else bx.BOTTOM
-            leg0, leg1, b_start, b_end = bx.apply_main_edit(settings, face, leg0, leg1, bar_start, bar_end,
-                                                            reach_lo, reach_hi)
-            leg0 = max(leg0, rs.MIN_LEG_M) if leg0 > 1e-6 else 0.0  # as generated (rb.generate_line)
-            leg1 = max(leg1, rs.MIN_LEG_M) if leg1 > 1e-6 else 0.0
             leg = max(leg0, leg1)
             lap, pieces = 0.0, [(b_start, b_end)]
             if splice is not None and b_end - b_start + leg0 + leg1 > splice["max"] + 1e-6:

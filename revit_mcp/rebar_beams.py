@@ -400,12 +400,6 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
             leg0, start_run = 0.0, min(run_on, reach[0])
         if runs[1]:
             leg1, end_run = 0.0, min(run_on, reach[1])
-    # a leg never leaves the concrete: in a shallow beam (a chata) it is
-    # cut to the depth there is, less the cover on the far face
-    room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
-    if room > 0:
-        leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
-        leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
     # a bottom bar's hook goes inside the top bars' one, side by side (not
     # on it, as built): its end set back the two half diameters + 5 mm
     b0, b1 = start_face + cover, end_face - cover
@@ -422,6 +416,12 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
     lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
     hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
+    # a leg never leaves the concrete - typed by hand too: in a shallow beam (a
+    # chata, a vigueta) it is cut to the depth there is, less the far cover
+    room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
+    if room > 0:
+        leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
+        leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
     # a leg too short to bend (a few mm) makes no rebar shape: the least one
     leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
     leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0
