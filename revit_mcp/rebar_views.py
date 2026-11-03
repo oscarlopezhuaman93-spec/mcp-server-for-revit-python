@@ -1006,6 +1006,23 @@ def draw_beam_elevation(canvas, data, frame):
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
             _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), C_BAR, 1.6)
+    # Acero Viga: the main bars of the face clicked, orange, with their ends
+    # to edit - "Largo +0.00" (longer / shorter there) and "Doblez" (its leg)
+    face = data.get("main_selected")
+    main = (data.get("main") or {}).get(face) if face else None
+    if main:
+        for pts in main["paths"]:
+            for p, q in zip(pts, pts[1:]):
+                _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(255, 200, 80), 7)
+                _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(240, 140, 20), 2.5)
+        edit = main.get("edit") or {}
+        y_lab = (y1 + 1.2 * u) if face == u"sup" else (y0 - 4.6 * u)
+        for end, s_end in ((0, main["ends"][0]), (1, main["ends"][1])):
+            d = float(edit.get("d{}".format(end)) or 0.0)
+            x = s_end - (4.0 * u if end == 0 else -0.3 * u)
+            _edit_text(canvas, frame, x, y_lab, u"Largo {:+.2f}".format(d), u"main:{}:d{}".format(face, end))
+            _edit_text(canvas, frame, x, y_lab - 1.1 * u, u"Doblez {:.2f}".format(main["legs"][end]),
+                       u"main:{}:h{}".format(face, end))
     # laps, one label each
     for s0, s1, key, top in data["laps"]:
         yb = y1 - cover - 0.6 * u if top else y0 + cover

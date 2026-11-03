@@ -21,7 +21,7 @@ MIN_CLEAR_M = 0.025  # E.060 7.6.1: clear space between parallel bars (>= db, 2.
 
 
 def default_settings():
-    return {"spans": {}, "extras": [], "cuts": [], "hooks": {}}
+    return {"spans": {}, "extras": [], "cuts": [], "hooks": {}, "main": {}}
 
 
 def read(text):
@@ -34,7 +34,25 @@ def read(text):
     out["extras"] = list(data.get("extras") or [])
     out["cuts"] = [float(c) for c in data.get("cuts") or []]
     out["hooks"] = dict((str(k), float(v)) for k, v in (data.get("hooks") or {}).items())
+    out["main"] = dict((str(k), dict(v)) for k, v in (data.get("main") or {}).items() if isinstance(v, dict))
     return out
+
+
+def main_edit(settings, face):
+    """The hand edits of a face's main bars (2026-11-03, with the user):
+    {"d0", "d1"} m added at each end (+ longer, - shorter) and {"h0", "h1"}
+    each end's hook leg (m, 0 straight) - None / missing: as computed."""
+    return ((settings or {}).get("main") or {}).get(face) or {}
+
+
+def apply_main_edit(settings, face, leg0, leg1, s0, s1):
+    """(leg0, leg1, s0, s1) of a face's main bars with its hand edits."""
+    m = main_edit(settings, face)
+    if m.get("h0") is not None:
+        leg0 = max(0.0, float(m["h0"]))
+    if m.get("h1") is not None:
+        leg1 = max(0.0, float(m["h1"]))
+    return leg0, leg1, s0 - float(m.get("d0") or 0.0), s1 + float(m.get("d1") or 0.0)
 
 
 def default_leg(key, diameters_mm):

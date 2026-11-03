@@ -1908,21 +1908,25 @@ class AceroWindow(forms.WPFWindow):
         missing_legs, missing_laps = set(), set()
         hooked = f["anchor"] == rb.ANCHOR_HOOK
         hook_view = []
+        main_view = {}  # face -> its main bars' paths, ends and legs (clicked to edit)
         for x, y, key in bars:
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             top = y > 0
             leg0 = bx.hook_leg(settings, 0, key, legs, rs.BAR_DIAMETERS_MM, hooked)
             leg1 = bx.hook_leg(settings, 1, key, legs, rs.BAR_DIAMETERS_MM, hooked)
-            leg = max(leg0, leg1)
             if not hook_view:
                 hook_view = [(bar_start, leg0, u"hook:0"), (bar_end, leg1, u"hook:1")]
-            lap, pieces = 0.0, [(bar_start, bar_end)]
-            if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:
+            # this face's hand edits (a click on the bar): longer / shorter, its legs
+            face = bx.TOP if top else bx.BOTTOM
+            leg0, leg1, b_start, b_end = bx.apply_main_edit(settings, face, leg0, leg1, bar_start, bar_end)
+            leg = max(leg0, leg1)
+            lap, pieces = 0.0, [(b_start, b_end)]
+            if splice is not None and b_end - b_start + leg0 + leg1 > splice["max"] + 1e-6:
                 lap = splice["laps"].get(key, 0.0)
                 if not lap:
                     missing_laps.add(key)
                 else:
-                    pieces, _ = rs.lap_pieces(bar_start, bar_end, rs.beam_lap_zones(spans, top, confinement, lap),
+                    pieces, _ = rs.lap_pieces(b_start, b_end, rs.beam_lap_zones(spans, top, confinement, lap),
                                               lap, splice["max"] - leg)
             for i, (s0, s1) in enumerate(pieces):
                 last = i == len(pieces) - 1
@@ -1931,6 +1935,9 @@ class AceroWindow(forms.WPFWindow):
                 if line.variable:  # along the sloped face of a haunch
                     path = rs.follow_profile(path, line.shift_at(y), line.breaks)
                 bar_paths.append((path, d / 2.0))
+                main_view.setdefault(face, {"paths": [], "ends": (b_start, b_end), "legs": (leg0, leg1),
+                                            "edit": bx.main_edit(settings, face)})
+                main_view[face]["paths"].append(path)
                 if not last:
                     laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
         # the beam's extra bars (bastones, balancines), as rb.generate_line lays them
@@ -2006,6 +2013,9 @@ class AceroWindow(forms.WPFWindow):
             # the picked beams of other types on this axis (a flat beam past
             # a deep one), and each span's kind over it
             "mixed": self._mixed_neighbors(line),
+            # the main bars of each face: one clicked shows orange with its ends to edit
+            "main": main_view,
+            "main_selected": getattr(self, "_main_face", None),
             "kinds": [((a + b) / 2.0, self._kind_text(line, t.name)) for a, b in spans],
         }
         scene = {
@@ -2460,6 +2470,48 @@ class AceroWindow(forms.WPFWindow):
                     best = (d, (item["index"], end))
         return best[1] if best else None
 
+    def _main_near(self, s, y, scale):
+        """The face (bx.TOP / bx.BOTTOM) whose main bar passes under the
+        click (within 8 px of its drawn path), else None."""
+        data = getattr(self, "_elev_data", None)
+        if not data or s is None:
+            return None
+        k = rv._beam_deepen(data)
+        best = None
+        for face, item in (data.get("main") or {}).items():
+            for pts in item["paths"]:
+                for p, q in zip(pts, pts[1:]):
+                    ax, ay, bx_, by = p[2], p[1] * k, q[2], q[1] * k
+                    dx, dy = bx_ - ax, by - ay
+                    t = max(0.0, min(1.0, ((s - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy or 1e-12)))
+                    d = math.hypot(ax + t * dx - s, ay + t * dy - y) * scale
+                    if d < 8 and (best is None or d < best[0]):
+                        best = (d, face)
+        return best[1] if best else None
+
+    def _edit_main(self, tag):
+        """'main:<face>:d0' / 'h1'... clicked: that end of the face's main bars
+        - how much longer (+) or shorter (-) there, or its leg (0 straight)."""
+        _, face, what = tag.split(u":")
+        main = self._edit_settings().setdefault("main", {}).setdefault(face, {})
+        if what.startswith(u"d"):
+            prompt = u"Alargar (+) o acortar (-) las barras {} en este extremo (m):".format(
+                u"superiores" if face == bx.TOP else u"inferiores")
+            current = u"{:.2f}".format(float(main.get(what) or 0.0))
+        else:
+            prompt = u"Doblez de las barras {} en este extremo (m, 0 = recta, vacío = automático):".format(
+                u"superiores" if face == bx.TOP else u"inferiores")
+            current = u"" if main.get(what) is None else u"{:.2f}".format(float(main[what]))
+        value = forms.ask_for_string(default=current, prompt=prompt, title=u"Acero longitudinal")
+        if value is None:
+            return
+        value = value.strip().replace(u",", u".")
+        try:
+            main[what] = None if (not value and what.startswith(u"h")) else float(value or 0.0)
+        except ValueError:
+            return
+        self._changed()
+
     def _elev_s(self, args):
         """s (m along the beam) under the mouse, and the frame's scale."""
         fitted = self._elev_fitted()
@@ -2612,6 +2664,10 @@ class AceroWindow(forms.WPFWindow):
                 self._open_line(tag)
                 args.Handled = True
                 return
+            if isinstance(tag, basestring) and tag.startswith(u"main:"):  # a main bar's end: its length / leg
+                self._edit_main(tag)
+                args.Handled = True
+                return
             if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
                                                  or tag.startswith(u"len:") or tag.startswith(u"cota:")
                                                  or tag.startswith(u"hook:")):
@@ -2668,7 +2724,14 @@ class AceroWindow(forms.WPFWindow):
                 return
             hit = self._extra_near(args, scale)
             if hit is not None:
+                self._main_face = None
                 self._select(hit)
+                return
+            face = self._main_near(s, self._elev_y(args), scale)
+            if face != getattr(self, "_main_face", None):  # a main bar clicked (or off one): orange to edit
+                self._main_face = face
+                self._views_sig = None
+                self.redraw()
                 return
         if args.ChangedButton == MouseButton.Right and getattr(self, "_hook_stage", None) is not None:
             self._end_hook_stage()

@@ -723,6 +723,10 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             b0 += gap if leg0 > 0 else 0.0
             b1 -= gap if leg1 > 0 else 0.0
         bar_start, bar_end = b0 - start_run, b1 + end_run  # run on into the next beam line (a lap)
+        # the hand edits of this face (clicked in the window): longer / shorter, its own legs
+        leg0, leg1, bar_start, bar_end = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM,
+                                                            leg0, leg1, bar_start, bar_end)
+        leg = max(leg0, leg1)
         pieces = [(bar_start, bar_end)]
         # the hook legs count in a bar's length (a 9 m bar holds them)
         if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:

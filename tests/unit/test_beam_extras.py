@@ -137,3 +137,11 @@ def test_steel_at_cuts_and_ends():
     assert text == u'2Ø5/8"' and area == pytest.approx(3.96, abs=0.01)
     s0, s1, h0, h1 = be.extra_ends({"s0": 0.0, "s1": 1.5}, 0.04, 9.60)
     assert (s0, s1, h0, h1) == (0.04, 1.5, True, False)
+
+
+def test_main_bar_hand_edits():
+    """A face's main bars: longer / shorter at each end, their own legs."""
+    st = be.read('{"main": {"inf": {"d0": 0.30, "d1": -0.10, "h1": 0.0}}}')
+    assert be.apply_main_edit(st, be.BOTTOM, 0.15, 0.15, 0.0, 5.0) == pytest.approx((0.15, 0.0, -0.30, 4.90))
+    assert be.apply_main_edit(st, be.TOP, 0.15, 0.15, 0.0, 5.0) == pytest.approx((0.15, 0.15, 0.0, 5.0))
+    assert be.read(be.write(st))["main"]["inf"]["d0"] == pytest.approx(0.30)
