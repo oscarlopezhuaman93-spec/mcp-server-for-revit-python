@@ -45,14 +45,21 @@ def main_edit(settings, face):
     return ((settings or {}).get("main") or {}).get(face) or {}
 
 
-def apply_main_edit(settings, face, leg0, leg1, s0, s1):
-    """(leg0, leg1, s0, s1) of a face's main bars with its hand edits."""
+def apply_main_edit(settings, face, leg0, leg1, s0, s1, lo=None, hi=None):
+    """(leg0, leg1, s0, s1) of a face's main bars with its hand edits; a
+    bar made longer stops at `lo` / `hi` - the far face of the concrete
+    there less the cover (the flat beam it runs into, else its support)."""
     m = main_edit(settings, face)
     if m.get("h0") is not None:
         leg0 = max(0.0, float(m["h0"]))
     if m.get("h1") is not None:
         leg1 = max(0.0, float(m["h1"]))
-    return leg0, leg1, s0 - float(m.get("d0") or 0.0), s1 + float(m.get("d1") or 0.0)
+    s0, s1 = s0 - float(m.get("d0") or 0.0), s1 + float(m.get("d1") or 0.0)
+    if lo is not None:
+        s0 = max(s0, min(lo, s1))
+    if hi is not None:
+        s1 = min(s1, max(hi, s0))
+    return leg0, leg1, s0, s1
 
 
 def default_leg(key, diameters_mm):

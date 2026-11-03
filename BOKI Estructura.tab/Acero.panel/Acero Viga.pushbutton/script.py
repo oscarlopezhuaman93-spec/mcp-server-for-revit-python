@@ -1913,6 +1913,13 @@ class AceroWindow(forms.WPFWindow):
         hooked = f["anchor"] == rb.ANCHOR_HOOK
         hook_view = []
         main_view = {}  # face -> its main bars' paths, ends and legs (clicked to edit)
+        # how far a bar made longer may go (rb.generate_line): the far face of
+        # the flat beam it runs into less the cover, else its support's
+        mixed = self._mixed_neighbors(line)
+        before = [m["s0"] for m in mixed if m["s1"] <= start_face + 0.05]
+        after = [m["s1"] for m in mixed if m["s0"] >= end_face - 0.05]
+        reach_lo = (min(before) + cover) if before else bar_start
+        reach_hi = (max(after) - cover) if after else bar_end
         for x, y, key in bars:
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             top = y > 0
@@ -1922,7 +1929,8 @@ class AceroWindow(forms.WPFWindow):
                 hook_view = [(bar_start, leg0, u"hook:0"), (bar_end, leg1, u"hook:1")]
             # this face's hand edits (a click on the bar): longer / shorter, its legs
             face = bx.TOP if top else bx.BOTTOM
-            leg0, leg1, b_start, b_end = bx.apply_main_edit(settings, face, leg0, leg1, bar_start, bar_end)
+            leg0, leg1, b_start, b_end = bx.apply_main_edit(settings, face, leg0, leg1, bar_start, bar_end,
+                                                            reach_lo, reach_hi)
             leg0 = max(leg0, rs.MIN_LEG_M) if leg0 > 1e-6 else 0.0  # as generated (rb.generate_line)
             leg1 = max(leg1, rs.MIN_LEG_M) if leg1 > 1e-6 else 0.0
             leg = max(leg0, leg1)
@@ -1942,7 +1950,9 @@ class AceroWindow(forms.WPFWindow):
                     path = rs.follow_profile(path, line.shift_at(y), line.breaks)
                 bar_paths.append((path, d / 2.0))
                 main_view.setdefault(face, {"paths": [], "ends": (b_start, b_end), "legs": (leg0, leg1),
-                                            "edit": bx.main_edit(settings, face)})
+                                            "edit": bx.main_edit(settings, face),
+                                            # what it really got longer, up to the concrete's face
+                                            "shown": (round(bar_start - b_start, 3), round(b_end - bar_end, 3))})
                 main_view[face]["paths"].append(path)
                 if not last:
                     laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
@@ -1995,7 +2005,6 @@ class AceroWindow(forms.WPFWindow):
                             + [(c, line.depth_at(c)[0]) for c in reversed(cuts)])
             pieces += [(c0, line.polygon_at(polygon, c0), c1, line.polygon_at(polygon, c1))
                        for c0, c1 in zip(cuts, cuts[1:])]
-        mixed = self._mixed_neighbors(line)
         # the 3D view: the neighbors' concrete too (a flat beam past this one), each a box
         for m in mixed:
             box = [(m["x0"], m["y0"]), (m["x1"], m["y0"]), (m["x1"], m["y1"]), (m["x0"], m["y1"])]

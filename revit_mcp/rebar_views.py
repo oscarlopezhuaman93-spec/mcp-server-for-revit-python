@@ -1002,6 +1002,12 @@ def draw_beam_elevation(canvas, data, frame):
             for offset, _ in conf["tagged"]:
                 sb, st = _interp(bottom, a + offset) * k, _interp(top, a + offset) * k
                 _line(canvas, frame, (a + offset, sb + cover), (a + offset, st - cover), C_CONF, 1, dash=True)
+    # Acero Viga: the beams of other types next to it (a flat beam past this
+    # one) with their own stirrups - under the bars, which may run into them
+    for m in data.get("mixed") or []:
+        _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
+        for s in m.get("stirrups") or []:  # its own stirrups, as its type sets them
+            _line(canvas, frame, (s, m["y0"] * k + cover * 0.5), (s, m["y1"] * k - cover * 0.5), C_EDGE, 1.5)
     # longitudinal bars (seen from the side: hooks and cranks show)
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
@@ -1018,7 +1024,7 @@ def draw_beam_elevation(canvas, data, frame):
         edit = main.get("edit") or {}
         y_lab = (y1 + 1.2 * u) if face == u"sup" else (y0 - 4.6 * u)
         for end, s_end in ((0, main["ends"][0]), (1, main["ends"][1])):
-            d = float(edit.get("d{}".format(end)) or 0.0)
+            d = main["shown"][end] if main.get("shown") else float(edit.get("d{}".format(end)) or 0.0)
             x = s_end - (4.0 * u if end == 0 else -0.3 * u)
             _edit_text(canvas, frame, x, y_lab, u"Largo {:+.2f}".format(d), u"main:{}:d{}".format(face, end))
             _edit_text(canvas, frame, x, y_lab - 1.1 * u, u"Doblez {:.2f}".format(main["legs"][end]),
@@ -1084,9 +1090,6 @@ def draw_beam_elevation(canvas, data, frame):
     for s_mid, text in data.get("kinds") or []:
         _text(canvas, frame, s_mid, y_kind, text, brush=_brush(160, 30, 30), size=11, bold=True)
     for m in data.get("mixed") or []:
-        _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
-        for s in m.get("stirrups") or []:  # its own stirrups, as its type sets them
-            _line(canvas, frame, (s, m["y0"] * k + cover * 0.5), (s, m["y1"] * k - cover * 0.5), C_EDGE, 1.5)
         # its label over it, in two lines, above the kinds' row (never over a span's)
         width = 3.6 * u
         x = (m["s0"] + m["s1"]) / 2.0 - width / 2.0

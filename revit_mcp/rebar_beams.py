@@ -724,8 +724,13 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
             b1 -= gap if leg1 > 0 else 0.0
         bar_start, bar_end = b0 - start_run, b1 + end_run  # run on into the next beam line (a lap)
         # the hand edits of this face (clicked in the window): longer / shorter, its own legs
+        # made longer, a bar stops at the far face of the concrete less the cover:
+        # the flat beam it runs into (continue_top's reach), else its support
+        reach = (continue_top or {}).get("reach") or [0.0, 0.0]
+        lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
+        hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
         leg0, leg1, bar_start, bar_end = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM,
-                                                            leg0, leg1, bar_start, bar_end)
+                                                            leg0, leg1, bar_start, bar_end, lo, hi)
         # a leg too short to bend (a few mm) makes no rebar shape: the least one
         leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
         leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0

@@ -145,3 +145,9 @@ def test_main_bar_hand_edits():
     assert be.apply_main_edit(st, be.BOTTOM, 0.15, 0.15, 0.0, 5.0) == pytest.approx((0.15, 0.0, -0.30, 4.90))
     assert be.apply_main_edit(st, be.TOP, 0.15, 0.15, 0.0, 5.0) == pytest.approx((0.15, 0.15, 0.0, 5.0))
     assert be.read(be.write(st))["main"]["inf"]["d0"] == pytest.approx(0.30)
+
+
+def test_main_bar_longer_stops_at_the_concrete():
+    """Made longer than the concrete there, a bar stops at its face less the cover."""
+    st = be.read('{"main": {"inf": {"d0": 5.0, "d1": 0.20}}}')
+    assert be.apply_main_edit(st, be.BOTTOM, 0.1, 0.1, -0.46, 8.11, lo=-1.26, hi=8.11)[2:] == pytest.approx((-1.26, 8.11))
