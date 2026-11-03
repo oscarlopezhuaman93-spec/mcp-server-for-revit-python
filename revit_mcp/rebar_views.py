@@ -1041,6 +1041,17 @@ def draw_beam_elevation(canvas, data, frame):
                     _line(canvas, frame, (s, yc), (s, yb), _brush(200, 190, 220), 0.6, dash=True)
                 _edit_text(canvas, frame, (face_s + end_s) / 2.0 - 0.8 * u, yc + 0.55 * u,
                            u"{:.2f}".format(item.get("inside", 0.0)), u"nbl:{}:{}".format(item["tag"], item["face"]))
+                # chained on: the bar's stretch in the flat beam (its far end to the
+                # support face, the column included) and the whole bar's length
+                far_s = min(ss) if before else max(ss)
+                _line(canvas, frame, (far_s, yc), (face_s, yc), dim, 1)
+                _line(canvas, frame, (far_s, yc + 0.45 * u), (far_s, yc - 0.45 * u), dim, 1)
+                _line(canvas, frame, (far_s - 0.25 * u, yc - 0.25 * u), (far_s + 0.25 * u, yc + 0.25 * u), dim, 2)
+                _line(canvas, frame, (far_s, yc), (far_s, yb), _brush(200, 190, 220), 0.6, dash=True)
+                _text(canvas, frame, (far_s + face_s) / 2.0, yc + 0.85 * u, u"{:.2f}".format(abs(face_s - far_s)),
+                      brush=dim, size=9)
+                _text(canvas, frame, (far_s + end_s) / 2.0, yc - 0.9 * u,
+                      u"Bastón L = {:.2f}".format(abs(end_s - far_s)), brush=dim, size=9, bold=True)
     # longitudinal bars (seen from the side: hooks and cranks show)
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
