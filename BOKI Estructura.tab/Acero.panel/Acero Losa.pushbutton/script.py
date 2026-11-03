@@ -300,7 +300,7 @@ class LosaWindow(forms.WPFWindow):
         mine = dict(st.get("alig") or {})
         alig = dict(pst.get("alig") or {})
         alig.update(dict((k, v) for k, v in mine.items() if k not in ("dir", "angle", "start")))
-        if mine.get("angle") is None:
+        if mine.get("angle") is None or pm.sloped:  # a sloped slab: always down its own slope (rsl.SlabModel.plan)
             alig["angle"], alig["dir"] = None, None  # automatic: down its own slope
         else:
             m = self.model
@@ -351,6 +351,12 @@ class LosaWindow(forms.WPFWindow):
 
         pst = self._sync_partner(pm)
         lib = rsl.brick_library(doc, pst, self.bricks)
+        try:  # its viguetas lined up with this slab's, across the ridge
+            start = rsl.aligned_start(m, getattr(self, "_rib", None), pm, pst, MM, lib)
+            if start is not None:
+                pst["alig"]["start"] = start
+        except Exception:
+            pass
         try:
             prib = pm.plan(pst, MM, None, lib)[1]
         except Exception:
@@ -1120,6 +1126,10 @@ def generate_all(state, models, splice):
                                     if k not in ("dir", "angle", "start"))  # down its own slope
                 state.settings[j] = st_j
         roofs_done = set()
+        bricks_done = {}  # id -> (model, rib): a partner's viguetas line up with them
+        if state.active in ids:
+            ids.remove(state.active)
+            ids.insert(0, state.active)
         for element_id in ids:
             floor = doc.GetElement(DB.ElementId(element_id))
             settings = state.settings.get(element_id) or rsl.read_settings(floor)
@@ -1153,7 +1163,9 @@ def generate_all(state, models, splice):
                         types = rsl.brick_types(doc)
                         lib = rsl.brick_library(doc, settings, types)
                         if lib:
+                            align_to_partner(floor, model, settings, bricks_done, lib)
                             _, rib, _ = model.plan(settings, MM, splice, lib)
+                            bricks_done[element_id] = (model, rib)
                             bricks += rsl.place_bricks(model, rib, types)
                         else:
                             warnings.append(u"no hay tipo de ladrillo elegido: no se colocaron ladrillos")
@@ -1197,6 +1209,24 @@ def with_roof_partners(ids):
     return out
 
 
+def align_to_partner(floor, model, settings, done, lib):
+    """A sloped slab whose partner across the ridge is already laid out
+    (`done`: id -> (model, rib)): its viguetas start where they line up with
+    the partner's, one vigueta across the ridge (rsl.aligned_start)."""
+    if not model.sloped:
+        return
+    try:
+        other = rm.partner(floor)
+    except Exception:
+        other = None
+    if other is None or id_of(other.Id) not in done:
+        return
+    pm, prib = done[id_of(other.Id)]
+    start = rsl.aligned_start(pm, prib, model, settings, MM, lib)
+    if start is not None:
+        settings.setdefault("alig", {})["start"] = start
+
+
 def place_bricks_only(state, models):
     """Only the roof bricks of the picked ribbed slabs (their steel left as
     it is): the old bricks of each replaced. Returns (placed, failed)."""
@@ -1219,6 +1249,10 @@ def place_bricks_only(state, models):
         # the slab across each ridge goes too (both sides of a two-way roof),
         # as generate_all does: many roofs at once, every slab its bricks
         ids = with_roof_partners(state.picked_ids)
+        if state.active in ids:  # the slab shown in the window first: its partner lines up with it
+            ids.remove(state.active)
+            ids.insert(0, state.active)
+        done = {}  # id -> (model, rib) placed: a partner's viguetas line up with them
         for element_id in ids:
             floor = doc.GetElement(DB.ElementId(element_id))
             model = models.get(element_id) or rsl.SlabModel(floor)
@@ -1241,7 +1275,9 @@ def place_bricks_only(state, models):
                     failed.append(u"Losa id {}: no hay tipo de ladrillo elegido".format(element_id))
                     continue
                 rsl.delete_bricks(doc, floor)
+                align_to_partner(floor, model, settings, done, lib)
                 _, rib, _ = model.plan(settings, MM, None, lib)
+                done[element_id] = (model, rib)
                 placed += rsl.place_bricks(model, rib, types)
             except Exception as e:
                 failed.append(u"Losa id {}: {}".format(element_id, e))

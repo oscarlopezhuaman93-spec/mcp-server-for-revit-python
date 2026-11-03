@@ -105,8 +105,9 @@ class SlabModel(object):
             # the bricks' direction turned by an angle (by default along the
             # slab's longest side, its beams): planned in that frame
             angle = sr.ribbed(settings).get("angle")
-            if angle is None and self.sloped:
-                # a sloped slab: the viguetas run down its slope
+            if self.sloped:
+                # a sloped slab: the viguetas always run down its slope (a
+                # turned one would lie across it: 2026-11-03, with the user)
                 settings = dict(settings)
                 settings["alig"] = dict(settings.get("alig") or {}, dir=sr.X)
                 angle = self.climb_angle()
@@ -174,6 +175,29 @@ class SlabModel(object):
         """World unit vector of a plan axis (in the turned frame)."""
         x, y = sr.unrotate(1.0, 0.0, self.angle) if axis == sr.X else sr.unrotate(0.0, 1.0, self.angle)
         return (self.f.ux * x + self.f.uy * y).Normalize()
+
+
+def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None):
+    """The "start" (m) that lines model_b's viguetas up with model_a's (the
+    two waters of a roof: each vigueta goes on across the ridge, as built).
+    model_a planned (rib_a, its angle); model_b planned here with start 0.
+    None when either has no vigueta."""
+    if not rib_a or not rib_a.get("viguetas"):
+        return None
+    st0 = dict(settings_b)
+    st0["alig"] = dict(settings_b.get("alig") or {}, start=0.0)
+    rib_b = model_b.plan(st0, mm, None, lib)[1]
+    if not rib_b or not rib_b.get("viguetas"):
+        return None
+    s = sr.ribbed(st0)["s"]
+    # A's first vigueta (a point of its line) in B's frame: its cross position there
+    c = rib_a["viguetas"][0]
+    x, y = (0.0, c) if rib_a["axis"] == sr.X else (c, 0.0)
+    w = model_a.f.world(*(sr.unrotate(x, y, model_a.angle) + (0.0,)))
+    bx, by, _ = model_b.f.local(w)
+    rx, ry = sr.rotate_tris([((bx, by),)], model_b.angle)[0][0]
+    target = ry if rib_b["axis"] == sr.X else rx
+    return round((target - rib_b["viguetas"][0]) % s, 4)
 
 
 def read_settings(floor):
