@@ -976,31 +976,64 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
         leg = spec.leg_m(column_spec.leg_bottom_cm.get(key))
         if leg:
             ends["leg_bottom"] = leg
-            ends["dir_bottom"] = leg_toward_concrete(doc, section, bottom_column, x, y, half_b, half_h, leg,
-                                                     section.z_bottom - (ends["anchor"] - d) / FT)
     leg = spec.leg_m(column_spec.leg_top_cm.get(key))
+    top_section = None
     if leg and not column_above(doc, top_column, Section(top_column)):
         ends["top_drop"] = column_spec.cover_m + d
         ends["leg_top"] = leg
         top_section = Section(top_column)
-        ends["dir_top"] = leg_toward_concrete(doc, top_section, top_column, x, y, half_b, half_h, leg,
-                                              top_section.z_top - (column_spec.cover_m + d) / FT)
+    bot =((section, bottom_column, ends["leg_bottom"], section.z_bottom - (ends["anchor"] - d) / FT)
+           if "leg_bottom" in ends else None)
+    top = ((top_section, top_column, ends["leg_top"], top_section.z_top - (column_spec.cover_m + d) / FT)
+           if "leg_top" in ends else None)
+    dir_bottom, dir_top = leg_pair(doc, x, y, half_b, half_h, bot, top)
+    if dir_bottom:
+        ends["dir_bottom"] = dir_bottom
+    if dir_top:
+        ends["dir_top"] = dir_top
     return ends
+
+
+def leg_pair(doc, x, y, half_b, half_h, bot, top):
+    """(bottom, top) directions of a bar's end legs; `bot` / `top`
+    (section, column, leg m, z world ft) or None. Each leg stays in concrete
+    (leg_toward_concrete) and both lie in one plane - bent on site in one
+    plane, and Revit makes no bar out of a plane: the first pair, by the
+    bottom leg's preference, where both fit; else the bottom's best and the
+    top one in its plane."""
+    if bot and top:
+        bots = leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3], all_fits=True)
+        tops = leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], all_fits=True)
+        pair = next(((b, t) for b in bots for t in tops if _parallel(b, t)), None)
+        if pair is None:
+            b = bots[0] if bots else spec.leg_candidates(x, y, half_b, half_h)[-1]
+            pair = (b, leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], axis=b))
+        return pair
+    if bot:
+        return leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3]), None
+    if top:
+        return None, leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3])
+    return None, None
 
 
 LEG_CONCRETE = (DB.BuiltInCategory.OST_StructuralFoundation, DB.BuiltInCategory.OST_Floors,
                 DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_Walls)
 
 
-def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world):
+def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world, axis=None, all_fits=False):
     """The rule agreed with the user (2026-11-03): a bar's end leg never
     leaves the concrete. The whole leg - its middle, its tip and the tip
     plus the cover (spec.leg_samples) - must lie in the column itself or in
     a footing, slab, beam or wall at the leg's level; the first direction
     of spec.leg_candidates that fits is taken (out by the nearest face, out
     by the other one, ..., into the column). None fits: into the column.
-    Returns the unit local vector."""
+    `axis` (the bar's other leg, a unit vector): only along that axis,
+    either way - a bar's two legs in one plane, as bent on site (Revit
+    makes no bar out of a plane). Returns the unit local vector
+    (`all_fits`: the list of every one that fits, best first)."""
     candidates = spec.leg_candidates(x, y, half_b, half_h)
+    if axis:
+        candidates = [v for v in candidates if _parallel(v, axis)]
     reach = (leg + 0.05) / FT
     centre = section.point_m(x, y, z_world)
     outline = DB.Outline(DB.XYZ(centre.X - reach, centre.Y - reach, centre.Z - 0.05 / FT),
@@ -1023,10 +1056,15 @@ def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world
                 continue
         return False
 
-    for v in candidates:
-        if all(in_concrete(section.point_m(x + v[0] * t, y + v[1] * t, z_world)) for t in spec.leg_samples(leg)):
-            return v
-    return candidates[-1]
+    fits = [v for v in candidates
+            if all(in_concrete(section.point_m(x + v[0] * t, y + v[1] * t, z_world)) for t in spec.leg_samples(leg))]
+    if all_fits:
+        return fits  # every direction that stays in concrete, best first
+    return fits[0] if fits else candidates[-1]
+
+
+def _parallel(a, b):
+    return abs(a[0] * b[1] - a[1] * b[0]) < 1e-6
 
 
 def _inside(solid, point):
@@ -1370,11 +1408,37 @@ def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_cle
 
 # --- Stacked columns: continuous longitudinal bars, lap spliced -------------------
 
-def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10):
+def joints_above(doc, columns):
+    """The joints modeled apart (is_nucleus) standing on these columns -
+    same axis, base on a column's top - not among them: generated with
+    their column, its bars run whole through the joint (2026-11-03)."""
+    have = set(element_id_value(c.Id) for c in columns)
+    found = []
+    for column in columns:
+        try:
+            section = Section(column)
+        except Exception:
+            continue
+        top = section.point_m(0.0, 0.0, section.z_top + 0.05 / FT)
+        outline = DB.Outline(DB.XYZ(top.X - 0.05, top.Y - 0.05, top.Z - 0.02),
+                             DB.XYZ(top.X + 0.05, top.Y + 0.05, top.Z + 0.02))
+        for e in (DB.FilteredElementCollector(doc).OfCategoryId(column.Category.Id)
+                  .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+            key = element_id_value(e.Id)
+            if key not in have and is_nucleus(doc, e):
+                have.add(key)
+                found.append(e)
+    return found
+
+
+def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10, same_type=True):
     """The columns grouped into stacks: same type, same axis and turned the
     same way, each standing on the one below (its base within `z_tol_m` of
-    that one's top). Returns [[column, ...] bottom up]; a lone column is a
-    stack of one."""
+    that one's top). A joint modeled apart (is_nucleus) of the same section
+    joins the column under it whatever its type: the bars are one through
+    the joint, as built. `same_type` False: only joints join (bars not
+    continuous between stories). Returns [[column, ...] bottom up]; a lone
+    column is a stack of one."""
     info = []
     for column in columns:
         try:
@@ -1387,10 +1451,17 @@ def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10):
     for _, column, section in info:
         axis = section.point_m(0.0, 0.0, section.z_bottom)
         placed = False
+        joint = None  # is_nucleus, asked once and only when needed
         for stack in stacks:
             last_column, last = stack[0][-1], stack[1]
             below = last.point_m(0.0, 0.0, last.z_top)
-            if (last_column.GetTypeId() == column.GetTypeId()
+            if last_column.GetTypeId() == column.GetTypeId():
+                kin = same_type
+            else:
+                if joint is None:
+                    joint = is_nucleus(column.Document, column, section)
+                kin = joint and _same_polygon(section.polygon_m, last.polygon_m, 0.01)
+            if (kin
                     and abs(section.z_bottom - last.z_top) * FT <= z_tol_m
                     and math.hypot(axis.X - below.X, axis.Y - below.Y) * FT <= xy_tol_m
                     and section.transform.BasisX.IsAlmostEqualTo(last.transform.BasisX, 1e-3)):
@@ -1403,7 +1474,7 @@ def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10):
     return [columns_ for columns_, _ in stacks]
 
 
-def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None, splice=None):
+def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None, splice=None, type_specs=None):
     """Create the rebar of a stack of columns (`column_stacks`, bottom up):
     each column's stirrups and ties (`generate_column`), and longitudinal
     bars running the whole stack, cut into bars of at most splice["max"] m
@@ -1414,10 +1485,19 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     with) the column holding its middle. `splice` None: per-column bars as
     before. Returns ({column id: [(rebar, key, kind[, share])]},
     warnings): a longitudinal bar is listed in every column it runs
-    through, with the share of its length there (see `record_weight`)."""
+    through, with the share of its length there (see `record_weight`).
+    `type_specs` {type id: ColumnSpec}: a column of another type in the
+    stack (its joint modeled apart) takes its own type's stirrups; the
+    bars are the stack's (column_spec)."""
+    def own_spec(column):
+        return (type_specs or {}).get(element_id_value(column.GetTypeId())) or column_spec
+
     if splice is None:
-        return dict((element_id_value(c.Id), generate_column(doc, c, column_spec, bar_types, hooks, mark, shapes))
-                    for c in stack), []
+        if len(stack) == 1:
+            return dict((element_id_value(c.Id), generate_column(doc, c, column_spec, bar_types, hooks, mark, shapes))
+                        for c in stack), []
+        # a column and its joint with no splices: one whole bar through both
+        splice = {"max": REVIT_MAX_BAR_M, "laps": {}}
     created = {}
     sections = [Section(c) for c in stack]
     base = sections[0]
@@ -1489,7 +1569,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         LAP_ZONES[element_id_value(column.Id)] = zones
         try:
             created[element_id_value(column.Id)] = generate_column(
-                doc, column, column_spec, bar_types, hooks, mark, shapes, longitudinal=False)
+                doc, column, own_spec(column), bar_types, hooks, mark, shapes, longitudinal=False)
         finally:
             LAP_ZONES.pop(element_id_value(column.Id), None)
     for x, y, key, d, ends, lap, pieces, inward in plans:

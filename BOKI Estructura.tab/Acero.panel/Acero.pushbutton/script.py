@@ -1983,25 +1983,29 @@ class AceroWindow(forms.WPFWindow):
                 x, y = points[0][0], points[0][1]
                 key = keys.get((round(x, 4), round(y, 4)))
                 kw = {}
+                bot = top_leg = None  # (section, column, leg, z) of each leg, as rc.leg_pair takes them
                 if points[0][2] < 1e-6 and first.get("anchor") is not None:
                     kw["anchor"] = first["anchor"]
                     leg = rs.leg_m((ends.get("bot") or {}).get(key))
                     if leg:
                         kw["leg_bottom"] = leg
                         col, sec = first["leg_host"]
-                        kw["dir_bottom"] = (rs.leg_vector(x, y, half[0], half[1], rs.LEG_OUT)
-                                            if getattr(self, "_plain_legs", False) else
-                                            rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
-                                                                   sec.z_bottom - first["anchor"] / rc.FT))
+                        bot = (sec, col, leg, sec.z_bottom - first["anchor"] / rc.FT)
                 leg = rs.leg_m((ends.get("top") or {}).get(key))
                 if points[-1][2] > top - 1e-6 and last.get("leg_top") is not None and leg:
                     kw["top_drop"] = 0.05
                     kw["leg_top"] = leg
                     col, sec = last["top_host"]
-                    kw["dir_top"] = (rs.leg_vector(x, y, half[0], half[1], rs.LEG_IN)
-                                     if getattr(self, "_plain_legs", False) else
-                                     rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
-                                                            sec.z_top - 0.05 / rc.FT))
+                    top_leg = (sec, col, leg, sec.z_top - 0.05 / rc.FT)
+                if getattr(self, "_plain_legs", False):  # the fallback: square to the nearest face
+                    d_bot = rs.leg_vector(x, y, half[0], half[1], rs.LEG_OUT) if bot else None
+                    d_top = rs.leg_vector(x, y, half[0], half[1], rs.LEG_IN) if top_leg else None
+                else:  # as generated: in concrete, both legs in one plane
+                    d_bot, d_top = rc.leg_pair(doc, x, y, half[0], half[1], bot, top_leg)
+                if d_bot:
+                    kw["dir_bottom"] = d_bot
+                if d_top:
+                    kw["dir_top"] = d_top
                 done.append((rs.bar_with_ends(points, **kw), radius))
             bar_paths = done
         xs = [p[0] for p in base.polygon_m]
@@ -2585,14 +2589,19 @@ else:
     targets = [c for t in state.checked for c in by_id[t].columns]
     scope_label = "tipos marcados, todo el modelo"
 
+# a column's joint modeled apart goes with it: its bars run whole through
+# the joint (rc.column_stacks), never cut at the column's top
+targets = list(targets) + rc.joints_above(doc, targets)
 specs = {}
 spec_errors = {}
-for t in set(id_of(c.GetTypeId()) for c in targets):
+for t in set([id_of(c.GetTypeId()) for c in targets]):
     try:
         specs[t] = rc.ColumnSpec(by_id[t].config())
     except rs.SpecError as e:
         spec_errors[t] = u"{}".format(e)
-with_spec = [c for c in targets if id_of(c.GetTypeId()) in specs]
+joint_ids = set([id_of(c.Id) for c in targets if rc.is_nucleus(doc, c)])
+# a joint whose own type isn't configured still goes, with its column's steel
+with_spec = [c for c in targets if id_of(c.GetTypeId()) in specs or id_of(c.Id) in joint_ids]
 if not with_spec:
     forms.alert(
         u"Ninguna de las {} columnas del alcance tiene su tipo configurado.".format(len(targets)),
@@ -2601,14 +2610,14 @@ if not with_spec:
     script.exit()
 
 splice = splice_for_generation(load_splice_settings())
-if splice is None:
-    stacks = [[c] for c in with_spec]
-else:
-    # Continuous bars run each stack of the columns being built (same type
-    # and axis, one on another): only those chosen - picked ones when
-    # picking -, from the base of the lowest to the top of the highest.
-    stacks = rc.column_stacks(with_spec)
-    with_spec = [c for s in stacks for c in s]
+# Continuous bars run each stack of the columns being built (same type
+# and axis, one on another): only those chosen - picked ones when
+# picking -, from the base of the lowest to the top of the highest. With
+# continuous bars off, only a column and its joint are one stack.
+stacks = rc.column_stacks(with_spec, same_type=splice is not None)
+# a joint left alone (its column not built now) needs its own type's steel
+stacks = [s for s in stacks if id_of(s[0].GetTypeId()) in specs]
+with_spec = [c for s in stacks for c in s]
 
 dry_run = False  # straight to the model: no mode question
 
@@ -2634,8 +2643,8 @@ try:
             sub.Start()
             try:
                 created, found = rc.generate_stack(
-                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
-                )
+                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice,
+                    type_specs=specs)
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
                 warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)
