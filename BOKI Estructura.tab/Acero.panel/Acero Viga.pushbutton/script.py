@@ -1715,6 +1715,64 @@ class AceroWindow(forms.WPFWindow):
         finally:
             self._filling_columns = False
 
+    NEIGHBOR_SHOWN_M = 1.5
+
+    @staticmethod
+    def _kind_text(line, name):
+        """'VIGA CHATA VCH-01' / 'VIGA PERALTADA VP-01' (chata: no deeper than wide)."""
+        poly = line.section.polygon_m
+        b = max(p[0] for p in poly) - min(p[0] for p in poly)
+        h = max(p[1] for p in poly) - min(p[1] for p in poly)
+        found = re.findall(r"_([A-Z]{1,5}[A-Z0-9'\-]*)_\d", name)
+        return u"VIGA {} {}".format(u"CHATA" if h <= b + 1e-6 else u"PERALTADA", found[-1] if found else u"").strip()
+
+    def _mixed_neighbors(self, line):
+        """The picked beams of other types on this line's axis, next to it
+        (a flat beam in cantilever past a deep one's column): each one's
+        stretch in this line's elevation frame, its kind label and the tag
+        that opens it here ("line:<type id>:<first element id>")."""
+        picked = set(self.state.picked_ids)
+        out = []
+        for tid, t in self.by_id.items():
+            if tid == self.state.active or not any(id_of(e.Id) in picked for e in t.columns):
+                continue
+            try:
+                others = t.lines
+            except Exception:
+                continue
+            for other in others:
+                if not any(id_of(e.Id) in picked for e in other.elements):
+                    continue
+                if abs(abs(other.direction.DotProduct(line.direction)) - 1.0) > 1e-3:
+                    continue
+                pts = [line.local(other.point(0.0, y, s)) for s in (0.0, other.length)
+                       for y in (min(p[1] for p in other.section.polygon_m), max(p[1] for p in other.section.polygon_m))]
+                if max(abs(p[0]) for p in pts) > 0.05:
+                    continue  # not on this axis
+                s0, s1 = min(p[2] for p in pts), max(p[2] for p in pts)
+                if s0 > line.length + rb.LINE_GAP_M or s1 < -rb.LINE_GAP_M:
+                    continue  # not next to it
+                # drawn as a stub at most NEIGHBOR_SHOWN_M long: this beam keeps its scale
+                s0, s1 = max(s0, -self.NEIGHBOR_SHOWN_M), min(s1, line.length + self.NEIGHBOR_SHOWN_M)
+                out.append({"s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
+                            "label": self._kind_text(other, t.name),
+                            "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))})
+        return out
+
+    def _open_line(self, tag):
+        """A neighbor beam clicked in the elevation: its type and that beam
+        in the window (its stirrups, its plan for a flat one, are set there)."""
+        _, tid, first = tag.split(u":")
+        tid, first = int(tid), int(first)
+        if tid not in self.by_id:
+            return
+        self._keep_draft()
+        self._select_type(tid)
+        for index, option in enumerate(getattr(self, "_view_options", [])):
+            if any(id_of(e.Id) == first for e in option.elements):
+                self.cbo_view_column.SelectedIndex = index
+                break
+
     def view_column_changed(self, sender, args):
         if getattr(self, "_filling_columns", True):
             return
@@ -1924,6 +1982,10 @@ class AceroWindow(forms.WPFWindow):
             "cuts": [(c, k + 1) for k, c in enumerate(cuts)],
             "hooks": hook_view,
             "selected": self._selected_index(),
+            # the picked beams of other types on this axis (a flat beam past
+            # a deep one), and each span's kind over it
+            "mixed": self._mixed_neighbors(line),
+            "kinds": [((a + b) / 2.0, self._kind_text(line, t.name)) for a, b in spans],
         }
         scene = {
             "polygon": polygon,
@@ -2525,6 +2587,10 @@ class AceroWindow(forms.WPFWindow):
         now = getattr(self, "_beam_now", None)
         if args.ChangedButton == MouseButton.Left and now:
             tag = getattr(args.OriginalSource, "Tag", None)
+            if isinstance(tag, basestring) and tag.startswith(u"line:"):  # a neighbor beam: open it here
+                self._open_line(tag)
+                args.Handled = True
+                return
             if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
                                                  or tag.startswith(u"len:") or tag.startswith(u"cota:")
                                                  or tag.startswith(u"hook:")):

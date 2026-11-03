@@ -924,11 +924,14 @@ def beam_elevation_extent(data):
     ys = [p[1] * k for p in data["polygon"]]
     ss = [0.0, data["length"]] + [f["s0"] for f in data["supports"]] + [f["s1"] for f in data["supports"]]
     ss += [p[2] for pts, _ in data["bar_paths"] for p in pts]
+    ss += [m["s0"] for m in data.get("mixed") or []] + [m["s1"] for m in data.get("mixed") or []]
     top_rows, bottom_rows = data.get("cota_rows") or (0, 0)  # Acero Viga's extra bars' dimension rows
     room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0
+    room_top = (room + (2.0 * u if data.get("kinds") or data.get("mixed") else 0.0)  # the kind labels
+                + (3.0 * u if data.get("mixed") else 0.0))  # the neighbors' two-line labels over them
     side = 7 * u if data.get("hooks") else 2 * u  # room for the "Gancho 0.20" labels
     return (min(ss) - side,min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
-            max(ss) + side, max(ys) + 6 * u + room + 1.1 * u * top_rows)
+            max(ss) + side, max(ys) + 6 * u + room_top + 1.1 * u * top_rows)
 
 
 def beam_cota_y(data, face, row):
@@ -1057,6 +1060,18 @@ def draw_beam_elevation(canvas, data, frame):
               u"{:.2f} m".format(abs(s1 - s0)), brush=_brush(230, 80, 30), size=10, bold=True)
     for a, b, text, tag in data.get("span_labels") or []:
         _edit_text(canvas, frame, a + 0.2 * u, y0 - 2.25 * u, text, tag)
+    # Acero Viga: each span's kind over it, and the picked beams of other
+    # types on this axis (a flat beam past a deep one) - click one to open it
+    lift = 1.1 * u * (data.get("cota_rows") or (0, 0))[0]
+    y_kind = y1 + 6.0 * u + lift
+    for s_mid, text in data.get("kinds") or []:
+        _text(canvas, frame, s_mid, y_kind, text, brush=_brush(160, 30, 30), size=11, bold=True)
+    for m in data.get("mixed") or []:
+        _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
+        # its label over it, in two lines, above the kinds' row (never over a span's)
+        width = 3.6 * u
+        x = (m["s0"] + m["s1"]) / 2.0 - width / 2.0
+        _edit_text(canvas, frame, x, y_kind + 2.2 * u, m["label"] + u"\n(clic: editar)", m["tag"])
     for s, number in data.get("cuts") or []:
         _line(canvas, frame, (s, y1 + 1.0 * u), (s, y0 - 1.0 * u), _brush(127, 119, 221), 1.5, dash=True)
         _text(canvas, frame, s, y1 + 1.6 * u, u"{}".format(number), brush=_brush(83, 74, 183), size=10, bold=True)
