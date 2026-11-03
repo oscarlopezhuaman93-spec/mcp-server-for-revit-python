@@ -288,6 +288,31 @@ class LosaWindow(forms.WPFWindow):
                                             {a: self._models[a], b: self._models[b]})
         return self._roofs[key]
 
+    def _sync_partner(self, pm):
+        """The other water's settings follow the active slab's ribbed layout
+        and direction (both waters of a roof turn together, 2026-11-03):
+        "Automatica" on this one - each down its own slope -, else the same
+        direction in plan (the active's angle carried to the partner's frame).
+        Returns the partner's settings (in state: placed / generated so)."""
+        st = self._settings()
+        pst = settings_for(self.state, pm.element, self.bricks, pm.thickness)
+        pst["kind"] = sr.ALIGERADA
+        mine = dict(st.get("alig") or {})
+        alig = dict(pst.get("alig") or {})
+        alig.update(dict((k, v) for k, v in mine.items() if k not in ("dir", "angle", "start")))
+        if mine.get("angle") is None:
+            alig["angle"], alig["dir"] = None, None  # automatic: down its own slope
+        else:
+            m = self.model
+            rib = getattr(self, "_rib", None)
+            axis = rib["axis"] if rib else (mine.get("dir") or sr.X)
+            x, y = sr.unrotate(1.0, 0.0, m.angle) if axis == sr.X else sr.unrotate(0.0, 1.0, m.angle)
+            w = m.f.ux * x + m.f.uy * y  # the viguetas' direction in plan (world)
+            alig["angle"] = round(math.degrees(math.atan2(w.DotProduct(pm.f.uy), w.DotProduct(pm.f.ux))) % 180.0, 3)
+            alig["dir"] = sr.X
+        pst["alig"] = alig
+        return pst
+
     def _roof_view(self):
         """The other side of a two-way roof in the active slab's plan frame
         (cached): its outline, supports and bricks, the ridge line and
@@ -298,7 +323,7 @@ class LosaWindow(forms.WPFWindow):
             return None
         cache = self.__dict__.setdefault("_roof_views", {})
         st = self._settings()
-        key = (self.state.active, pid, repr(sorted((sr.ribbed(st) or {}).items())))
+        key = (self.state.active, pid, repr(sorted((sr.ribbed(st) or {}).items())), round(self.model.angle, 3))
         if key in cache:
             return cache[key]
         m = self.model
@@ -324,10 +349,7 @@ class LosaWindow(forms.WPFWindow):
             a, b = to_here(model, (0.0, 0.0)), to_here(model, u)
             return (b[0] - a[0], b[1] - a[1])
 
-        pst = settings_for(self.state, pm.element, self.bricks, pm.thickness)
-        if pst.get("kind") != sr.ALIGERADA:  # the partner gets the active slab's ribbed layout
-            pst["kind"] = sr.ALIGERADA
-            pst["alig"] = dict((k, v) for k, v in (st.get("alig") or {}).items() if k not in ("dir", "angle", "start"))
+        pst = self._sync_partner(pm)
         lib = rsl.brick_library(doc, pst, self.bricks)
         try:
             prib = pm.plan(pst, MM, None, lib)[1]
@@ -764,12 +786,19 @@ class LosaWindow(forms.WPFWindow):
             view = None
         if view and view.get("roof_bricks"):
             top_layer = sr.ribbed(self._settings())["top"]
+            # the row next to the cut vigueta on each water (their layouts may
+            # be offset along the ridge)
             rows = {}
             for s0, s1, t0, t1 in view["roof_bricks"]:
-                rows.setdefault(round((t0 + t1) / 2.0, 2), []).append((s0, s1))
-            near = min(rows, key=lambda tm: abs(tm - t))  # the row next to the cut vigueta
+                side = (s0 + s1) / 2.0 < 0.0
+                rows.setdefault((side, round((t0 + t1) / 2.0, 2)), []).append((s0, s1))
+            shown = []
+            for side in (True, False):
+                keys = [k for k in rows if k[0] == side]
+                if keys:
+                    shown += rows[min(keys, key=lambda k: abs(k[1] - t))]
             fill, edge = brush(BRICK, 110), brush(BRICK, 220)
-            for s0, s1 in rows[near]:
+            for s0, s1 in shown:
                 th = prof.t[rr.A] if (s0 + s1) / 2.0 < 0.0 else prof.t[rr.B]
                 quad = [(s0, prof.top_z(s0) - top_layer), (s1, prof.top_z(s1) - top_layer),
                         (s1, prof.top_z(s1) - th), (s0, prof.top_z(s0) - th)]
@@ -1082,8 +1111,13 @@ def generate_all(state, models, splice):
             j = partners.get(i)
             if j and st_i.get("kind") == sr.ALIGERADA and st_i.get("roof_on", True) and j not in ids:
                 ids.append(j)
+                if j in state.settings:  # synced by the window (_sync_partner): its own direction kept
+                    state.settings[j]["roof"] = st_i.get("roof") or {}
+                    continue
                 st_j = dict(st_i)
                 st_j["cuts"] = {}
+                st_j["alig"] = dict((k, v) for k, v in (st_i.get("alig") or {}).items()
+                                    if k not in ("dir", "angle", "start"))  # down its own slope
                 state.settings[j] = st_j
         roofs_done = set()
         for element_id in ids:
