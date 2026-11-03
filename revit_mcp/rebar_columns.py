@@ -1009,10 +1009,19 @@ def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world
     solids = []  # the concrete around the bar end, read once
     for e in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
               .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
-        solids += [s for s in _solids(e.get_Geometry(DB.Options())) if s.Volume > 1e-9]
+        try:  # an element whose geometry Revit can't read is left out, never the whole leg
+            solids += [s for s in _solids(e.get_Geometry(DB.Options())) if s.Volume > 1e-9]
+        except Exception:
+            continue
 
     def in_concrete(p):
-        return any(_inside(s, p) for s in solids)
+        for s in solids:
+            try:
+                if _inside(s, p):
+                    return True
+            except Exception:  # Revit's own errors on odd solids ("Sequence contains no elements")
+                continue
+        return False
 
     for v in candidates:
         if all(in_concrete(section.point_m(x + v[0] * t, y + v[1] * t, z_world)) for t in spec.leg_samples(leg)):

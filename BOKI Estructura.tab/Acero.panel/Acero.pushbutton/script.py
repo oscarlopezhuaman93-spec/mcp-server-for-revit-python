@@ -1969,14 +1969,19 @@ class AceroWindow(forms.WPFWindow):
                     if leg:
                         kw["leg_bottom"] = leg
                         col, sec = first["leg_host"]
-                        kw["dir_bottom"] = rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
-                                                                  sec.z_bottom - first["anchor"] / rc.FT)
+                        kw["dir_bottom"] = (rs.leg_vector(x, y, half[0], half[1], rs.LEG_OUT)
+                                            if getattr(self, "_plain_legs", False) else
+                                            rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
+                                                                   sec.z_bottom - first["anchor"] / rc.FT))
                 leg = rs.leg_m((ends.get("top") or {}).get(key))
                 if points[-1][2] > top - 1e-6 and last.get("leg_top") is not None and leg:
                     kw["top_drop"] = 0.05
                     kw["leg_top"] = leg
                     col, sec = last["top_host"]
-                    kw["dir_top"] = rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg, sec.z_top - 0.05 / rc.FT)
+                    kw["dir_top"] = (rs.leg_vector(x, y, half[0], half[1], rs.LEG_IN)
+                                     if getattr(self, "_plain_legs", False) else
+                                     rc.leg_toward_concrete(doc, sec, col, x, y, half[0], half[1], leg,
+                                                            sec.z_top - 0.05 / rc.FT))
                 done.append((rs.bar_with_ends(points, **kw), radius))
             bar_paths = done
         xs = [p[0] for p in base.polygon_m]
@@ -2006,8 +2011,19 @@ class AceroWindow(forms.WPFWindow):
         try:
             elev, scene = self._views_data()
         except Exception as e:
-            elev, scene = None, None
-            self._status(u"No se pudieron dibujar el alzado y la vista 3D: {}".format(e))
+            # never a blank view: the error's detail to a log file, the views
+            # drawn again without the end legs' search (the usual culprit)
+            log = _log_error(e)
+            try:
+                self._plain_legs = True
+                elev, scene = self._views_data()
+                self._status(u"Vista dibujada sin la busqueda de dobleces (detalle en {})".format(log))
+            except Exception as e2:
+                elev, scene = None, None
+                self._status(u"No se pudieron dibujar el alzado y la vista 3D: {} (detalle en {})".format(
+                    e2, _log_error(e2)))
+            finally:
+                self._plain_legs = False
         self._elev_data = elev
         self._scene_data = scene
         self._draw_elevation()
@@ -2482,6 +2498,21 @@ def pick_columns(state):
 
 
 AUTO_TYPE = u"(automatico)"
+
+
+def _log_error(error):
+    """The error's full detail (traceback) appended to
+    %APPDATA%\\pyRevit\\acero_columna_errores.log; returns that path."""
+    import traceback
+    import datetime
+    path = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), u"pyRevit",
+                        u"acero_columna_errores.log")
+    try:
+        with open(path, "a") as f:
+            f.write("--- {} ---\n{}\n".format(datetime.datetime.now(), traceback.format_exc()))
+    except Exception:
+        pass
+    return path
 
 
 # --- main -------------------------------------------------------------------
