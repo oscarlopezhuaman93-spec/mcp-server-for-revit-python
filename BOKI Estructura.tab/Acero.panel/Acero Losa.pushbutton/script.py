@@ -56,6 +56,7 @@ FLOORS_BIC = DB.BuiltInCategory.OST_Floors
 CONFIG_SECTION = "OLSTR_Acero"  # the splices set in Acero Viga / Columna
 BAR_KEYS = [k for k in rs.bar_diameter_keys() if 6 <= rs.BAR_DIAMETERS_MM[k] <= 25]
 MM = rs.BAR_DIAMETERS_MM
+FT = 0.3048
 PLAN = u"planta"
 COLORS = {(sr.INF, sr.X): (29, 158, 117), (sr.INF, sr.Y): (42, 111, 214),
           (sr.SUP, sr.X): (210, 60, 60), (sr.SUP, sr.Y): (240, 140, 20),
@@ -287,6 +288,87 @@ class LosaWindow(forms.WPFWindow):
                                             {a: self._models[a], b: self._models[b]})
         return self._roofs[key]
 
+    def _roof_view(self):
+        """The other side of a two-way roof in the active slab's plan frame
+        (cached): its outline, supports and bricks, the ridge line and
+        whether a ridge beam lies on it, each side's vigueta direction.
+        None when the slab has no partner (a one-way roof, a flat slab)."""
+        pid = self._partner()
+        if not pid or not self._roof_on():
+            return None
+        cache = self.__dict__.setdefault("_roof_views", {})
+        st = self._settings()
+        key = (self.state.active, pid, repr(sorted((sr.ribbed(st) or {}).items())))
+        if key in cache:
+            return cache[key]
+        m = self.model
+        if pid not in self._models:
+            self._models[pid] = rsl.SlabModel(doc.GetElement(DB.ElementId(pid)))
+        pm = self._models[pid]
+
+        def to_here(model, p):  # a point of `model`'s plan (local m) to the active slab's
+            q = m.f.local(model.f.world(p[0], p[1], 0.0))
+            return (q[0], q[1])
+
+        def brick_quads(model, rib):
+            out = []
+            for bk in (rib or {}).get("bricks", []):
+                corners = [(bk["s0"], bk["t0"]), (bk["s1"], bk["t0"]), (bk["s1"], bk["t1"]), (bk["s0"], bk["t1"])]
+                if rib["axis"] == sr.Y:
+                    corners = [(t, s_) for s_, t in corners]
+                out.append([to_here(model, sr.unrotate(x, y, model.angle)) for x, y in corners])
+            return out
+
+        def direction(model, rib):
+            u = sr.unrotate(1.0, 0.0, model.angle) if rib["axis"] == sr.X else sr.unrotate(0.0, 1.0, model.angle)
+            a, b = to_here(model, (0.0, 0.0)), to_here(model, u)
+            return (b[0] - a[0], b[1] - a[1])
+
+        pst = settings_for(self.state, pm.element, self.bricks, pm.thickness)
+        if pst.get("kind") != sr.ALIGERADA:  # the partner gets the active slab's ribbed layout
+            pst["kind"] = sr.ALIGERADA
+            pst["alig"] = dict((k, v) for k, v in (st.get("alig") or {}).items() if k not in ("dir", "angle", "start"))
+        lib = rsl.brick_library(doc, pst, self.bricks)
+        try:
+            prib = pm.plan(pst, MM, None, lib)[1]
+        except Exception:
+            prib = None
+        roof = self._roof()
+        # the ridge: along roof.r through roof.o, as long as the two slabs
+        ts = [roof.to_frame(*rm.RoofModel._local_to_world(mm_, p))[1]
+              for mm_ in (m, pm) for tri in mm_.slab_tris for p in tri]
+        r0, r1 = roof.to_world(0.0, min(ts)), roof.to_world(0.0, max(ts))
+        ridge = [m.f.local(DB.XYZ(x / FT, y / FT, 0.0))[:2] for x, y in (r0, r1)]
+        beam = False
+        try:
+            mid_t = (min(ts) + max(ts)) / 2.0
+            beam = any(a <= 0.0 <= b for a, b in sr.line_intervals(roof.support_tris, sr.X, mid_t))
+        except Exception:
+            pass
+        def roof_bricks(model, rib):  # (s0, s1, t0, t1) in the roof's frame (s down the slopes, t along the ridge)
+            out = []
+            for bk in (rib or {}).get("bricks", []):
+                corners = [(bk["s0"], bk["t0"]), (bk["s1"], bk["t0"]), (bk["s1"], bk["t1"]), (bk["s0"], bk["t1"])]
+                if rib["axis"] == sr.Y:
+                    corners = [(t, s_) for s_, t in corners]
+                pts = [roof.to_frame(*rm.RoofModel._local_to_world(model, sr.unrotate(x, y, model.angle)))
+                       for x, y in corners]
+                out.append((min(p[0] for p in pts), max(p[0] for p in pts),
+                            min(p[1] for p in pts), max(p[1] for p in pts)))
+            return out
+
+        view = {
+            "roof_bricks": roof_bricks(m, getattr(self, "_rib", None)) + roof_bricks(pm, prib),
+            "tris": [[to_here(pm, p) for p in tri] for tri in pm.slab_tris],
+            "supports": [([to_here(pm, p) for p in tri], s["label"]) for s in pm.supports for tri in s["tris"]],
+            "bricks": brick_quads(pm, prib),
+            "dir": direction(pm, prib) if prib else None,
+            "ridge": ridge, "ridge_beam": beam, "id": pid,
+            "n_bricks": len((prib or {}).get("bricks", [])),
+        }
+        cache[key] = view
+        return view
+
     def _show_kind(self, kind):
         from System.Windows import Visibility
         self.panel_maciza.Visibility = Visibility.Visible if kind == sr.MACIZA else Visibility.Collapsed
@@ -430,6 +512,15 @@ class LosaWindow(forms.WPFWindow):
         if m is None or canvas.ActualWidth < 10:
             return
         x0, x1, y0, y1 = sr.extent(m.slab_tris)
+        own = (x0, x1, y0, y1)  # this slab's own extent (its direction arrow)
+        try:  # a two-way roof: the other side too, the ridge between
+            roof_view = self._roof_view()
+        except Exception as e:
+            roof_view = None
+            self.txt_status.Text += u"  (No se pudo dibujar el otro lado del techo: {})".format(e)
+        if roof_view:
+            ex0, ex1, ey0, ey1 = sr.extent(roof_view["tris"])
+            x0, x1, y0, y1 = min(x0, ex0), max(x1, ex1), min(y0, ey0), max(y1, ey1)
         fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, x0 - 1.4, y0 - 1.4, x1 + 1.4, y1 + 1.4)
         self._fitted[PLAN] = fitted
         frame = self.navs[PLAN].resolve(fitted)
@@ -445,6 +536,13 @@ class LosaWindow(forms.WPFWindow):
             for q in (a, b):
                 self._dot(canvas, frame, q[0], q[1], 0.0, brush((255, 255, 255)))
                 rv._text(canvas, frame, q[0], q[1], name, brush=brush((60, 60, 80)), size=11, bold=True)
+        if roof_view:  # the other side of the roof, lighter: its slab, supports and bricks
+            for tri in roof_view["tris"]:
+                rv._polygon(canvas, frame, tri, brush((232, 236, 241)))
+            for tri, label in roof_view["supports"]:
+                rv._polygon(canvas, frame, tri, brush((200, 203, 208) if label != u"COLUMNA" else (90, 90, 90)))
+            for quad in roof_view["bricks"]:
+                rv._polygon(canvas, frame, quad, brush(BRICK, 45), brush(BRICK, 120))
         for tri in m.slab_tris:
             rv._polygon(canvas, frame, tri, brush((240, 243, 246)))
         for s in m.supports:
@@ -458,6 +556,12 @@ class LosaWindow(forms.WPFWindow):
                 if rib["axis"] == sr.Y:
                     corners = [(t, s_) for s_, t in corners]
                 rv._polygon(canvas, frame, [T(*q) for q in corners], fill, edge)
+        if roof_view:  # the ridge: where the two waters meet
+            a, b = roof_view["ridge"]
+            rv._line(canvas, frame, a, b, brush((170, 40, 40)), 3, dash=not roof_view["ridge_beam"])
+            rv._text(canvas, frame, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0,
+                     u"CUMBRERA" + (u" (viga)" if roof_view["ridge_beam"] else u""),
+                     brush=brush((170, 40, 40)), size=12, bold=True)
         for (face, axis), lines in sorted(self._plan.items()):
             color = brush(COLORS[(face, axis)], 150 if face == sr.SUP else 110)
             for line in lines:
@@ -484,9 +588,10 @@ class LosaWindow(forms.WPFWindow):
             for q in (a, b):
                 rv._text(canvas, frame, q[0], q[1], CUT_NAMES[axis].split(u"-")[0], brush=brush((83, 74, 183)), size=13, bold=True)
         if rib is not None:  # the viguetas' direction
-            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            ox0, ox1, oy0, oy1 = own
+            cx, cy = (ox0 + ox1) / 2.0, (oy0 + oy1) / 2.0
             ux, uy = T(1.0, 0.0) if rib["axis"] == sr.X else T(0.0, 1.0)
-            L = 0.22 * min(x1 - x0, y1 - y0)
+            L = 0.22 * min(ox1 - ox0, oy1 - oy0)
             a, b = (cx - ux * L, cy - uy * L), (cx + ux * L, cy + uy * L)
             dark = brush((200, 60, 20))
             rv._line(canvas, frame, a, b, dark, 4)
@@ -497,6 +602,23 @@ class LosaWindow(forms.WPFWindow):
                     rv._line(canvas, frame, end, (hx, hy), dark, 4)
             rv._text(canvas, frame, cx, cy + 0.15 * L, u"Viguetas  {:.1f}\u00b0".format(
                 math.degrees(math.atan2(uy, ux)) % 180.0), brush=dark, size=12, bold=True)
+        if roof_view and roof_view.get("dir"):  # the other water's viguetas, down its own slope
+            px0, px1, py0, py1 = sr.extent(roof_view["tris"])
+            cx, cy = (px0 + px1) / 2.0, (py0 + py1) / 2.0
+            ux, uy = roof_view["dir"]
+            n = math.hypot(ux, uy) or 1.0
+            ux, uy = ux / n, uy / n
+            L = 0.22 * min(px1 - px0, py1 - py0)
+            a, b = (cx - ux * L, cy - uy * L), (cx + ux * L, cy + uy * L)
+            dark = brush((200, 60, 20), 170)
+            rv._line(canvas, frame, a, b, dark, 4)
+            for end, sgn in ((b, 1.0), (a, -1.0)):
+                for side in (0.5, -0.5):
+                    hx = end[0] - sgn * ux * 0.25 * L + side * (-uy) * 0.25 * L
+                    hy = end[1] - sgn * uy * 0.25 * L + side * ux * 0.25 * L
+                    rv._line(canvas, frame, end, (hx, hy), dark, 4)
+            rv._text(canvas, frame, cx, cy + 0.15 * L, u"Losa {}: {} ladrillo(s)".format(
+                roof_view["id"], roof_view["n_bricks"]), brush=dark, size=11, bold=True)
         rv._text(canvas, frame, x0 - 1.2, y1 + 1.2, u"X \u2192   Y \u2191", brush=brush((40, 40, 40)), size=10, anchor="left")
 
     def _draw_cut(self, axis):
@@ -634,6 +756,24 @@ class LosaWindow(forms.WPFWindow):
         for a, b in prof.supports:
             zt = prof.top_z((a + b) / 2.0)
             rv._rect(canvas, frame, a, zt - 0.45, b, zt, brush((200, 205, 214), 220), brush((120, 125, 140)))
+        # the bricks of the row beside this vigueta, both waters, on the slope:
+        # under the slab's top layer, down to its bottom
+        try:
+            view = self._roof_view()
+        except Exception:
+            view = None
+        if view and view.get("roof_bricks"):
+            top_layer = sr.ribbed(self._settings())["top"]
+            rows = {}
+            for s0, s1, t0, t1 in view["roof_bricks"]:
+                rows.setdefault(round((t0 + t1) / 2.0, 2), []).append((s0, s1))
+            near = min(rows, key=lambda tm: abs(tm - t))  # the row next to the cut vigueta
+            fill, edge = brush(BRICK, 110), brush(BRICK, 220)
+            for s0, s1 in rows[near]:
+                th = prof.t[rr.A] if (s0 + s1) / 2.0 < 0.0 else prof.t[rr.B]
+                quad = [(s0, prof.top_z(s0) - top_layer), (s1, prof.top_z(s1) - top_layer),
+                        (s1, prof.top_z(s1) - th), (s0, prof.top_z(s0) - th)]
+                rv._polygon(canvas, frame, quad, fill, edge)
         cols = {u"inf": brush(COLORS[(sr.INF, sr.X)]), u"sup": brush(COLORS[(sr.SUP, sr.X)])}
         for bar in bars:
             pts = bar["path"]
@@ -1008,6 +1148,21 @@ def settings_for(state, floor, types, thickness):
     return st
 
 
+def with_roof_partners(ids):
+    """The picked slabs plus, for each sloped one, the slab across its ridge
+    (roof_model.partner) not picked: a two-way roof gets both sides."""
+    out = list(ids)
+    for i in list(ids):
+        floor = doc.GetElement(DB.ElementId(i))
+        try:
+            other = rm.partner(floor)
+        except Exception:
+            other = None
+        if other is not None and id_of(other.Id) not in out:
+            out.append(id_of(other.Id))
+    return out
+
+
 def place_bricks_only(state, models):
     """Only the roof bricks of the picked ribbed slabs (their steel left as
     it is): the old bricks of each replaced. Returns (placed, failed)."""
@@ -1027,7 +1182,10 @@ def place_bricks_only(state, models):
         ref = state.settings.get(state.active) if state.active else None
         if not (ref and ref.get("kind") == sr.ALIGERADA):
             ref = next((s for s in state.settings.values() if s.get("kind") == sr.ALIGERADA), None)
-        for element_id in state.picked_ids:
+        # the slab across each ridge goes too (both sides of a two-way roof),
+        # as generate_all does: many roofs at once, every slab its bricks
+        ids = with_roof_partners(state.picked_ids)
+        for element_id in ids:
             floor = doc.GetElement(DB.ElementId(element_id))
             model = models.get(element_id) or rsl.SlabModel(floor)
             p = floor.LookupParameter(rsl.PARAM)
@@ -1035,7 +1193,10 @@ def place_bricks_only(state, models):
             settings = settings_for(state, floor, types, model.thickness)
             if ref is not None and (not own or settings.get("kind") != sr.ALIGERADA):
                 settings["kind"] = sr.ALIGERADA
-                settings["alig"] = dict(ref.get("alig") or {})
+                # the reference's brick and layout, but its own direction: each
+                # slab's viguetas down its own slope (or its own auto direction)
+                settings["alig"] = dict((k, v) for k, v in (ref.get("alig") or {}).items()
+                                        if k not in ("dir", "angle", "start"))
             if settings.get("kind") != sr.ALIGERADA:
                 failed.append(u"Losa id {}: no es aligerada (elige 'Aligerada' en su configuración)".format(element_id))
                 continue
