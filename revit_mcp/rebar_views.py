@@ -929,6 +929,9 @@ def beam_elevation_extent(data):
     room = 2.0 * u if data.get("extras") or data.get("cuts") else 0.0
     room_top = (room + (2.0 * u if data.get("kinds") or data.get("mixed") else 0.0)  # the kind labels
                 + (3.0 * u if data.get("mixed") else 0.0))  # the neighbors' two-line labels over them
+    if data.get("mixed"):  # the neighbors' bars' anchorage dimensions: one more row each side
+        room += 1.2 * u
+        room_top += 1.2 * u
     side = 7 * u if data.get("hooks") else 2 * u  # room for the "Gancho 0.20" labels
     return (min(ss) - side,min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
             max(ss) + side, max(ys) + 6 * u + room_top + 1.1 * u * top_rows)
@@ -1020,13 +1023,24 @@ def draw_beam_elevation(canvas, data, frame):
                         _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(255, 200, 80), 7)
                     _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k),
                           _brush(240, 140, 20) if on else _brush(120, 60, 170), 2.5 if on else 1.6)
-            if on:
+            # its anchorage inside this beam dimensioned from the support face, as
+            # on a drawing (ticks at the face and at the bar's end); click the value
+            if item.get("inside", 0.0) > 0.005 or on:
                 ss = [p[2] for pts in item["paths"] for p in pts]
-                inner = max(ss) if max(ss) <= data["length"] / 2.0 else min(ss)
-                y_lab = (y1 + 1.2 * u) if item["face"] == u"sup" else (y0 - 4.6 * u)
-                _edit_text(canvas, frame, inner + (0.3 * u if inner < data["length"] / 2.0 else -6.5 * u), y_lab,
-                           u"Dentro de la viga {:.2f}".format(item.get("inside", 0.0)),
-                           u"nbl:{}:{}".format(item["tag"], item["face"]))
+                before = max(ss) <= data["length"] / 2.0
+                face_s = 0.0 if before else data["length"]
+                end_s = face_s + item.get("inside", 0.0) * (1.0 if before else -1.0)
+                rows_top, rows_bot = data.get("cota_rows") or (0, 0)
+                yc = beam_cota_y(data, item["face"], rows_top if item["face"] == u"sup" else rows_bot)
+                dim = _brush(240, 140, 20) if on else _brush(120, 60, 170)
+                yb = (y1 + 0.1 * u) if item["face"] == u"sup" else (y0 - 0.1 * u)
+                _line(canvas, frame, (face_s, yc), (end_s, yc), dim, 1)
+                for s in (face_s, end_s):
+                    _line(canvas, frame, (s, yc + 0.45 * u), (s, yc - 0.45 * u), dim, 1)
+                    _line(canvas, frame, (s - 0.25 * u, yc - 0.25 * u), (s + 0.25 * u, yc + 0.25 * u), dim, 2)
+                    _line(canvas, frame, (s, yc), (s, yb), _brush(200, 190, 220), 0.6, dash=True)
+                _edit_text(canvas, frame, (face_s + end_s) / 2.0 - 0.8 * u, yc + 0.55 * u,
+                           u"{:.2f}".format(item.get("inside", 0.0)), u"nbl:{}:{}".format(item["tag"], item["face"]))
     # longitudinal bars (seen from the side: hooks and cranks show)
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
