@@ -277,7 +277,12 @@ class ColumnSpec(object):
         )
         self.cover_m = _float_cm(config.get("EA_Recubrimiento_cm") or u"", u"Recubrimiento", 1, 10)
         nucleus = (config.get("EA_Nucleo_cm") or u"").strip()
-        self.joint_spacing_m = _float_cm(nucleus, u"Espaciamiento en nucleo", 3, 30) if nucleus else None
+        joint = spec.parse_joint(nucleus)
+        if nucleus and joint is None:
+            raise spec.SpecError(u"Estribos en nucleo: valor no valido ({})".format(nucleus))
+        self.joint_count = joint[1] if joint and joint[0] == "count" else None
+        self.joint_spacing_m = (_float_cm(nucleus, u"Espaciamiento en nucleo", 3, 30)
+                                if joint and joint[0] == "spacing" else None)
         self.design = spec.design_from_text(config.get("EA_Seccion_Armado"))
         self.bar_type_names = read_bar_type_names(config.get("EA_Barras_Tipo"))
         izaje = spec.read_json_setting(config.get("EA_Izaje"))
@@ -773,6 +778,15 @@ def is_nucleus(doc, column, section=None):
     no clear height of its own (see clear_top)."""
     if column.Category is None or column.Category.Id.IntegerValue != int(DB.BuiltInCategory.OST_StructuralColumns):
         return False
+    # its type or family named as a joint ('SCL_NUDO COLUMNA ...') is one,
+    # whatever ELEMENTO says (naming tools fill it with 'Columna de concreto')
+    try:
+        symbol = column.Document.GetElement(column.GetTypeId())
+        names = u"{} {}".format(element_name(symbol), getattr(symbol, "FamilyName", u"") or u"").upper()
+        if any(w in names for w in NUCLEUS_WORDS):
+            return True
+    except Exception:
+        pass
     said = None
     for name in (u"ELEMENTO", u"Comentarios", u"Comments"):
         p = column.LookupParameter(name)
@@ -1026,7 +1040,7 @@ def _bar_normal(section, points_m):
     return section.transform.BasisX
 
 
-def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None):
+def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None, joint_count=None):
     """(z_start_ft, count, spacing_ft, side) runs of one stirrup family: its
     clear-height distribution, one rebar set per zone and end as written
     (spec.stirrup_sets: '1@.05' a single stirrup, '5@.10' a set of 5 at
@@ -1040,8 +1054,10 @@ def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None):
         (z_start + start / FT, n, spacing / FT, side)
         for start, n, spacing, _, side in spec.stirrup_sets(clear_m, family.zones, family.rest)
     ]
-    if joint_spacing_m and section.z_top - z_clear_top > 0.1 / FT:
-        joint = spec.joint_positions((section.z_top - z_clear_top) * FT, joint_spacing_m)
+    if (joint_count or joint_spacing_m) and section.z_top - z_clear_top > 0.1 / FT:
+        # a count splits the joint in equal parts (EA_Nucleo_cm "3 est")
+        joint = (spec.joint_positions_count((section.z_top - z_clear_top) * FT, joint_count) if joint_count
+                 else spec.joint_positions((section.z_top - z_clear_top) * FT, joint_spacing_m))
         for start, n, spacing in spec.group_runs(joint):
             runs.append((z_clear_top + start / FT, n, spacing / FT, 1))
     return runs + _lap_extra(runs, getattr(section, "lap_zones", None) or [])
@@ -1215,12 +1231,16 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         # stirrups - at EA_Nucleo_cm, else at their rest spacing ("rto") -,
         # modeled apart or inside the column alike; the confinement ones go
         # on into it at their "rto" when EA_Nucleo_cm is set.
-        joint_m = column_spec.joint_spacing_m
+        # (2026-11-03) "N est": the edge stirrups are N, splitting the joint
+        # in equal parts; the confinement ones keep their "rto".
+        joint_m, joint_n = column_spec.joint_spacing_m, None
         if kind == CONFINEMENT:
-            joint_m = family.rest if joint_m else None
+            joint_m = family.rest if (joint_m or column_spec.joint_count) else None
+        elif column_spec.joint_count:
+            joint_n = column_spec.joint_count
         else:
             joint_m = joint_m or family.rest
-        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
+        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start, joint_n):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]
                 if is_open:
@@ -1319,7 +1339,7 @@ def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_cle
         return [(rebar, key, EDGE)]
     plan = spec.hoop_path(radius, ds, max(6 * ds, 0.075), **spec.hoop_closing(column_spec.design["bars"], ds))
     joint_m = column_spec.joint_spacing_m or family.rest
-    for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start):
+    for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start, column_spec.joint_count):
         for i in range(n):
             z = z_set + i * spacing
             rebar = _free_form(doc, bar_type, column, [section.point_m(x, y, z) for x, y in plan])

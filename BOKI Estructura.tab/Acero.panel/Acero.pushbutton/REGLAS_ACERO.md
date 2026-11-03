@@ -14,11 +14,16 @@ aplica siempre; las pruebas de `tests/unit/test_rebar_spec.py` (clase
 - El fondo se mide con la geometría real de la viga o losa **donde toca la
   columna**, no con su caja envolvente.
 - **Nudo:** lo que queda por encima (peralte de la viga o espesor de la losa).
-  Lleva **siempre** estribos de borde: al espaciamiento de "Estribo en núcleo"
-  si está marcado; si no, al "rto" del estribo de borde. Los de
-  confinamiento entran al nudo (a su "rto") solo con "Estribo en núcleo".
-  (Cambiado con el usuario el 2026-10-15.)
-- **Nudo modelado aparte:** una instancia de columna sobre la columna, con
+  Lleva **siempre** estribos de borde. Con "Estribo en núcleo" marcado se
+  da la **cantidad** (N): los N estribos reparten el nudo en partes iguales
+  (separación = altura del nudo / (N+1)); se guarda como "N est". Sin
+  marcar, van al "rto" del estribo de borde. Los de confinamiento entran
+  al nudo (a su "rto") solo con "Estribo en núcleo".
+  (Cambiado con el usuario el 2026-10-15; por cantidad desde el 2026-11-03.
+  Un valor antiguo en cm se sigue leyendo como espaciamiento.)
+- **Nudo modelado aparte:** una instancia de columna cuyo tipo o familia
+  se llama "NUDO"/"NÚCLEO" (p. ej. "SCL_NUDO COLUMNA EN L..."), aunque su
+  ELEMENTO diga "Columna de concreto" (2026-11-03); o una instancia de columna sobre la columna, con
   ELEMENTO (o Comentarios) que dice "Nudo"/"Núcleo" - o, sin eso, una pieza
   de 1.00 m o menos sobre otra columna - es todo nudo (altura libre 0),
   igual que el nudo dentro de una sola columna. Código: `is_nucleus`.

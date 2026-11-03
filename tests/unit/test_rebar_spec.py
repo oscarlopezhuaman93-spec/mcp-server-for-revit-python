@@ -522,6 +522,17 @@ class TestDrawing:
         assert joint_positions(0.60, 0.10) == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
         assert joint_positions(0.12, 0.15) == pytest.approx([0.06])
 
+    def test_joint_by_count(self):
+        from revit_mcp.rebar_spec import joint_count_text, joint_positions_count, parse_joint
+
+        assert joint_positions_count(0.60, 3) == pytest.approx([0.15, 0.30, 0.45])
+        assert joint_positions_count(0.40, 1) == pytest.approx([0.20])
+        assert joint_positions_count(0.40, 0) == []
+        assert parse_joint(joint_count_text(3)) == ("count", 3)
+        assert parse_joint(u"10") == ("spacing", pytest.approx(0.10))
+        assert parse_joint(u"") is None
+        assert parse_joint(u"abc") is None
+
 
 def test_edge_vs_confinement_stirrups():
     from revit_mcp.rebar_spec import is_edge_stirrup

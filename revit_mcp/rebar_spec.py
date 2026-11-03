@@ -1347,6 +1347,39 @@ def joint_positions(joint_length, spacing, end_clear=0.05):
     return positions
 
 
+JOINT_COUNT_SUFFIX = u" est"  # EA_Nucleo_cm "3 est": a count; a bare number is a legacy spacing (cm)
+
+
+def joint_count_text(count):
+    return u"{}{}".format(int(count), JOINT_COUNT_SUFFIX)
+
+
+def parse_joint(text):
+    """EA_Nucleo_cm: ("count", n) for '3 est' (the user's rule since
+    2026-11-03: a number of stirrups splitting the joint in equal parts),
+    ("spacing", m) for a legacy '10' (cm), None when blank or unreadable."""
+    text = (text or u"").strip().lower().replace(u",", u".")
+    if not text:
+        return None
+    try:
+        if text.endswith(JOINT_COUNT_SUFFIX.strip()):
+            n = int(float(text[:-len(JOINT_COUNT_SUFFIX.strip())].strip()))
+            return ("count", n) if n > 0 else None
+        cm = float(text)
+        return ("spacing", cm / 100.0) if cm > 0 else None
+    except ValueError:
+        return None
+
+
+def joint_positions_count(joint_length, count):
+    """`count` stirrups splitting the joint in equal parts: joint/(n+1) apart,
+    from the beam underside to the column top."""
+    if joint_length <= 0 or count <= 0:
+        return []
+    step = joint_length / float(count + 1)
+    return [step * k for k in range(1, int(count) + 1)]
+
+
 def is_edge_stirrup(polygon, bars, tol=0.005):
     """A stirrup drawn around every longitudinal bar is the perimeter
     ("borde") stirrup; one around only some of them is a confinement

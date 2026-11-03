@@ -662,7 +662,18 @@ class AceroWindow(forms.WPFWindow):
         self.txt_edge_dist.Text = f.get("edge_dist") or u""
         self.txt_cover.Text = f.get("cover") or u""
         self.chk_nucleo.IsChecked = bool(f.get("nucleo"))
-        self.txt_nucleo.Text = f.get("nucleo") or u"10"
+        # a count of stirrups splitting the joint in equal parts ("3 est");
+        # a legacy spacing (cm) shows the default count, saved as such
+        joint = rs.parse_joint(f.get("nucleo"))
+        self.txt_nucleo.Text = u"{}".format(joint[1]) if joint and joint[0] == "count" else u"3"
+
+    def _joint_text(self):
+        """EA_Nucleo_cm from the count box: '3 est' (blank if not a count)."""
+        try:
+            n = int(float((self.txt_nucleo.Text or u"").strip().replace(u",", u".")))
+        except ValueError:
+            return u""
+        return rs.joint_count_text(n) if n > 0 else u""
 
     def _get_form(self):
         return {
@@ -676,7 +687,7 @@ class AceroWindow(forms.WPFWindow):
             "edge": self.cbo_edge.SelectedItem or u'3/8"',
             "edge_dist": (self.txt_edge_dist.Text or u"").strip(),
             "cover": (self.txt_cover.Text or u"").strip(),
-            "nucleo": (self.txt_nucleo.Text or u"").strip() if self.chk_nucleo.IsChecked else u"",
+            "nucleo": self._joint_text() if self.chk_nucleo.IsChecked else u"",
         }
 
     def _config_from_form(self, with_drawing):
@@ -1843,13 +1854,13 @@ class AceroWindow(forms.WPFWindow):
             # the joint always has edge stirrups: at "Estribo en nucleo", else
             # at the edge "rto" (rc.generate_column), apart or inside the column
             if height - clear > 0.1:
-                try:
-                    spacing = (float(f["nucleo"].replace(u",", u".")) / 100.0 if f["nucleo"]
-                               else (edge or {}).get("rest"))
+                given = rs.parse_joint(f["nucleo"])
+                if given and given[0] == "count":  # N stirrups, the joint split in equal parts
+                    joint = rs.joint_positions_count(height - clear, given[1])
+                else:
+                    spacing = given[1] if given else (edge or {}).get("rest")
                     if spacing:
                         joint = rs.joint_positions(height - clear, spacing)
-                except ValueError:
-                    pass
             messages += [m for m in (edge_msg and u"Borde: " + edge_msg,
                                      conf_msg and u"Confinamiento: " + conf_msg) if m]
             if edge is None and not edge_msg:

@@ -220,9 +220,9 @@
                                   ToolTip="Estribos tambien dentro del nudo viga-columna (desde el fondo de la viga hasta el tope)."/>
                         <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_nucleo}">
-                            <TextBlock Text="@ " VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="50"/>
-                            <TextBlock Text=" cm" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="40"
+                                     ToolTip="Cantidad de estribos en el nudo: se reparten en partes iguales entre el fondo de la viga y el tope de la columna."/>
+                            <TextBlock Text=" estribos (partes iguales)" VerticalAlignment="Center"/>
                         </StackPanel>
                         <Button Grid.Row="9" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
