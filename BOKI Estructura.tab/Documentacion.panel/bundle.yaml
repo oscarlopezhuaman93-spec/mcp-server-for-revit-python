@@ -1,4 +1,4 @@
-background:
+﻿background:
   panel: "#33D9A015"
   title: "#FFD9A015"
   slideout: "#33D9A015"
@@ -7,4 +7,3 @@ layout:
   - Cuadro Zapatas
   - Cuadro Columnas
   - Cuadro Vigas
-  - Cuadro Viguetas
