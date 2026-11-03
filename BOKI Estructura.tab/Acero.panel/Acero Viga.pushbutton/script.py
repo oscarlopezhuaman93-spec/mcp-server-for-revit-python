@@ -198,7 +198,9 @@ def load_hook_legs():
         for pair in (script.get_config(CONFIG_SECTION).get_option("hook_legs", u"") or u"").split(u"|"):
             if u"=" in pair:
                 key, cm = pair.split(u"=", 1)
-                legs[rs.parse_diameter(key)] = float(cm)
+                value = float(cm)
+                # typed in meters (0.25 for 25 cm): no bar is bent under 1 cm
+                legs[rs.parse_diameter(key)] = value * 100.0 if 0.0 < value < 1.0 else value
     except Exception:
         pass
     return legs
@@ -988,8 +990,8 @@ class AceroWindow(forms.WPFWindow):
         return settings
 
     def _legs_from_form(self):
-        """{key: m} hook legs as typed."""
-        return dict((k, cm / 100.0) for k, cm in self._cm_values(self.leg_boxes).items())
+        """{key: m} hook legs as typed (cm; a value under 1 typed in meters)."""
+        return dict((k, (cm if 0.0 < cm < 1.0 else cm / 100.0)) for k, cm in self._cm_values(self.leg_boxes).items())
 
     def splice_changed(self, sender, args):
         if getattr(self, "_filling_splice", True):
@@ -1754,7 +1756,9 @@ class AceroWindow(forms.WPFWindow):
                     continue  # not next to it
                 # drawn as a stub at most NEIGHBOR_SHOWN_M long: this beam keeps its scale
                 s0, s1 = max(s0, -self.NEIGHBOR_SHOWN_M), min(s1, line.length + self.NEIGHBOR_SHOWN_M)
+                xs_o = [p[0] for p in other.section.polygon_m]
                 out.append({"s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
+                            "x0": min(xs_o), "x1": max(xs_o),
                             "label": self._kind_text(other, t.name),
                             "stirrups": [s for s in self._neighbor_stirrups(line, other, t) if s0 <= s <= s1],
                             "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))})
@@ -1919,6 +1923,8 @@ class AceroWindow(forms.WPFWindow):
             # this face's hand edits (a click on the bar): longer / shorter, its legs
             face = bx.TOP if top else bx.BOTTOM
             leg0, leg1, b_start, b_end = bx.apply_main_edit(settings, face, leg0, leg1, bar_start, bar_end)
+            leg0 = max(leg0, rs.MIN_LEG_M) if leg0 > 1e-6 else 0.0  # as generated (rb.generate_line)
+            leg1 = max(leg1, rs.MIN_LEG_M) if leg1 > 1e-6 else 0.0
             leg = max(leg0, leg1)
             lap, pieces = 0.0, [(b_start, b_end)]
             if splice is not None and b_end - b_start + leg0 + leg1 > splice["max"] + 1e-6:
@@ -1989,6 +1995,11 @@ class AceroWindow(forms.WPFWindow):
                             + [(c, line.depth_at(c)[0]) for c in reversed(cuts)])
             pieces += [(c0, line.polygon_at(polygon, c0), c1, line.polygon_at(polygon, c1))
                        for c0, c1 in zip(cuts, cuts[1:])]
+        mixed = self._mixed_neighbors(line)
+        # the 3D view: the neighbors' concrete too (a flat beam past this one), each a box
+        for m in mixed:
+            box = [(m["x0"], m["y0"]), (m["x1"], m["y0"]), (m["x1"], m["y1"]), (m["x0"], m["y1"])]
+            pieces.append((m["s0"], box, m["s1"], box))
         elev = {
             "polygon": polygon,
             "length": line.length,
@@ -2012,7 +2023,7 @@ class AceroWindow(forms.WPFWindow):
             "selected": self._selected_index(),
             # the picked beams of other types on this axis (a flat beam past
             # a deep one), and each span's kind over it
-            "mixed": self._mixed_neighbors(line),
+            "mixed": mixed,
             # the main bars of each face: one clicked shows orange with its ends to edit
             "main": main_view,
             "main_selected": getattr(self, "_main_face", None),
@@ -2157,7 +2168,51 @@ class AceroWindow(forms.WPFWindow):
             frame.Margin = Thickness(0, 0, 6, 0)
             frame.Child = box
             panel.Children.Add(frame)
+        self._draw_neighbor_sections(panel, bars, k)
         self._draw_stirrup_plan(panel, line, poly)
+
+    def _draw_neighbor_sections(self, panel, bars, k):
+        """Each neighbor beam's section (a flat beam past this one), at this
+        cuts' scale: its outline and the main bars of this beam that reach
+        into it (a bottom bar run on into the flat beam shows there)."""
+        elev = self._elev_data or {}
+        main = elev.get("main") or {}
+        for m in elev.get("mixed") or []:
+            mid = (m["s0"] + m["s1"]) / 2.0
+            inside = []
+            for x, y, key in bars:
+                ends = (main.get(bx.TOP if y > 0 else bx.BOTTOM) or {}).get("ends")
+                if ends and ends[0] - 1e-6 <= mid <= ends[1] + 1e-6 and m["y0"] - 1e-6 <= y <= m["y1"] + 1e-6:
+                    inside.append((x, y, key))
+            box = Canvas()
+            box.Width, box.Height = 250, 160
+            box.Background = brush(255, 255, 255)
+            cx, cy = 10.0 - m["x0"] * k, 18.0 + m["y1"] * k
+
+            def P(x, y):
+                return Point(cx + x * k, cy - y * k)
+            shape = Polygon()
+            pc = PointCollection()
+            for x, y in ((m["x0"], m["y0"]), (m["x1"], m["y0"]), (m["x1"], m["y1"]), (m["x0"], m["y1"])):
+                pc.Add(P(x, y))
+            shape.Points = pc
+            shape.Stroke = brush(150, 120, 80)
+            shape.Fill = brush(236, 228, 214)
+            box.Children.Add(shape)
+            for x, y, key in inside:
+                self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, brush(240, 140, 20))
+            label = TextBlock()
+            label.Text = u"SECCIÓN\n{}\n(s = {:.2f} m)\nbarras que entran: {}".format(m["label"], mid, len(inside))
+            label.FontSize = 10
+            Canvas.SetLeft(label, 100)
+            Canvas.SetTop(label, 4)
+            box.Children.Add(label)
+            frame = Border()
+            frame.BorderBrush = brush(150, 120, 80)
+            frame.BorderThickness = Thickness(1)
+            frame.Margin = Thickness(0, 0, 6, 0)
+            frame.Child = box
+            panel.Children.Add(frame)
 
     def _draw_stirrup_plan(self, panel, line, poly):
         """A flat beam (h <= b) or a cantilever: its plan beside the cuts,
@@ -3565,7 +3620,32 @@ KINDS = (rc.LONGITUDINAL, rc.EDGE, rc.CONFINEMENT)
 by_type = {}  # type name -> {"n": beams, "e": elements, kind: kg}
 total_bars = 0
 
+class _DropFailing(DB.IFailuresPreprocessor):
+    """Revit's warnings noted and dismissed; a bar Revit refuses (no rebar
+    shape fits it...) gets Revit's own fix - that bar alone left out - with
+    no dialog stopping everything; the messages go to the summary."""
+
+    def __init__(self):
+        self.messages = []
+
+    def PreprocessFailures(self, accessor):
+        resolved = False
+        for f in accessor.GetFailureMessages():
+            self.messages.append(f.GetDescriptionText())
+            if f.GetSeverity() == DB.FailureSeverity.Warning:
+                accessor.DeleteWarning(f)
+            elif f.HasResolutions():
+                accessor.ResolveFailure(f)
+                resolved = True
+        return DB.FailureProcessingResult.ProceedWithCommit if resolved else DB.FailureProcessingResult.Continue
+
+
 t = DB.Transaction(doc, "Acero Viga")
+_failures = _DropFailing()
+_opts = t.GetFailureHandlingOptions()
+_opts.SetFailuresPreprocessor(_failures)
+_opts.SetForcedModalHandling(False)
+t.SetFailureHandlingOptions(_opts)
 t.Start()
 try:
     rb.ensure_parameters(doc)
@@ -3643,5 +3723,8 @@ except Exception:
 
 # No report window: only what failed, in one message.
 failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Viga ")]
+refused = sorted(set(m for m in _failures.messages if m))  # what Revit refused (that bar left out)
+if refused:
+    failed.append(u"Revit no aceptó algunas barras (se omitieron solo esas): " + u"; ".join(refused[:3]))
 if failed:
     forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")

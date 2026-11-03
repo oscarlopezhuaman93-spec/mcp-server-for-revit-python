@@ -726,6 +726,9 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         # the hand edits of this face (clicked in the window): longer / shorter, its own legs
         leg0, leg1, bar_start, bar_end = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM,
                                                             leg0, leg1, bar_start, bar_end)
+        # a leg too short to bend (a few mm) makes no rebar shape: the least one
+        leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
+        leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0
         leg = max(leg0, leg1)
         pieces = [(bar_start, bar_end)]
         # the hook legs count in a bar's length (a 9 m bar holds them)
