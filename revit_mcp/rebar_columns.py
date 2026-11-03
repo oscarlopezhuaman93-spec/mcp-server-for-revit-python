@@ -1119,6 +1119,33 @@ def _bar_type(bar_types, key, mark):
     return bar_type
 
 
+def seated_bars(doc, column_spec, bar_types, mark):
+    """The drawing's bars with the corner ones seated in the stirrups'
+    round bends (the bar type's own bend diameter, else 4 db), touching the
+    stirrup's inner face instead of overlapping it - as in the beams
+    (rebar_beams.seat_in_bends)."""
+    import rebar_beams as rb_
+    design = column_spec.design
+    bars = design["bars"]
+    for kind, poly, wrap, is_open in design.get("stirrups", []):
+        if is_open:
+            continue
+        try:
+            _, family = column_spec.family_of(kind)
+            key = family.key
+            loop = spec.clean_polyline(spec.stirrup_centerline(poly, design["bars"], key, wrap, False), closed=True)
+        except Exception:
+            continue
+        ds = spec.BAR_DIAMETERS_MM[key] / 1000.0
+        try:
+            st = named_bar_type(doc, family.type_name, key) or _bar_type(bar_types, key, mark)
+            bend = st.StirrupTieBendDiameter * FT or 4.0 * ds
+        except Exception:
+            bend = 4.0 * ds
+        bars = rb_.seat_in_bends(bars, [loop], ds, bend)
+    return bars
+
+
 def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=None, longitudinal=True):
     """Create the column's longitudinal bars, stirrups and ties from its
     drawing (inside an active Transaction; Revit needs a Regenerate before
@@ -1139,7 +1166,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     created = []
 
     height_m = (section.z_top - section.z_bottom) * FT
-    for x, y, key in (design["bars"] if longitudinal else []):
+    for x, y, key in (seated_bars(doc, column_spec, bar_types, mark) if longitudinal else []):
         path = spec.bar_with_ends([(x, y, 0.0), (x, y, height_m)],
                                   **bar_ends(doc, column_spec, key, x, y, section, column, column))
         rebar = Rebar.CreateFromCurves(
@@ -1363,7 +1390,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     # splice["column"]: the lamina's rule - laps in the central third, the
     # bars in two alternating groups round the section (at most 50% lapped
     # in one section)
-    bars = column_spec.design["bars"]
+    bars = seated_bars(doc, column_spec, bar_types, mark)  # corner bars in the stirrups' bends
     group_of = {}
     if splice.get("column"):
         for rank, k in enumerate(sorted(range(len(bars)), key=lambda k: math.atan2(bars[k][1], bars[k][0]))):

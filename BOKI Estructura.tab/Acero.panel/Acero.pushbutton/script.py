@@ -25,6 +25,7 @@ import selection_hosts
 import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
+from rebar_beams import seat_in_bends as rb_seat
 import rebar_views as rv
 import utils as fw_utils
 
@@ -1288,7 +1289,9 @@ class AceroWindow(forms.WPFWindow):
             # as bent in Revit: round over each bar, 135-degree hooks
             wrap_r = (wrap if wrap is not None else rs.wrap_radius(poly, bars)) + ds / 2.0
             try:
-                for part in rs.bent_stirrup(poly, wrap_r, max(6 * ds, 0.075), is_open, bend=2.5 * ds):
+                # bent round the project's pin (its bar type's bend), like the generation
+                for part in rs.bent_stirrup(poly, wrap_r, max(6 * ds, 0.075), is_open,
+                                            bend=self._bend_d(key) / 2.0 + ds / 2.0):
                     self._steel(frame, part, color(kind), thickness)
             except Exception:
                 self._polyline(frame, line, color(kind), thickness, closed=not is_open)
@@ -1325,7 +1328,19 @@ class AceroWindow(forms.WPFWindow):
             path = (rs.hoop_path(radius, ds, max(6 * ds, 0.075), **rs.hoop_closing(bars, ds)) if circ.get("t") != rs.CIRC_SPIRAL
                     else rs.circle_points(radius, 72) + rs.circle_points(radius, 72)[:1])
             self._steel(frame, path, C_STIRRUP, max(2, ds * scale))
-        for x, y, key in bars:
+        # the corner bars seated in the stirrups' bends, as generated (rc.seated_bars)
+        shown = bars
+        for kind, poly, wrap, is_open in self.design["stirrups"]:
+            if is_open:
+                continue
+            key = self._family_key(kind)
+            try:
+                loop = rs.stirrup_centerline(poly, bars, key, wrap, False)
+            except rs.SpecError:
+                continue
+            ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            shown = rb_seat(shown, [rs.clean_polyline(loop, closed=True)], ds, self._bend_d(key))
+        for x, y, key in shown:
             self._dot(frame, x, y, max(3.5, rs.BAR_DIAMETERS_MM[key] / 2000.0 * scale), C_BAR)
 
         tool = self._tool()
@@ -1365,6 +1380,19 @@ class AceroWindow(forms.WPFWindow):
         if signature != self._views_sig:
             self._views_sig = signature
             self._refresh_views()
+
+    def _bend_d(self, key):
+        """The inner bend diameter (m) of the project's stirrup bar type of
+        that diameter (as generated), else 4 db."""
+        cache = self.__dict__.setdefault("_bends", {})
+        if key not in cache:
+            ds = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            try:
+                bt = rc._bar_type(rc.BarTypes(doc), key, u"COLUMNA")
+                cache[key] = bt.StirrupTieBendDiameter * rc.FT or 4.0 * ds
+            except Exception:
+                cache[key] = 4.0 * ds
+        return cache[key]
 
     def _steel(self, frame, points, color, thickness):
         """A bar in plan: its color over a thin dark edge, round bends and
