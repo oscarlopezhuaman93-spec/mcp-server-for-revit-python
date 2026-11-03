@@ -1761,6 +1761,7 @@ class AceroWindow(forms.WPFWindow):
                             "x0": min(xs_o), "x1": max(xs_o),
                             "label": self._kind_text(other, t.name),
                             "stirrups": [s for s in self._neighbor_stirrups(line, other, t) if s0 <= s <= s1],
+                            "bars": self._neighbor_bars(line, other, t),
                             "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))})
         return out
 
@@ -1783,6 +1784,47 @@ class AceroWindow(forms.WPFWindow):
             return out
         except Exception:
             return []  # not set up: drawn without them
+
+    def _neighbor_bars(self, line, other, t):
+        """A neighbor beam's main bars as it generates them (rb.main_bar_run:
+        its run on into this beam, its hand edits) in this line's elevation
+        frame - one item per face: its paths, how far it gets inside this
+        beam from the support face, the neighbor's end that faces it and the
+        tags to select / edit it."""
+        try:
+            spec_o = rc.ColumnSpec(t.config())
+            settings = self._line_settings(other)
+            supports = self._supports(other)
+            _, sf, ef = rb.spans_and_ends(other, supports)
+            cont = rb.mixed_continuations([line, other]).get(id(other))
+            splice = splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
+            legs = self._legs_from_form() if hasattr(self, "leg_boxes") else {}
+            anchor = rb.anchor_of(t.config())
+        except Exception:
+            return []
+        # the neighbor's end facing this beam (0: its start, 1: its end)
+        near0 = line.local(other.point(0.0, 0.0, 0.0))[2]
+        near1 = line.local(other.point(0.0, 0.0, other.length))[2]
+        mid_this = line.length / 2.0
+        end = 0 if abs(near0 - mid_this) < abs(near1 - mid_this) else 1
+        before = max(near0, near1) <= mid_this  # the neighbor sits before this beam's start
+        tag = u"{}:{}".format(id_of(other.type_id), id_of(other.elements[0].Id))
+        out = {}
+        for x, y, key in spec_o.design["bars"]:
+            face = bx.TOP if y > 0 else bx.BOTTOM
+            try:
+                leg0, leg1, s0, s1 = rb.main_bar_run(other, settings, spec_o.design, y, key, spec_o.cover_m,
+                                                     sf, ef, anchor, legs, splice, cont)
+            except Exception:
+                continue
+            d = rs.BAR_DIAMETERS_MM[key] / 1000.0
+            pts = [line.local(other.point(px, py, ps))
+                   for px, py, ps in rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)]
+            item = out.setdefault(face, {"face": face, "paths": [], "end": end, "tag": tag})
+            item["paths"].append(pts)
+            ss = [p[2] for p in pts]
+            item["inside"] = max(0.0, max(ss)) if before else max(0.0, line.length - min(ss))
+        return list(out.values())
 
     def _open_line(self, tag):
         """A neighbor beam clicked in the elevation: its type and that beam
@@ -2005,10 +2047,14 @@ class AceroWindow(forms.WPFWindow):
                             + [(c, line.depth_at(c)[0]) for c in reversed(cuts)])
             pieces += [(c0, line.polygon_at(polygon, c0), c1, line.polygon_at(polygon, c1))
                        for c0, c1 in zip(cuts, cuts[1:])]
-        # the 3D view: the neighbors' concrete too (a flat beam past this one), each a box
+        # the 3D view: the neighbors' concrete too (a flat beam past this one),
+        # each a box, and their main bars as generated (running on into this beam)
+        neighbor_paths = []
         for m in mixed:
             box = [(m["x0"], m["y0"]), (m["x1"], m["y0"]), (m["x1"], m["y1"]), (m["x0"], m["y1"])]
             pieces.append((m["s0"], box, m["s1"], box))
+            for item in m.get("bars") or []:
+                neighbor_paths += [(pts, 0.007) for pts in item["paths"]]
         elev = {
             "polygon": polygon,
             "length": line.length,
@@ -2036,13 +2082,14 @@ class AceroWindow(forms.WPFWindow):
             # the main bars of each face: one clicked shows orange with its ends to edit
             "main": main_view,
             "main_selected": getattr(self, "_main_face", None),
+            "nb_selected": getattr(self, "_nb_sel", None),  # a neighbor's bar clicked: (its tag, face)
             "kinds": [((a + b) / 2.0, self._kind_text(line, t.name)) for a, b in spans],
         }
         scene = {
             "polygon": polygon,
             "length": line.length,
             "ranges": line.ranges,
-            "bar_paths": bar_paths,
+            "bar_paths": bar_paths + neighbor_paths,
             "loops": loops,
             "supports_mesh": [tri for s in supports for tri in s["triangles"]],
             "pieces": pieces,
@@ -2553,6 +2600,58 @@ class AceroWindow(forms.WPFWindow):
                         best = (d, face)
         return best[1] if best else None
 
+    def _nb_near(self, s, y, scale):
+        """(neighbor tag, face) of a neighbor beam's main bar under the click
+        (within 8 px of its drawn path), else None."""
+        data = getattr(self, "_elev_data", None)
+        if not data or s is None:
+            return None
+        k = rv._beam_deepen(data)
+        best = None
+        for m in data.get("mixed") or []:
+            for item in m.get("bars") or []:
+                for pts in item["paths"]:
+                    for p, q in zip(pts, pts[1:]):
+                        ax, ay, bx_, by = p[2], p[1] * k, q[2], q[1] * k
+                        dx, dy = bx_ - ax, by - ay
+                        t = max(0.0, min(1.0, ((s - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy or 1e-12)))
+                        d = math.hypot(ax + t * dx - s, ay + t * dy - y) * scale
+                        if d < 8 and (best is None or d < best[0]):
+                            best = (d, (item["tag"], item["face"]))
+        return best[1] if best else None
+
+    def _edit_neighbor_bar(self, tag):
+        """'nbl:<type id>:<element id>:<face>' clicked: how far that neighbor
+        beam's bars get inside this one, from the support face - set as the
+        neighbor's own hand edit of that end (kept until saved, as any beam's)."""
+        _, tid, first, face = tag.split(u":")
+        tid, first = int(tid), int(first)
+        t = self.by_id.get(tid)
+        other = next((l for l in (t.lines if t else []) if id_of(l.elements[0].Id) == first), None)
+        data = getattr(self, "_elev_data", None) or {}
+        item = next((b for m in data.get("mixed") or [] for b in m.get("bars") or []
+                     if b["tag"] == u"{}:{}".format(tid, first) and b["face"] == face), None)
+        if other is None or item is None:
+            return
+        value = forms.ask_for_string(
+            default=u"{:.2f}".format(item.get("inside", 0.0)),
+            prompt=u"Cuánto entran las barras {} de esta viga ({}) dentro de la viga, desde la cara del apoyo (m):".format(
+                u"superiores" if face == bx.TOP else u"inferiores", t.short_name),
+            title=u"Acero longitudinal")
+        if value is None:
+            return
+        try:
+            wanted = max(0.0, float(value.strip().replace(u",", u".")))
+        except ValueError:
+            return
+        key = self._line_key(other)
+        if key not in self.state.line_edits:
+            self.state.line_edits[key] = bx.read(bx.write(self._line_settings(other)))
+        main = self.state.line_edits[key].setdefault("main", {}).setdefault(face, {})
+        d_key = u"d{}".format(item["end"])
+        main[d_key] = float(main.get(d_key) or 0.0) + (wanted - item.get("inside", 0.0))
+        self._changed()
+
     def _edit_main(self, tag):
         """'main:<face>:d0' / 'h1'... clicked: that end of the face's main bars
         - how much longer (+) or shorter (-) there, or its leg (0 straight)."""
@@ -2732,6 +2831,10 @@ class AceroWindow(forms.WPFWindow):
                 self._edit_main(tag)
                 args.Handled = True
                 return
+            if isinstance(tag, basestring) and tag.startswith(u"nbl:"):  # a neighbor's bar: how far inside
+                self._edit_neighbor_bar(tag)
+                args.Handled = True
+                return
             if isinstance(tag, basestring) and (tag.startswith(u"span:") or tag.startswith(u"extra:")
                                                  or tag.startswith(u"len:") or tag.startswith(u"cota:")
                                                  or tag.startswith(u"hook:")):
@@ -2791,9 +2894,11 @@ class AceroWindow(forms.WPFWindow):
                 self._main_face = None
                 self._select(hit)
                 return
-            face = self._main_near(s, self._elev_y(args), scale)
-            if face != getattr(self, "_main_face", None):  # a main bar clicked (or off one): orange to edit
-                self._main_face = face
+            y_click = self._elev_y(args)
+            face = self._main_near(s, y_click, scale)
+            nb = None if face else self._nb_near(s, y_click, scale)  # else a neighbor beam's bar
+            if (face, nb) != (getattr(self, "_main_face", None), getattr(self, "_nb_sel", None)):
+                self._main_face, self._nb_sel = face, nb  # a bar clicked (or off one): orange to edit
                 self._views_sig = None
                 self.redraw()
                 return

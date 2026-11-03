@@ -377,6 +377,57 @@ def is_vigueta(line):
     return _is_vigueta_type(line.elements[0])
 
 
+def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_face, anchor, legs, splice,
+                 continue_top=None):
+    """(leg0, leg1, s_start, s_end) of a main bar at height y of the line
+    (as generated, and as the windows draw it): its hooks - the beam's own,
+    the table's, 12 db; none where it runs on into the next beam line (a
+    lap: continue_top) -, cut to the depth there is; a bottom bar's ends set
+    in beside the top bars' hooks; the hand edits of its face (longer /
+    shorter, its legs), a longer bar stopping at the far face of the
+    concrete less the cover; a leg too short to bend raised to the least."""
+    d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+    top = y > 0
+    hooked = anchor == ANCHOR_HOOK
+    leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+    leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+    start_run = end_run = 0.0
+    runs = (continue_top or {}).get("top" if top else "bot") or [False, False]
+    if any(runs):
+        run_on = (splice["laps"].get(key) if splice else None) or spec.e060_lap_cm(key) / 100.0
+        reach = continue_top.get("reach") or [run_on, run_on]
+        if runs[0]:
+            leg0, start_run = 0.0, min(run_on, reach[0])
+        if runs[1]:
+            leg1, end_run = 0.0, min(run_on, reach[1])
+    # a leg never leaves the concrete: in a shallow beam (a chata) it is
+    # cut to the depth there is, less the cover on the far face
+    room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
+    if room > 0:
+        leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
+        leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
+    # a bottom bar's hook goes inside the top bars' one, side by side (not
+    # on it, as built): its end set back the two half diameters + 5 mm
+    b0, b1 = start_face + cover, end_face - cover
+    if not top:
+        top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
+        gap = (top_d + d) / 2.0 + 0.005
+        b0 += gap if leg0 > 0 else 0.0
+        b1 -= gap if leg1 > 0 else 0.0
+    s0, s1 = b0 - start_run, b1 + end_run  # run on into the next beam line (a lap)
+    # the hand edits of this face (clicked in the window): longer / shorter, its
+    # own legs; made longer, a bar stops at the far face of the concrete less
+    # the cover: the beam it runs into (continue_top's reach), else its support
+    reach = (continue_top or {}).get("reach") or [0.0, 0.0]
+    lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
+    hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
+    leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
+    # a leg too short to bend (a few mm) makes no rebar shape: the least one
+    leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
+    leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0
+    return leg0, leg1, s0, s1
+
+
 def mixed_continuations(lines, gap_m=0.6, tol_m=0.03):
     """Beam lines of different types on one axis meeting at a support (a
     deep beam and a flat one): {id(line): {"top": [start, end], "bot":
@@ -692,49 +743,10 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     for x, y, key in seated:
         d = spec.BAR_DIAMETERS_MM[key] / 1000.0
         top = y > 0
-        # the hook legs: the beam's own at each end, else the table's, else 12 db
-        hooked = anchor == ANCHOR_HOOK
-        leg0 = bx.hook_leg(line_settings, 0, key, legs, spec.BAR_DIAMETERS_MM, hooked)
-        leg1 = bx.hook_leg(line_settings, 1, key, legs, spec.BAR_DIAMETERS_MM, hooked)
-        start_run = end_run = 0.0
-        runs = (continue_top or {}).get("top" if top else "bot") or [False, False]
-        if any(runs):
-            run_on = (splice["laps"].get(key) if splice else None) or spec.e060_lap_cm(key) / 100.0
-            reach = continue_top.get("reach") or [run_on, run_on]
-            if runs[0]:
-                leg0, start_run = 0.0, min(run_on, reach[0])
-            if runs[1]:
-                leg1, end_run = 0.0, min(run_on, reach[1])
-        # a leg never leaves the concrete: in a shallow beam (a chata) it is
-        # cut to the depth there is, less the cover on the far face
-        room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
-        if room > 0:
-            leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
-            leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
+        leg0, leg1, bar_start, bar_end = main_bar_run(line, line_settings, design, y, key, cover, start_face,
+                                                      end_face, anchor, legs, splice, continue_top)
         leg = max(leg0, leg1)
         lap = 0.0
-        # a bottom bar's hook goes inside the top bars' one, side by side (not
-        # on it, as built): its end set back the two half diameters + 5 mm
-        bar_start, bar_end = start_face + cover, end_face - cover  # this bar's own (set back below)
-        b0, b1 = bar_start, bar_end
-        if not top:
-            top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
-            gap = (top_d + d) / 2.0 + 0.005
-            b0 += gap if leg0 > 0 else 0.0
-            b1 -= gap if leg1 > 0 else 0.0
-        bar_start, bar_end = b0 - start_run, b1 + end_run  # run on into the next beam line (a lap)
-        # the hand edits of this face (clicked in the window): longer / shorter, its own legs
-        # made longer, a bar stops at the far face of the concrete less the cover:
-        # the flat beam it runs into (continue_top's reach), else its support
-        reach = (continue_top or {}).get("reach") or [0.0, 0.0]
-        lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
-        hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
-        leg0, leg1, bar_start, bar_end = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM,
-                                                            leg0, leg1, bar_start, bar_end, lo, hi)
-        # a leg too short to bend (a few mm) makes no rebar shape: the least one
-        leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
-        leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0
-        leg = max(leg0, leg1)
         pieces = [(bar_start, bar_end)]
         # the hook legs count in a bar's length (a 9 m bar holds them)
         if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:

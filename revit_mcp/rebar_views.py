@@ -1008,6 +1008,25 @@ def draw_beam_elevation(canvas, data, frame):
         _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
         for s in m.get("stirrups") or []:  # its own stirrups, as its type sets them
             _line(canvas, frame, (s, m["y0"] * k + cover * 0.5), (s, m["y1"] * k - cover * 0.5), C_EDGE, 1.5)
+    # their main bars as generated - running on into this beam - (violet;
+    # the one clicked orange, with how far it gets inside this beam to edit)
+    picked = data.get("nb_selected")
+    for m in data.get("mixed") or []:
+        for item in m.get("bars") or []:
+            on = picked == (item["tag"], item["face"])
+            for pts in item["paths"]:
+                for p, q in zip(pts, pts[1:]):
+                    if on:
+                        _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), _brush(255, 200, 80), 7)
+                    _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k),
+                          _brush(240, 140, 20) if on else _brush(120, 60, 170), 2.5 if on else 1.6)
+            if on:
+                ss = [p[2] for pts in item["paths"] for p in pts]
+                inner = max(ss) if max(ss) <= data["length"] / 2.0 else min(ss)
+                y_lab = (y1 + 1.2 * u) if item["face"] == u"sup" else (y0 - 4.6 * u)
+                _edit_text(canvas, frame, inner + (0.3 * u if inner < data["length"] / 2.0 else -6.5 * u), y_lab,
+                           u"Dentro de la viga {:.2f}".format(item.get("inside", 0.0)),
+                           u"nbl:{}:{}".format(item["tag"], item["face"]))
     # longitudinal bars (seen from the side: hooks and cranks show)
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
