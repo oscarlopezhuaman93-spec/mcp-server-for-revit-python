@@ -416,12 +416,18 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
     lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
     hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
-    # a leg never leaves the concrete - typed by hand too: in a shallow beam (a
-    # chata, a vigueta) it is cut to the depth there is, less the far cover
+    # an automatic leg never leaves the concrete: in a shallow beam (a chata,
+    # a vigueta) it is cut to the depth there is, less the far cover. One typed
+    # by hand ("Gancho" of the beam, "Doblez" of the face) is kept as typed -
+    # the user's decision (2026-11-03)
     room = (line.ref_top - cover - d / 2.0 - y) if not top else (y - line.ref_bottom - cover - d / 2.0)
+    own = ((line_settings or {}).get("hooks") or {})
+    edit = bx.main_edit(line_settings, bx.TOP if top else bx.BOTTOM)
+    typed = [own.get("0") is not None or edit.get("h0") is not None,
+             own.get("1") is not None or edit.get("h1") is not None]
     if room > 0:
-        leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if leg0 > 0 else leg0
-        leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if leg1 > 0 else leg1
+        leg0 = min(leg0, max(spec.MIN_LEG_M, room)) if (leg0 > 0 and not typed[0]) else leg0
+        leg1 = min(leg1, max(spec.MIN_LEG_M, room)) if (leg1 > 0 and not typed[1]) else leg1
     # a leg too short to bend (a few mm) makes no rebar shape: the least one
     leg0 = max(leg0, spec.MIN_LEG_M) if leg0 > 1e-6 else 0.0
     leg1 = max(leg1, spec.MIN_LEG_M) if leg1 > 1e-6 else 0.0
