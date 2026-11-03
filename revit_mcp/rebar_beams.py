@@ -43,6 +43,7 @@ DEFAULT_COVER_CM = 4.0
 LINE_GAP_M = 1.2  # elements of one type and axis this close form one beam
 SUPPORT_REACH_M = 1.0  # supports looked for this far beyond the line ends
 LINE_TOL_M = 0.02
+LINE_LEVEL_TOL_M = 0.05  # level beams on one line: their tops this close (else another beam)
 BEAM_MARK = u"VIGA"  # bar types named for beams are preferred
 
 FRAMING = [DB.BuiltInCategory.OST_StructuralFraming]
@@ -258,6 +259,24 @@ class BeamLine(object):
         return out
 
 
+def _concrete_top(element):
+    """The top (ft) of an element's concrete - its solids', not its box's (a
+    beam moved down by its z offset keeps its location line in the box)."""
+    top = None
+    try:
+        for solid in rc._solids(element.get_Geometry(DB.Options())):
+            if solid.Volume < 1e-9:
+                continue
+            z = solid.GetBoundingBox().Transform.OfPoint(solid.GetBoundingBox().Max).Z
+            top = z if top is None else max(top, z)
+    except Exception:
+        pass
+    if top is None:
+        bb = element.get_BoundingBox(None)
+        top = bb.Max.Z if bb is not None else None
+    return top
+
+
 def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
     """Group beam elements into beam lines: same type, straight (level or sloped),
     collinear (within tol_m) and one after the other with gaps up to
@@ -269,12 +288,13 @@ def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
         if not isinstance(curve, DB.Line):
             continue
         p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
-        items.append((b, p0, p1))
+        items.append((b, p0, p1, _concrete_top(b)))
     lines = []  # [(type id, origin, direction, [(t0, t1, element)])]
-    for b, p0, p1 in items:
+    tops = {}  # line index -> top of its first element (a level line)
+    for b, p0, p1, top in items:
         d = (p1 - p0).Normalize()
         placed = False
-        for line in lines:
+        for k, line in enumerate(lines):
             tid, o, ld, members = line
             if tid != b.GetTypeId() or abs(abs(ld.DotProduct(d)) - 1.0) > 1e-4:
                 continue
@@ -282,18 +302,27 @@ def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
             perp = off - ld * off.DotProduct(ld)
             if perp.GetLength() * FT > tol_m:
                 continue
+            # a level beam moved up / down by its own z offset (its location
+            # line on the others', its concrete elsewhere) is another beam
+            if (abs(d.Z) < 1e-3 and top is not None and tops.get(k) is not None
+                    and abs(top - tops[k]) * FT > LINE_LEVEL_TOL_M):
+                continue
             ts = sorted(((q - o).DotProduct(ld) for q in (p0, p1)))
             members.append((ts[0], ts[1], b))
             placed = True
             break
         if not placed:
+            tops[len(lines)] = top
             lines.append((b.GetTypeId(), p0, d, [(0.0, (p1 - p0).GetLength(), b)]))
     result = []
     for tid, o, ld, members in lines:
         members.sort(key=lambda m: m[0])
+        # a vigueta stops at the columneta beside it: pieces with a column
+        # between are separate viguetas (only touching ones go on)
+        gap = VIGUETA_GAP_M if _is_vigueta_type(members[0][2]) else gap_m
         group = [members[0]]
         for m in members[1:]:
-            if (m[0] - group[-1][1]) * FT <= gap_m:
+            if (m[0] - group[-1][1]) * FT <= gap:
                 group.append(m)
             else:
                 result.append(group)
@@ -326,6 +355,26 @@ SUPPORT_CATEGORIES = (
     (DB.BuiltInCategory.OST_Walls, u"MURO"),
     (DB.BuiltInCategory.OST_StructuralFraming, u"VIGA"),
 )
+VIGUETA_WORDS = (u"VIGUETA",)
+
+
+VIGUETA_GAP_M = 0.02  # vigueta pieces this close are one; farther, a column between: two
+
+
+def _is_vigueta_type(element):
+    try:
+        symbol = element.Document.GetElement(element.GetTypeId())
+        names = u"{} {}".format(rc.element_name(symbol), getattr(symbol, "FamilyName", u"") or u"").upper()
+    except Exception:
+        return False
+    return any(w in names for w in VIGUETA_WORDS)
+
+
+def is_vigueta(line):
+    """A vigueta (a masonry wall's confining beam): its family or type named
+    so. It rests on the columnetas at its sides only - the wall it sits on
+    is no support - and stops at them (2026-11-03, with the user)."""
+    return _is_vigueta_type(line.elements[0])
 
 
 def mixed_continuations(lines, gap_m=0.6, tol_m=0.03):
@@ -380,7 +429,10 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
     bottom = min(ys)
     options = DB.Options()
     found = []
+    vigueta = is_vigueta(line)
     for bic, label in SUPPORT_CATEGORIES:
+        if vigueta and label == u"MURO":
+            continue  # a vigueta: the wall under it is no support
         collector = (DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType()
                      .WherePasses(DB.BoundingBoxIntersectsFilter(outline)))
         for element in collector:
@@ -417,6 +469,8 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
             found.append({"label": label, "s0": min(p[2] for p in pts), "s1": max(p[2] for p in pts),
                           "triangles": triangles, "id": element_id_value(element.Id)})
     found.sort(key=lambda f: f["s0"])
+    if vigueta:  # only what it touches: the columnetas at its sides, not a column past them
+        found = [f for f in found if f["s1"] >= -0.05 and f["s0"] <= line.length + 0.05]
     return found
 
 
@@ -425,6 +479,12 @@ def spans_and_ends(line, supports):
     support faces inside the line; the faces are where the bars anchor -
     the far face of the support at each end, else the line end."""
     spans = spec.clear_spans((0.0, line.length), [(f["s0"], f["s1"]) for f in supports])
+    # only where the line has concrete: a gap between its elements (a line
+    # running on past a column with no beam there) gets no stirrup
+    ranges = getattr(line, "ranges", None)
+    if ranges:
+        spans = [(max(a, r0), min(b, r1)) for a, b in spans for r0, r1 in ranges
+                 if min(b, r1) - max(a, r0) > 0.05]
     start_face = min([0.0] + [f["s0"] for f in supports if f["s0"] < 0.0 and f["s1"] >= -0.05])
     end_face = max([line.length] + [f["s1"] for f in supports
                                     if f["s1"] > line.length and f["s0"] <= line.length + 0.05])
