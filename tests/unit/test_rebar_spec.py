@@ -522,6 +522,15 @@ class TestDrawing:
         assert joint_positions(0.60, 0.10) == pytest.approx([0.1, 0.2, 0.3, 0.4, 0.5])
         assert joint_positions(0.12, 0.15) == pytest.approx([0.06])
 
+    def test_leg_candidates(self):
+        from revit_mcp.rebar_spec import leg_candidates, leg_samples
+
+        # a bar near the +x face of a 0.25 x 0.50 column: out by +x first,
+        # then out by +y (a beam from that side), -y, and into the column last
+        assert leg_candidates(0.08, 0.10, 0.125, 0.25) == [(1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (-1.0, 0.0)]
+        assert leg_candidates(-0.05, -0.20, 0.125, 0.25) == [(0.0, -1.0), (-1.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
+        assert leg_samples(0.20) == pytest.approx([0.10, 0.20, 0.225])
+
     def test_joint_by_count(self):
         from revit_mcp.rebar_spec import joint_count_text, joint_positions_count, parse_joint
 

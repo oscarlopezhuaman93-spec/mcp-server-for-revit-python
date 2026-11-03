@@ -783,6 +783,22 @@ def leg_vector(x, y, half_b, half_h, direction):
     return v if direction != LEG_IN else (-v[0], -v[1])
 
 
+def leg_candidates(x, y, half_b, half_h):
+    """The directions a bar's end leg may take, best first (2026-11-03,
+    with the user): out by the nearest face (where the beam / slab /
+    footing usually is), out by the other face (a beam coming from the
+    other side), that axis the other way, and last into the column."""
+    out = leg_vector(x, y, half_b, half_h, LEG_OUT)
+    other = (0.0, 1.0 if y >= 0 else -1.0) if out[0] else (1.0 if x >= 0 else -1.0, 0.0)
+    return [out, other, (-other[0], -other[1]), (-out[0], -out[1])]
+
+
+def leg_samples(leg, tip_cover=0.025):
+    """Distances along a leg checked to be in concrete: its middle, its
+    tip, and the tip plus the cover."""
+    return [leg * 0.5, leg, leg + tip_cover]
+
+
 def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=0.0,
                   leg_top=0.0, dir_top=None):
     """A vertical bar's points (x, y, z) from bottom to top, run `anchor` m

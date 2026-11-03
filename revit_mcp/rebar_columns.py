@@ -985,28 +985,31 @@ LEG_CONCRETE = (DB.BuiltInCategory.OST_StructuralFoundation, DB.BuiltInCategory.
 
 
 def leg_toward_concrete(doc, section, column, x, y, half_b, half_h, leg, z_world):
-    """The rule agreed with the user: a bar's leg turns out of the column
-    (square to its nearest face) only where a footing, slab, beam or wall
-    is there at the leg's level to take it; else in, never out of the
-    concrete. Returns the unit local vector."""
-    out = spec.leg_vector(x, y, half_b, half_h, spec.LEG_OUT)
-    reach = max(leg * 0.7, 0.05)
-    probe = section.point_m(x + out[0] * reach, y + out[1] * reach, z_world)
-    r = 0.02 / FT
-    outline = DB.Outline(DB.XYZ(probe.X - r, probe.Y - r, probe.Z - r), DB.XYZ(probe.X + r, probe.Y + r, probe.Z + r))
-    cats = List[DB.BuiltInCategory](list(LEG_CONCRETE))
+    """The rule agreed with the user (2026-11-03): a bar's end leg never
+    leaves the concrete. The whole leg - its middle, its tip and the tip
+    plus the cover (spec.leg_samples) - must lie in the column itself or in
+    a footing, slab, beam or wall at the leg's level; the first direction
+    of spec.leg_candidates that fits is taken (out by the nearest face, out
+    by the other one, ..., into the column). None fits: into the column.
+    Returns the unit local vector."""
+    candidates = spec.leg_candidates(x, y, half_b, half_h)
+    reach = (leg + 0.05) / FT
+    centre = section.point_m(x, y, z_world)
+    outline = DB.Outline(DB.XYZ(centre.X - reach, centre.Y - reach, centre.Z - 0.05 / FT),
+                         DB.XYZ(centre.X + reach, centre.Y + reach, centre.Z + 0.05 / FT))
+    cats = List[DB.BuiltInCategory](list(LEG_CONCRETE) + [DB.BuiltInCategory.OST_StructuralColumns])
+    solids = []  # the concrete around the bar end, read once
     for e in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
               .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
-        if e.Id == column.Id:
-            continue
-        for solid in _solids(e.get_Geometry(DB.Options())):
-            try:
-                if solid.IsInside(probe) if hasattr(solid, "IsInside") else _inside(solid, probe):
-                    return out
-            except Exception:
-                if _inside(solid, probe):
-                    return out
-    return (-out[0], -out[1])
+        solids += [s for s in _solids(e.get_Geometry(DB.Options())) if s.Volume > 1e-9]
+
+    def in_concrete(p):
+        return any(_inside(s, p) for s in solids)
+
+    for v in candidates:
+        if all(in_concrete(section.point_m(x + v[0] * t, y + v[1] * t, z_world)) for t in spec.leg_samples(leg)):
+            return v
+    return candidates[-1]
 
 
 def _inside(solid, point):
