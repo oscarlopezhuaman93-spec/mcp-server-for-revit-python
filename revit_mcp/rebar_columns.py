@@ -739,6 +739,14 @@ class Section(object):
         )
         return DB.XYZ(p.X, p.Y, z_world)
 
+    def local_m(self, point):
+        """(x, y) meters of a world point in the section's frame - the
+        inverse of point_m, mirror included (a mirrored column's steel and
+        polygon are the family's)."""
+        fx, fy = getattr(self, "flip", (1.0, 1.0))
+        q = self.transform.Inverse.OfPoint(point)
+        return (fx * (q.X - self.center[0]) * FT, fy * (q.Y - self.center[1]) * FT)
+
 
 def _symbol_polygon(symbol):
     """The section of a column family type (its bottom face, centered), ft."""
@@ -1531,7 +1539,6 @@ def record_weight(column, created):
     bars = 0
     stick_out = False
     section = Section(column)
-    inverse = section.transform.Inverse
     tol = 0.0015  # m
     for item in created:
         # (rebar, key, kind[, share]): a bar running several stacked columns
@@ -1545,8 +1552,7 @@ def record_weight(column, created):
             continue
         radius = spec.BAR_DIAMETERS_MM[key] / 2000.0
         for point in _centerline_points(rebar):
-            p = inverse.OfPoint(point)
-            local = ((p.X - section.center[0]) * FT, (p.Y - section.center[1]) * FT)
+            local = section.local_m(point)  # mirror included
             if (not spec.point_in_polygon(local, section.polygon_m)
                     or spec.distance_to_polygon(local, section.polygon_m) < radius - tol):
                 stick_out = True
@@ -1617,12 +1623,9 @@ def column_neighbors(doc, column, section, reach_m=0.6, contact_m=0.05, categori
         List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ,
         (section.z_top - section.z_bottom) + 2 * reach_m / FT,
     )
-    inverse = section.transform.Inverse
-
     def local(p):
-        q = inverse.OfPoint(p)
-        return ((q.X - section.center[0]) * FT, (q.Y - section.center[1]) * FT,
-                (p.Z - section.z_bottom) * FT)
+        x, y = section.local_m(p)  # mirror included: the neighbors where they are
+        return (x, y, (p.Z - section.z_bottom) * FT)
 
     result = []
     options = DB.Options()
