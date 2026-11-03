@@ -1927,8 +1927,26 @@ class AceroWindow(forms.WPFWindow):
         # generation will make (rc.generate_stack).
         splice = splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
         bar_paths, laps = None, []
+        try:
+            bar_paths, laps = self._stack_laps(splice, segments, bars, top, messages)
+        except Exception as e:  # the laps' preview only: the views are drawn without it
+            bar_paths, laps = None, []
+            _log_error(e)
+            messages.append(u"No se pudo mostrar la vista previa de empalmes")
+        # the bars into the foundation and their end legs (rc.bar_ends)
+        ends = rs.read_json_setting(f["ends"])
+        first, last = segments[0], segments[-1]
+        return self._views_end(f, ends, first, last, base, bars, bar_paths, laps, top, messages,
+                               neighbors, segments, loops)
+
+    def _stack_laps(self, splice, segments, bars, top, messages):
+        """(bar paths, laps) of stacked columns with continuous bars, as
+        rc.generate_stack cuts them; (None, []) otherwise."""
+        bar_paths, laps = None, []
         if splice and len(segments) > 1:
-            unspliced = sorted(set(k for _, _, k in bars if k not in splice["laps"]))
+            # a list, not a generator: IronPython's set() of an empty generator
+            # raises "Sequence contains no elements" (every diameter spliced)
+            unspliced = sorted(set([k for _, _, k in bars if k not in splice["laps"]]))
             if unspliced and top > splice["max"] + 1e-6:
                 messages.append(u"Sin empalme (diametro no marcado): barras de {} de {:.2f} m".format(
                     u", ".join(unspliced), top))
@@ -1942,15 +1960,17 @@ class AceroWindow(forms.WPFWindow):
                 if lap:
                     by_group, lap, found = rs.column_splice_groups(0.0, top, stories, lap, splice["max"])
                     pieces = by_group[group_of[index_bar]]
-                    messages.extend(m for m in found if m not in messages)
+                    messages.extend([m for m in found if m not in messages])
                 d = rs.BAR_DIAMETERS_MM[key] / 1000.0
                 for i, (a, b) in enumerate(pieces):
                     bar_paths.append((rs.bar_piece_points(x, y, d, a, b, lap, i < len(pieces) - 1), d / 2.0))
                     if i < len(pieces) - 1:
                         laps.append((round(b - lap, 3), round(b, 3), key))
-        # the bars into the foundation and their end legs (rc.bar_ends)
-        ends = rs.read_json_setting(f["ends"])
-        first, last = segments[0], segments[-1]
+        return bar_paths, laps
+
+    def _views_end(self, f, ends, first, last, base, bars, bar_paths, laps, top, messages,
+                   neighbors, segments, loops):
+        """The bars' ends (foundation, legs) and the views' data."""
         if first.get("anchor") is not None or last.get("leg_top"):
             if bar_paths is None:
                 bar_paths = [([(x, y, 0.0), (x, y, top)], rs.BAR_DIAMETERS_MM[k] / 2000.0) for x, y, k in bars]
@@ -1988,7 +2008,7 @@ class AceroWindow(forms.WPFWindow):
         elev = {
             "width": max(xs) - min(xs),
             "height": top,
-            "bars_x": sorted(set(round(x, 3) for x, _, _ in bars)),
+            "bars_x": sorted(set([round(x, 3) for x, _, _ in bars])),
             "message": messages[0] if messages else None,
             "neighbors": neighbors,
             "segments": segments,
