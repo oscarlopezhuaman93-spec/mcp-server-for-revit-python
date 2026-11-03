@@ -106,11 +106,13 @@ class SlabModel(object):
             # slab's longest side, its beams): planned in that frame
             angle = sr.ribbed(settings).get("angle")
             if self.sloped:
-                # a sloped slab: the viguetas always run down its slope (a
-                # turned one would lie across it: 2026-11-03, with the user)
+                # a sloped slab: its direction is measured from its slope
+                # ("rel": 0 = down the slope, 90 = along the ridge), so both
+                # waters of a roof turn alike whatever their frames; an old
+                # absolute "angle" is not used (2026-11-03, with the user)
                 settings = dict(settings)
                 settings["alig"] = dict(settings.get("alig") or {}, dir=sr.X)
-                angle = self.climb_angle()
+                angle = self.climb_angle() + float(slope_turn(settings))
             self.angle = float(sr.dominant_angle(self.slab_tris) if angle is None else angle)
             plan, warnings = sr.plan_ribbed(sr.rotate_tris(self.slab_tris, self.angle),
                                             sr.rotate_tris(self.support_tris, self.angle),
@@ -175,6 +177,13 @@ class SlabModel(object):
         """World unit vector of a plan axis (in the turned frame)."""
         x, y = sr.unrotate(1.0, 0.0, self.angle) if axis == sr.X else sr.unrotate(0.0, 1.0, self.angle)
         return (self.f.ux * x + self.f.uy * y).Normalize()
+
+
+def slope_turn(settings):
+    """A sloped slab's vigueta direction from its slope (deg, 0 = down the
+    slope): alig "rel", 0 when not set."""
+    rel = (settings.get("alig") or {}).get("rel")
+    return (float(rel) % 180.0) if rel is not None else 0.0
 
 
 def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None):
