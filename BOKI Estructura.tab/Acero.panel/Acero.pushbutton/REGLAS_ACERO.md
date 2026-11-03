@@ -21,6 +21,17 @@ aplica siempre; las pruebas de `tests/unit/test_rebar_spec.py` (clase
   al nudo (a su "rto") solo con "Estribo en núcleo".
   (Cambiado con el usuario el 2026-10-15; por cantidad desde el 2026-11-03.
   Un valor antiguo en cm se sigue leyendo como espaciamiento.)
+- **Tope de la altura libre:** solo cuenta una viga o losa que llega al tope de
+  la columna; una viga que entra a media altura (solera, dintel) no corta la
+  distribución (2026-11-03).
+- **Anclaje abajo:** en zapata/cimiento, o en una viga o muro de hasta 1.00 m
+  de alto justo debajo (viga de cimentación, sobrecimiento) (2026-11-03).
+- **Columneta** (tipo o familia "COLUMNETA"): estribos solo de abajo hacia
+  arriba, el último por debajo de la viga/vigueta; sin estribos en el nudo
+  salvo "Estribo en núcleo" (2026-11-03). Código: `is_columneta`.
+- **Columna y su nudo modelado aparte:** una sola barra entera por los dos
+  (misma pila aunque sean de otro tipo); los dos dobleces de una barra en un
+  mismo plano (`leg_pair`) (2026-11-03).
 - **Nudo modelado aparte:** una instancia de columna cuyo tipo o familia
   se llama "NUDO"/"NÚCLEO" (p. ej. "SCL_NUDO COLUMNA EN L..."), aunque su
   ELEMENTO diga "Columna de concreto" (2026-11-03); o una instancia de columna sobre la columna, con

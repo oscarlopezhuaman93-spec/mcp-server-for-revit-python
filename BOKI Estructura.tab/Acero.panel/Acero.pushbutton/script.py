@@ -1830,7 +1830,11 @@ class AceroWindow(forms.WPFWindow):
                        else 0.0)
             edge, edge_msg = self._family_view(f["edge"], f["edge_dist"], clear - izaje_h)
             conf, conf_msg = self._family_view(f["conf"], f["conf_dist"], clear - izaje_h)
+            columneta = rc.is_columneta(column)
             for fam in (edge, conf):
+                if fam and columneta and clear - izaje_h >= 0.05:
+                    # a columneta: from the base up only, the last under the beam (rc._runs bottom_up)
+                    fam["tagged"] = rs.span_zone_positions(clear - izaje_h, fam["zones"], fam["rest"], "end")
                 if fam and izaje_h:
                     fam["tagged"] = [(z + izaje_h, zone) for z, zone in fam["tagged"]]
             extra = {}
@@ -1857,6 +1861,8 @@ class AceroWindow(forms.WPFWindow):
                 given = rs.parse_joint(f["nucleo"])
                 if given and given[0] == "count":  # N stirrups, the joint split in equal parts
                     joint = rs.joint_positions_count(height - clear, given[1])
+                elif columneta and not given:
+                    joint = []  # a columneta: no stirrup in the joint unless asked
                 else:
                     spacing = given[1] if given else (edge or {}).get("rest")
                     if spacing:

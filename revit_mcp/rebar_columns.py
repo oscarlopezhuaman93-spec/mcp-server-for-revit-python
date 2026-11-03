@@ -88,6 +88,8 @@ CONFINEMENT_COVER_CM = 2.5  # columnetas (confinement columns)
 # Framing whose underside is at most this far below a column top frames
 # into it (limits the stirrup clear height).
 TOP_FRAMING_REACH_FT = 5.0
+TOP_MEMBER_REACH_M = 0.10  # a beam / slab whose top is this close to the column's top is over it
+COLUMNETA_WORDS = (u"COLUMNETA",)
 
 
 def element_name(element):
@@ -774,6 +776,18 @@ def _same_polygon(a, b, tol=1e-4):
     return all(any(abs(p[0] - q[0]) < tol and abs(p[1] - q[1]) < tol for q in b) for p in a)
 
 
+def is_columneta(column):
+    """A columneta (confining column of a masonry wall): its type or family
+    named so. Its stirrups go from the base up only, the last under the
+    beam over it, none in the joint (2026-11-03, with the user)."""
+    try:
+        symbol = column.Document.GetElement(column.GetTypeId())
+        names = u"{} {}".format(element_name(symbol), getattr(symbol, "FamilyName", u"") or u"").upper()
+    except Exception:
+        return False
+    return any(w in names for w in COLUMNETA_WORDS)
+
+
 NUCLEUS_WORDS = (u"NUDO", u"NUCLEO", u"NÚCLEO")
 NUCLEUS_MAX_M = 1.0  # a column piece this short standing on a column is its joint
 
@@ -859,8 +873,13 @@ def clear_top(doc, column, section):
         List[DB.CurveLoop]([loop]), DB.XYZ.BasisZ, section.z_top + 0.01 - mid)
     options = DB.Options()
 
+    reaches = section.z_top - TOP_MEMBER_REACH_M / FT
+
     def underside(element):
-        low, failed = None, False
+        """Its underside where it meets the column - only a member reaching
+        the column's top (a beam framing in at mid-height, a solera or a
+        dintel, is no top: 2026-11-03)."""
+        low, high, failed = None, None, False
         for solid in _solids(element.get_Geometry(options)):
             try:
                 part = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
@@ -873,9 +892,12 @@ def clear_top(doc, column, section):
             for edge in part.Edges:
                 for p in edge.Tessellate():
                     low = p.Z if low is None else min(low, p.Z)
+                    high = p.Z if high is None else max(high, p.Z)
         if low is None and failed:
             ebb = element.get_BoundingBox(None)
-            low = ebb.Min.Z if ebb is not None else None
+            low, high = (ebb.Min.Z, ebb.Max.Z) if ebb is not None else (None, None)
+        if high is not None and high < reaches:
+            return None
         return low
 
     for bic in (DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_Floors):
@@ -918,23 +940,32 @@ def _tag(rebar, column):
 
 
 def foundation_below(doc, column, section):
-    """Depth (m) of the foundation (zapata, cimiento, losa de cimentacion)
-    the column stands on - from the column base down to its bottom -, or
-    None when it stands on something else."""
-    cx, cy = section.center
+    """Depth (m) of the foundation the column stands on - from the column
+    base down to its bottom -, or None when it stands on nothing to anchor
+    in: a footing / cimiento / losa de cimentacion, or (2026-11-03) a beam
+    or a low wall right under it - a viga de cimentacion, a sobrecimiento,
+    a columneta's beam - of at most ANCHOR_HOST_MAX_M."""
     probe = section.point_m(0.0, 0.0, section.z_bottom - 0.05 / FT)
     outline = DB.Outline(DB.XYZ(probe.X - 0.05, probe.Y - 0.05, probe.Z - 0.05),
                          DB.XYZ(probe.X + 0.05, probe.Y + 0.05, probe.Z + 0.05))
+    cats = List[DB.BuiltInCategory]([DB.BuiltInCategory.OST_StructuralFoundation,
+                                     DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_Walls])
     deepest = None
-    for element in (DB.FilteredElementCollector(doc)
-                    .OfCategory(DB.BuiltInCategory.OST_StructuralFoundation)
+    for element in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
                     .WhereElementIsNotElementType()
                     .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
         bb = element.get_BoundingBox(None)
-        if bb is not None and bb.Max.Z >= section.z_bottom - 0.1 / FT:
-            depth = (section.z_bottom - bb.Min.Z) * FT
-            deepest = depth if deepest is None else max(deepest, depth)
+        if bb is None or bb.Max.Z < section.z_bottom - 0.1 / FT:
+            continue
+        foundation = element.Category.Id.IntegerValue == int(DB.BuiltInCategory.OST_StructuralFoundation)
+        if not foundation and (bb.Max.Z - bb.Min.Z) * FT > ANCHOR_HOST_MAX_M + 1e-6:
+            continue  # a tall wall / deep member under it: no foundation to anchor in
+        depth = (section.z_bottom - bb.Min.Z) * FT
+        deepest = depth if deepest is None else max(deepest, depth)
     return deepest
+
+
+ANCHOR_HOST_MAX_M = 1.0  # a beam or wall this deep at most under a column is its foundation
 
 
 def column_above(doc, column, section):
@@ -1098,19 +1129,22 @@ def _bar_normal(section, points_m):
     return section.transform.BasisX
 
 
-def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None, joint_count=None):
+def _runs(family, joint_spacing_m, section, z_clear_top, z_start=None, joint_count=None, bottom_up=False):
     """(z_start_ft, count, spacing_ft, side) runs of one stirrup family: its
     clear-height distribution, one rebar set per zone and end as written
     (spec.stirrup_sets: '1@.05' a single stirrup, '5@.10' a set of 5 at
     0.10, the rest one set in the middle), plus the joint when EA_Nucleo_cm
     is set. side is -1 for the top end zones: the way stirrups set at one
     height stack (towards the middle, so the first one keeps its distance
-    from each end)."""
+    from each end). `bottom_up` (a columneta): the distribution from the
+    base only, up to under the beam (spec.cantilever_sets)."""
     z_start = section.z_bottom if z_start is None else z_start
     clear_m = (z_clear_top - z_start) * FT
+    sets = (spec.cantilever_sets(clear_m, family.zones, family.rest) if bottom_up
+            else spec.stirrup_sets(clear_m, family.zones, family.rest))
     runs = [] if clear_m < 0.05 else [  # a joint modeled apart has no clear height
         (z_start + start / FT, n, spacing / FT, side)
-        for start, n, spacing, _, side in spec.stirrup_sets(clear_m, family.zones, family.rest)
+        for start, n, spacing, _, side in sets
     ]
     if (joint_count or joint_spacing_m) and section.z_top - z_clear_top > 0.1 / FT:
         # a count splits the joint in equal parts (EA_Nucleo_cm "3 est")
@@ -1252,6 +1286,7 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         created.append((rebar, key, LONGITUDINAL))
 
     z_clear_top = clear_top(doc, column, section)
+    columneta = is_columneta(column)
     # Izaje: over a footing, from the column base up to izaje_h; the column's
     # own distribution starts there.
     izaje_h = column_spec.izaje_h if (column_spec.izaje and foundation_below(doc, column, section)) else 0.0
@@ -1291,14 +1326,17 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         # on into it at their "rto" when EA_Nucleo_cm is set.
         # (2026-11-03) "N est": the edge stirrups are N, splitting the joint
         # in equal parts; the confinement ones keep their "rto".
+        # (2026-11-03) A columneta: its stirrups from the base up only, the
+        # last under the beam, none in the joint unless EA_Nucleo_cm says so.
         joint_m, joint_n = column_spec.joint_spacing_m, None
         if kind == CONFINEMENT:
             joint_m = family.rest if (joint_m or column_spec.joint_count) else None
         elif column_spec.joint_count:
             joint_n = column_spec.joint_count
-        else:
+        elif not columneta:
             joint_m = joint_m or family.rest
-        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start, joint_n):
+        for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start, joint_n,
+                                             bottom_up=columneta):
             for index, (line, is_open, shape_name) in enumerate(loops):
                 z = z_set + side * lift_ft[(kind, index, False)]
                 if is_open:
