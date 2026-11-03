@@ -2019,7 +2019,9 @@ class AceroWindow(forms.WPFWindow):
         splice = splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
         bar_paths, laps = None, []
         if splice and len(segments) > 1:
-            unspliced = sorted(set(k for _, _, k in bars if k not in splice["laps"]))
+            # a list, not a generator: IronPython fails on this generator in the window
+            # ("Sequence contains no elements", see Acero Columna)
+            unspliced = sorted(set([k for _, _, k in bars if k not in splice["laps"]]))
             if unspliced and top > splice["max"] + 1e-6:
                 messages.append(u"Sin empalme (diametro no marcado): barras de {} de {:.2f} m".format(
                     u", ".join(unspliced), top))

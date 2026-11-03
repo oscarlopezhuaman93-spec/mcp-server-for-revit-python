@@ -437,7 +437,7 @@ def brick_width(lib, room, cut=True):
     """The brick width for a strip `room` wide: a type of the family that
     fits it exactly, else (cut) the strip's own width, else the widest
     type that fits."""
-    widths = sorted(set(round(ancho, 3) for _, _, ancho in lib), reverse=True)
+    widths = sorted(set([round(ancho, 3) for _, _, ancho in lib]), reverse=True)  # a list: IronPython
     for w in widths:
         if abs(w - room) < 2e-3:
             return w

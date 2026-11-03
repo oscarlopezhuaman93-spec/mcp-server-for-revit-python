@@ -1944,8 +1944,8 @@ class AceroWindow(forms.WPFWindow):
         rc.generate_stack cuts them; (None, []) otherwise."""
         bar_paths, laps = None, []
         if splice and len(segments) > 1:
-            # a list, not a generator: IronPython's set() of an empty generator
-            # raises "Sequence contains no elements" (every diameter spliced)
+            # a list, not a generator: IronPython fails on this generator inside
+            # the window ("Sequence contains no elements", reproduced live)
             unspliced = sorted(set([k for _, _, k in bars if k not in splice["laps"]]))
             if unspliced and top > splice["max"] + 1e-6:
                 messages.append(u"Sin empalme (diametro no marcado): barras de {} de {:.2f} m".format(
