@@ -1006,6 +1006,8 @@ def draw_beam_elevation(canvas, data, frame):
               brush=C_NEIGHBOR_TEXT, size=9, bold=True)
     for pts in data.get("partners") or []:  # the other water of a sloped roof, as in the project
         _polygon(canvas, frame, [(p[0], p[1] * k) for p in pts], C_NEIGHBOR, C_NEIGHBOR_EDGE)
+    for a, b in data.get("other_stirrups") or []:  # its stirrups too
+        _line(canvas, frame, (a[0], a[1] * k), (b[0], b[1] * k), C_EDGE, 1)
         cs = sum([p[0] for p in pts]) / len(pts)
         cy = sum([p[1] for p in pts]) / len(pts) * k
         _text(canvas, frame, cs, cy, u"VIGA (otra agua)", brush=C_NEIGHBOR_TEXT, size=9, bold=True)

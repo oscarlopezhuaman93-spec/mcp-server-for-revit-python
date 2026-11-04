@@ -1792,6 +1792,11 @@ class AceroWindow(forms.WPFWindow):
         try:
             lines = t.lines if t.section is not None else []
             picked = set(self.state.picked_ids)
+            # beams picked in the model: only those listed (not every beam
+            # of the type - simpler to find the one to see)
+            mine = [line for line in lines if any(id_of(e.Id) in picked for e in line.elements)]
+            if mine:
+                lines = mine
             default = next((i for i, line in enumerate(lines)
                             if any(id_of(e.Id) in picked for e in line.elements)), None)
             if default is None and lines:
@@ -2040,9 +2045,51 @@ class AceroWindow(forms.WPFWindow):
                 continue
             r = rs.BAR_DIAMETERS_MM[key] / 2000.0
             out.append((pts, r))
-            mid = pts[len(pts) // 2]
-            by_face.setdefault(bx.TOP if mid[1] > 0 else bx.BOTTOM, []).append(pts)
-        return {"paths": out, "by_face": by_face, "ridge_end": ka if a is line else kb}
+            # its face: its height at this beam's middle (along its run in it)
+            half, y_mid = line.length / 2.0, None
+            for q0, q1 in zip(pts, pts[1:]):
+                lo_s, hi_s = min(q0[2], q1[2]), max(q0[2], q1[2])
+                if hi_s - lo_s > 1e-6 and lo_s <= half <= hi_s:
+                    y_mid = q0[1] + (q1[1] - q0[1]) * (half - q0[2]) / (q1[2] - q0[2])
+                    break
+            if y_mid is None:
+                continue  # not along this beam (the other water's own bars)
+            by_face.setdefault(bx.TOP if y_mid > 0 else bx.BOTTOM, []).append(pts)
+        ridge_end = ka if a is line else kb
+        own = sides[0] if a is line else sides[1]
+        legs_view = {}
+        for face, rows, ld_edit in ((bx.TOP, own["top"], own.get("ld_top")), (bx.BOTTOM, own["bottom"], own.get("ld_bot"))):
+            if not rows:
+                continue
+            (eave, _), key, _ = rows[0]
+            eave_leg = own["leg"].get(eave, 0.0)
+            ridge_leg = 0.0 if face == bx.TOP else (float(ld_edit) if ld_edit is not None
+                                                    else rs.e060_lap_cm(key, factor=1.0) / 100.0)
+            legs_view[face] = (ridge_leg, eave_leg) if ridge_end == 0 else (eave_leg, ridge_leg)
+        return {"paths": out, "by_face": by_face, "ridge_end": ridge_end, "legs": legs_view,
+                "stirrups": self._other_stirrups(line, other, form)}
+
+    def _other_stirrups(self, line, other, form):
+        """The other water's stirrups (its type's distribution in its clear
+        span), as segments [(s, y), (s, y)] in this line's elevation."""
+        try:
+            supports = self._supports(other)
+            spans, _, _ = rb.spans_and_ends(other, supports)
+            fam, _ = self._family_view(form["edge"], form["edge_dist"])
+            if fam is None or not spans:
+                return []
+            cover = float((form.get("cover") or u"4").replace(u",", u".")) / 100.0
+        except Exception:
+            return []
+        out = []
+        for a, b in spans:
+            for start, n, spacing, _, side in rs.span_stirrup_sets(b - a, fam["zones"], fam["rest"], None):
+                for k in range(n):
+                    sp = a + start + k * spacing
+                    p = line.local(other.point(0.0, other.ref_bottom + cover, sp))
+                    q = line.local(other.point(0.0, other.ref_top - cover, sp))
+                    out.append(((p[2], p[1]), (q[2], q[1])))
+        return out
 
     def _elev_tilt(self):
         """The slope (degrees, + rising with s) of the beam shown, 0 when it
@@ -2230,6 +2277,8 @@ class AceroWindow(forms.WPFWindow):
             for face, paths in ridge["by_face"].items():
                 if face in main_view:
                     main_view[face]["paths"] = paths
+                    if face in ridge["legs"]:  # what "Doblez" shows: the eave hook, the run past the ridge
+                        main_view[face]["legs"] = ridge["legs"][face]
             hook_view = [h for h in hook_view if h[2] != u"hook:{}".format(ridge["ridge_end"])]
         # the beam's extra bars (bastones, balancines), as rb.generate_line lays them
         extras_view = []
@@ -2335,6 +2384,7 @@ class AceroWindow(forms.WPFWindow):
         clipped = [_hull([(q[2], q[1]) for tri in tris for q in tri]) for tris in partners]  # whole: both waters
         elev["partners"] = [p for p in clipped if len(p) >= 3]
         elev["tilt"] = self._elev_tilt()  # its supports drawn plumb in the turned elevation
+        elev["other_stirrups"] = (ridge or {}).get("stirrups") or []
         scene = {
             "polygon": polygon,
             "length": line.length,

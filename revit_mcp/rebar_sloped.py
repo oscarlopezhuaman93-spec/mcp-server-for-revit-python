@@ -170,21 +170,31 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
                     z = box.Min.Z * FT + beam_spec.cover_m
                     floor_z = z if floor_z is None else min(floor_z, z)
         leg = {}
+        # the hand edits of each face (clicked in the window): its leg at the
+        # eave ("Doblez" there) and how far it runs along the other beam past
+        # the ridge ("Doblez" at the ridge end) - as on a level beam
+        edits = {"top": bx.main_edit(settings, bx.TOP), "bot": bx.main_edit(settings, bx.BOTTOM)}
+        eave_h, ridge_h = "h{}".format(eave_end), "h{}".format(ridge_end)
         top_z = min([e[1] for (e, _), _, _ in top] or [None]) if top else None
         for (eave, _), key, _ in top:
             want = bx.hook_leg(settings, eave_end, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+            if edits["top"].get(eave_h) is not None:
+                want = max(0.0, float(edits["top"][eave_h]))
             if want > 0 and floor_z is not None:
                 room = eave[1] - floor_z - spec.BAR_DIAMETERS_MM[key] / 2000.0
                 want = max(spec.MIN_LEG_M, min(want, room))
             leg[eave] = want
         for (eave, _), key, _ in bottom:  # its hook up, kept under the top bars
             want = bx.hook_leg(settings, eave_end, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+            if edits["bot"].get(eave_h) is not None:
+                want = max(0.0, float(edits["bot"][eave_h]))
             if want > 0 and top_z is not None:
                 room = top_z - eave[1] - 0.03
                 want = max(spec.MIN_LEG_M, min(want, room))
             leg[eave] = want
         host = line.element_at(0.0 if eave_end == 0 else line.length)
         sides.append({"line": line, "spec": beam_spec, "top": top, "bottom": bottom, "leg": leg,
+                      "ld_top": edits["top"].get(ridge_h), "ld_bot": edits["bot"].get(ridge_h),
                       "host": host, "ridge_host": line.element_at(line.length if ridge_end == 1 else 0.0)})
     sa, sb = sides
 
@@ -218,7 +228,9 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
             continue
         for row, key, w in own["top"][n:] + own["bottom"]:
             gap = (top_d(other) + spec.BAR_DIAMETERS_MM[key] / 1000.0) / 2.0
-            path = sp.anchored_path(row, other_top[0], own["leg"].get(row[0], 0.0), ld[key], gap,
+            own_ld = own["ld_bot"] if (row, key, w) in own["bottom"] else own["ld_top"]
+            run = float(own_ld) if own_ld is not None else ld[key]
+            path = sp.anchored_path(row, other_top[0], own["leg"].get(row[0], 0.0), run, gap,
                                     up=(row, key, w) in own["bottom"])
             if path is None:
                 continue
