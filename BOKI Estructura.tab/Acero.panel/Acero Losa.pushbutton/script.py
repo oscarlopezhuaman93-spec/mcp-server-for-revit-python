@@ -1184,6 +1184,8 @@ def generate_all(state, models, splice):
     except Exception:
         t.RollBack()
         raise
+    if bricks:
+        _refresh_view()
     return count, failed, warnings, bricks
 
 
@@ -1353,7 +1355,19 @@ def place_bricks_only(state, models):
     except Exception:
         t.RollBack()
         raise
+    if placed:
+        _refresh_view()
     return placed, failed
+
+
+def _refresh_view():
+    """The view redrawn after many bricks cut their slabs: else it may keep
+    showing the slabs open over the bricks (holes, loose strips)."""
+    try:
+        doc.Regenerate()
+        revit.uidoc.RefreshActiveView()
+    except Exception:
+        pass
 
 
 # --- main -------------------------------------------------------------------

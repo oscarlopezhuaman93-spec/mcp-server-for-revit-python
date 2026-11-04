@@ -516,6 +516,9 @@ def cut_bricks(slab, bricks):
                     n_beam += 1
             except Exception:
                 pass
+    # the cuts redrawn now: otherwise a view may keep showing the slab
+    # open over its bricks (holes, loose strips) until something regenerates it
+    doc.Regenerate()
     return n_slab, n_beam
 
 
