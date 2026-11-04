@@ -389,6 +389,26 @@ def _natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
+def _clip_path_s(points, lo, hi):
+    """The polyline [(x, y, s)] kept to lo <= s <= hi (the stretch inside)."""
+    out = []
+    for i, p in enumerate(points):
+        if lo <= p[2] <= hi:
+            if i > 0 and not (lo <= points[i - 1][2] <= hi):
+                q = points[i - 1]
+                v = lo if q[2] < lo else hi
+                t = (v - q[2]) / ((p[2] - q[2]) or 1e-9)
+                out.append(tuple([q[j] + (p[j] - q[j]) * t for j in range(3)]))
+            out.append(p)
+        elif out:
+            q = out[-1]
+            v = lo if p[2] < lo else hi
+            t = (v - q[2]) / ((p[2] - q[2]) or 1e-9)
+            out.append(tuple([q[j] + (p[j] - q[j]) * t for j in range(3)]))
+            break
+    return out
+
+
 def _clip_s(points, lo, hi):
     """The polygon [(s, y)] cut to lo <= s <= hi (Sutherland-Hodgman)."""
     def clip(pts, inside, cut):
@@ -1971,6 +1991,59 @@ class AceroWindow(forms.WPFWindow):
             return None, u"{}".format(e)
         return {"key": key, "zones": zones, "rest": rest}, None
 
+    def _ridge_view(self, line, form, legs, splice, settings):
+        """The main bars of `line` when it meets another sloped beam at a
+        ridge, as rsl.generate_pair lays them, in this line's frame and cut
+        to near the ridge: {"paths": [(points (x, y, s), radius)],
+        "by_face": {face: [points]}, "ridge_end": 0/1}; None otherwise."""
+        if not getattr(line, "sloped", False):
+            return None
+        try:
+            pool = [l for t in self.by_id.values()
+                    if t.id == self.state.active or t.id in self.state.checked for l in t.lines]
+            pairs = rsl.ridge_pairs(pool)
+        except Exception:
+            return None
+        found = [p for p in pairs if p[0] is line or p[1] is line]
+        pair = found[0] if found else None
+        if pair is None:
+            return None
+        a, b, ka, kb = pair
+        other = b if a is line else a
+        try:
+            own_spec = rc.ColumnSpec(self._config_from_form(True))
+        except Exception:
+            own_spec = None
+        try:
+            other_type = self.by_id.get(id_of(other.type_id))
+            other_spec = rc.ColumnSpec(other_type.config()) if other_type is not None and \
+                other_type.id != self.state.active else own_spec
+        except Exception:
+            other_spec = own_spec
+        if own_spec is None or other_spec is None:
+            return None
+        spec_a, spec_b = (own_spec, other_spec) if a is line else (other_spec, own_spec)
+        other_settings = rb.read_line_settings(other)
+        set_a, set_b = (settings, other_settings) if a is line else (other_settings, settings)
+        anchor = form["anchor"]
+        try:
+            frame, sides, paths, _ = rsl.pair_paths(doc, pair, spec_a, spec_b, anchor, anchor, splice, legs,
+                                                    set_a, set_b)
+        except Exception:
+            return None
+        lo, hi = -1.2, line.length + 1.2
+        out, by_face = [], {}
+        for path, key, w, shares in paths:
+            pts = [line.local(frame.world(u, z, w)) for u, z in path]
+            pts = _clip_path_s(pts, lo, hi)
+            if len(pts) < 2:
+                continue
+            r = rs.BAR_DIAMETERS_MM[key] / 2000.0
+            out.append((pts, r))
+            mid = pts[len(pts) // 2]
+            by_face.setdefault(bx.TOP if mid[1] > 0 else bx.BOTTOM, []).append(pts)
+        return {"paths": out, "by_face": by_face, "ridge_end": ka if a is line else kb}
+
     def _elev_tilt(self):
         """The slope (degrees, + rising with s) of the beam shown, 0 when it
         is level: its elevation is drawn at it, as in the project."""
@@ -2146,6 +2219,18 @@ class AceroWindow(forms.WPFWindow):
                 main_view[face]["paths"].append(path)
                 if not last:
                     laps.append((round(s1 - lap, 3), round(s1, 3), key, top))
+        # a gable frame (two sloped beams at a ridge): its main bars as
+        # rsl.generate_pair makes them - over the ridge into the other water,
+        # plumb hooks into the eave support - not a level beam's hooks
+        ridge = self._ridge_view(line, f, legs, splice, settings)
+        if ridge is not None:
+            mains = [id(p) for mv in main_view.values() for p in mv["paths"]]
+            kept = [bp for bp in bar_paths if id(bp[0]) not in mains]
+            bar_paths[:] = kept + ridge["paths"]
+            for face, paths in ridge["by_face"].items():
+                if face in main_view:
+                    main_view[face]["paths"] = paths
+            hook_view = [h for h in hook_view if h[2] != u"hook:{}".format(ridge["ridge_end"])]
         # the beam's extra bars (bastones, balancines), as rb.generate_line lays them
         extras_view = []
         for index, extra in enumerate(settings["extras"]):
@@ -2250,6 +2335,7 @@ class AceroWindow(forms.WPFWindow):
         clipped = [_clip_s(_hull([(q[2], q[1]) for tri in tris for q in tri]), -1.2, line.length + 1.2)
                    for tris in partners]
         elev["partners"] = [p for p in clipped if len(p) >= 3]
+        elev["tilt"] = self._elev_tilt()  # its supports drawn plumb in the turned elevation
         scene = {
             "polygon": polygon,
             "length": line.length,

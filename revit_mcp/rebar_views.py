@@ -989,7 +989,18 @@ def draw_beam_elevation(canvas, data, frame):
     # alternating heights so neighbours don't write over each other
     for index, f in enumerate(sorted(data["supports"], key=lambda f: f["s0"])):
         reach = 0.0 if f["label"] == u"VIGA" else 2.5 * u
-        _rect(canvas, frame, f["s0"], y0 - reach, f["s1"], y1 + reach, C_NEIGHBOR, C_NEIGHBOR_EDGE)
+        tan = math.tan(math.radians(data.get("tilt") or 0.0))
+        if abs(tan) > 0.01:
+            # a sloped beam's elevation is turned to its slope: the support,
+            # plumb in the model, drawn leaning back so it shows plumb
+            c = (f["s0"] + f["s1"]) / 2.0
+            half = max(0.05, (f["s1"] - f["s0"] - abs(tan) * (y1 - y0)) / 2.0)
+            ya, yb = y0 - reach, y1 + reach
+            _polygon(canvas, frame, [(c - half + ya * tan, ya), (c + half + ya * tan, ya),
+                                     (c + half + yb * tan, yb), (c - half + yb * tan, yb)],
+                     C_NEIGHBOR, C_NEIGHBOR_EDGE)
+        else:
+            _rect(canvas, frame, f["s0"], y0 - reach, f["s1"], y1 + reach, C_NEIGHBOR, C_NEIGHBOR_EDGE)
         lift = 1.1 * u * (data.get("cota_rows") or (0, 0))[0]  # over the extra bars' dimensions
         _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + lift + (index % 2) * 1.2 * u, f["label"],
               brush=C_NEIGHBOR_TEXT, size=9, bold=True)

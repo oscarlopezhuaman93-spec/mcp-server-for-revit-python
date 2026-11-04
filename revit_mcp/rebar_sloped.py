@@ -112,6 +112,22 @@ def generate_pair(doc, pair, spec_a, spec_b, anchor_a, anchor_b, bar_types, spli
     """The longitudinal bars of a ridge pair (inside an active Transaction;
     its stirrups made apart with longitudinal=False).
     Returns ({element id: [(rebar, key, kind, share)]}, warnings)."""
+    frame, sides, paths, warnings = pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs,
+                                               settings_a, settings_b)
+    created = dict((element_id_value(e.Id), []) for s in sides for e in s["line"].elements)
+    for path, key, w, shares in paths:
+        side = shares[0][0]
+        bar_type = side["spec"].bar_type(doc, bar_types, key, rb.BEAM_MARK)
+        rebar = _bar(doc, frame, side["host"], bar_type, path, w)
+        for s, share in shares:
+            created[element_id_value(s["host"].Id)].append((rebar, key, rc.LONGITUDINAL, share))
+    return created, warnings
+
+
+def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, settings_a=None, settings_b=None):
+    """The longitudinal bars of a ridge pair as generate_pair lays them (one
+    logic, also what the window draws): (frame, sides, [(path [(u, z)], key,
+    w, shares)], warnings) - frame.world(u, z, w) gives each point."""
     a, b, ka, kb = pair
     frame = _Frame(a)
     sides = []
@@ -150,7 +166,6 @@ def generate_pair(doc, pair, spec_a, spec_b, anchor_a, anchor_b, bar_types, spli
         return max([spec.BAR_DIAMETERS_MM[k] for _, k, _ in side["top"]] or [0.0]) / 1000.0
     max_length = splice["max"] if splice else 1e9
     laps = splice["laps"] if splice else None
-    created = dict((element_id_value(e.Id), []) for s in sides for e in s["line"].elements)
     warnings = []
 
     n = min(len(sa["top"]), len(sb["top"]))
@@ -180,13 +195,7 @@ def generate_pair(doc, pair, spec_a, spec_b, anchor_a, anchor_b, bar_types, spli
             if sp.length(path) > max_length + 1e-6:
                 warnings.append(u"Barra {}: {:.2f} m".format(key, sp.length(path)))
             paths.append((path, key, w, [(own, 1.0)]))
-    for path, key, w, shares in paths:
-        side = shares[0][0]
-        bar_type = side["spec"].bar_type(doc, bar_types, key, rb.BEAM_MARK)
-        rebar = _bar(doc, frame, side["host"], bar_type, path, w)
-        for s, share in shares:
-            created[element_id_value(s["host"].Id)].append((rebar, key, rc.LONGITUDINAL, share))
-    return created, warnings
+    return frame, sides, paths, warnings
 
 
 # --- Boceto: a bar drawn point by point -------------------------------------
