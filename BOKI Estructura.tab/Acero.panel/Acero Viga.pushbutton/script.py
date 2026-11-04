@@ -1745,7 +1745,9 @@ class AceroWindow(forms.WPFWindow):
             for other in others:
                 if not any(id_of(e.Id) in picked for e in other.elements):
                     continue
-                if abs(abs(other.direction.DotProduct(line.direction)) - 1.0) > 1e-3:
+                d_o, d_l = other.direction, line.direction  # in plan: a sloped beam on the axis too
+                n_o, n_l = math.hypot(d_o.X, d_o.Y), math.hypot(d_l.X, d_l.Y)
+                if n_o < 1e-6 or n_l < 1e-6 or abs(abs(d_o.X * d_l.X + d_o.Y * d_l.Y) / (n_o * n_l) - 1.0) > 1e-3:
                     continue
                 pts = [line.local(other.point(0.0, y, s)) for s in (0.0, other.length)
                        for y in (min(p[1] for p in other.section.polygon_m), max(p[1] for p in other.section.polygon_m))]
