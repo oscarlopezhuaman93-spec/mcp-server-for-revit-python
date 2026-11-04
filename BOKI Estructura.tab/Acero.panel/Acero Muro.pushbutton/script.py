@@ -2778,7 +2778,12 @@ def mesh_vertical_paths(wall, mesh, cover):
             c = rf.DEFAULT_COVER_CM / 100.0 if label == u"ZAPATA" else cover
             below = rf.inner_outline(pts, [c] * len(pts))
             break
-    return geo, rf.wall_mesh_paths(outer, inner, below, 2 if mesh["double"] else 1, mesh["va"], mesh["vl"] or 0.0)
+    paths = rf.wall_mesh_paths(outer, inner, below, 2 if mesh["double"] else 1, mesh["va"], mesh["vl"] or 0.0)
+    # up to the top cover: past the highest horizontal bar, holding it
+    z_top = max(q[1] for q in outer) - cover
+    for path, _ in paths:
+        path[0] = (path[0][0], z_top)
+    return geo, paths
 
 
 def mesh_bars(wall, item):
