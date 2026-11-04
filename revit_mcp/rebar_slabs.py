@@ -559,6 +559,28 @@ def beam_tris(model):
         if (i not in seen and e is not None and e.Category is not None
                 and e.Category.Id.IntegerValue == int(DB.BuiltInCategory.OST_StructuralFraming)):
             beams.append(e)
+    planes = []
+    for r in DB.HostObjectUtils.GetTopFaces(slab):
+        f = slab.GetGeometryObjectFromReference(r)
+        if isinstance(f, DB.PlanarFace) and abs(f.FaceNormal.Z) > 0.2:
+            planes.append(f)
+    depth = model.thickness / FT  # vertical, in feet
+
+    def reaches(p):
+        """Whether a beam point is up at the slab (not a beam of the floor
+        below, joined to the slab only at its edge): at or above the slab's
+        bottom right over it."""
+        if not planes:
+            return True
+        best = None
+        for f in planes:
+            n, o = f.FaceNormal, f.Origin
+            z = o.Z - (n.X * (p.X - o.X) + n.Y * (p.Y - o.Y)) / n.Z
+            res = f.Project(DB.XYZ(p.X, p.Y, z))
+            d = res.Distance if res is not None else 1e9
+            if best is None or d < best[0]:
+                best = (d, z)
+        return p.Z >= best[1] - depth - 0.03 / FT
     out = []
     for beam in beams:
         for g in beam.get_Geometry(DB.Options()):
@@ -573,7 +595,12 @@ def beam_tris(model):
                     mesh = face.Triangulate()
                     for i in range(mesh.NumTriangles):
                         tr = mesh.get_Triangle(i)
-                        out.append([model.f.local(tr.get_Vertex(k))[:2] for k in range(3)])
+                        vs = [tr.get_Vertex(k) for k in range(3)]
+                        c = DB.XYZ(sum(v.X for v in vs) / 3.0, sum(v.Y for v in vs) / 3.0,
+                                   max(v.Z for v in vs))
+                        if not reaches(c):  # under the slab there: no beam in the slab
+                            continue
+                        out.append([model.f.local(v)[:2] for v in vs])
     return out
 
 
