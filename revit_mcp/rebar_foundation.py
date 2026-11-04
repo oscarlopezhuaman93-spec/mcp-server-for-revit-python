@@ -830,3 +830,17 @@ def wall_mesh_paths(wall_outer, wall_inner, below_inner=None, layers=2, anchor=N
                 p[-1] = (p[-1][0], z)
                 out[k] = (p, out[k][1] - 0.025)
     return out
+
+
+def equal_positions(lo, hi, mode, spacing, count):
+    """Bar positions between lo and hi split in equal parts: SPACING - as
+    few bars as keep them at most `spacing` m apart, from lo to hi;
+    QUANTITY - `count` bars from lo to hi; BOTH - `count` bars every
+    `spacing` m, centered (clipped to lo..hi)."""
+    if mode == SPACING:
+        length = hi - lo
+        if length < 1e-6 or not spacing:
+            return [(lo + hi) / 2.0]
+        parts = max(1, int(math.ceil(length / spacing - 1e-6)))
+        return [lo + k * length / parts for k in range(parts + 1)]
+    return distribute(lo, hi, mode, spacing, count)

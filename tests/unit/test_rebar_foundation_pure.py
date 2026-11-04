@@ -169,3 +169,10 @@ def test_mesh_legs_same_side_do_not_cross():
     assert p0[-1][0] > p0[-2][0] and p1[-1][0] > p1[-2][0]
     assert abs(p0[-1][1] - (p1[-1][1] + 0.025)) < 1e-9
     assert abs(a0 - 0.275) < 1e-9
+
+
+def test_equal_positions():
+    assert rf.equal_positions(0.0, 1.0, rf.SPACING, 0.30, 1) == pytest.approx([0, 0.25, 0.5, 0.75, 1.0])
+    assert rf.equal_positions(0.0, 0.9, rf.SPACING, 0.30, 1) == pytest.approx([0, 0.3, 0.6, 0.9])
+    assert rf.equal_positions(0.0, 1.0, rf.QUANTITY, 0.0, 3) == pytest.approx([0, 0.5, 1.0])
+    assert rf.equal_positions(0.0, 1.0, rf.BOTH, 0.2, 3) == pytest.approx([0.3, 0.5, 0.7])

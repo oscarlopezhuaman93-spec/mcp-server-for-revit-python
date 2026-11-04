@@ -393,6 +393,8 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_hz_d.ItemsSource = List[str](rs.bar_diameter_keys())
         self.cbo_mv_d.ItemsSource = List[str](rs.bar_diameter_keys())
         self.cbo_mh_d.ItemsSource = List[str](rs.bar_diameter_keys())
+        self.cbo_mv_m.ItemsSource = List[str](list(rf.DIST_MODES))
+        self.cbo_mh_m.ItemsSource = List[str](list(rf.DIST_MODES))
         self._mesh_cache = {}
         self.cbo_cut_m.SelectedItem = rf.SPACING
         # Plan / elevation / 3D views: zoom-pan state and what they last showed.
@@ -1024,7 +1026,11 @@ class AceroWindow(forms.WPFWindow):
             self.txt_mv_s.Text = text(m["vs"])
             self.txt_mv_anchor.Text = text(m["va"])
             self.txt_mv_leg.Text = text(m["vl"])
-            self.txt_mh_dist.Text = m["hdist"]
+            self.cbo_mv_m.SelectedItem = m["vm"]
+            self.cbo_mh_m.SelectedItem = m["hm"]
+            self.txt_mv_n.Text = u"{}".format(m["vn"])
+            self.txt_mh_n.Text = u"{}".format(m["hn"])
+            self.txt_mh_s.Text = text(m["hs"])
             self.txt_mh_al.Text = text(m["hal"])
             self.txt_mh_ar.Text = text(m["har"])
             self.txt_mh_hook.Text = text(m["hk"])
@@ -1045,7 +1051,9 @@ class AceroWindow(forms.WPFWindow):
                 "vd": self.cbo_mv_d.SelectedItem or u'1/2"', "vt": self._chosen_type(self.cbo_mv_type),
                 "vs": num(self.txt_mv_s, 0.20), "va": num(self.txt_mv_anchor, None), "vl": num(self.txt_mv_leg, 0.0),
                 "hd": self.cbo_mh_d.SelectedItem or u'3/8"', "ht": self._chosen_type(self.cbo_mh_type),
-                "hdist": (self.txt_mh_dist.Text or u"").strip(), "hal": num(self.txt_mh_al, 0.0),
+                "vm": self.cbo_mv_m.SelectedItem or rf.SPACING, "vn": int(num(self.txt_mv_n, 5) or 1),
+                "hm": self.cbo_mh_m.SelectedItem or rf.SPACING, "hn": int(num(self.txt_mh_n, 7) or 1),
+                "hs": num(self.txt_mh_s, 0.20), "hal": num(self.txt_mh_al, 0.0),
                 "har": num(self.txt_mh_ar, 0.0), "hk": num(self.txt_mh_hook, 0.0)}
 
     def mesh_changed(self, sender, args):
@@ -1075,9 +1083,14 @@ class AceroWindow(forms.WPFWindow):
         key = (id_of(wall.Id), mesh["vd"], mesh["hd"], mesh["double"], mesh["va"], mesh["vl"], cover)
         if key not in self._mesh_cache:
             try:
-                self._mesh_cache[key] = mesh_vertical_paths(wall, mesh, cover)[1]
+                geo, paths = mesh_vertical_paths(wall, mesh, cover)
+                # the range along the wall as generated (mesh_bars), from its middle
+                planner = rf.BarPlanner(geo, dict((f.number, cover * 100.0) for f in geo.faces), rs.BAR_DIAMETERS_MM)
+                lo, hi = planner._range(rf.SIDE, rs.BAR_DIAMETERS_MM[mesh["vd"]] / 1000.0)
+                mid = (geo.extent[0] + geo.extent[1]) / 2.0
+                self._mesh_cache[key] = (paths, (lo - mid, hi - mid))
             except Exception:
-                self._mesh_cache[key] = []
+                self._mesh_cache[key] = ([], None)
         return self._mesh_cache[key]
 
     def _horizontal_form(self):
@@ -2048,21 +2061,24 @@ class AceroWindow(forms.WPFWindow):
             mesh = self._mesh_form()
             if index == 0 and mesh["on"]:
                 hzm = mesh_horizontal(mesh)
-                if hzm["dist"]:
+                if True:
                     try:
-                        zones, rest = rs.parse_distribution(hzm["dist"])
+                        try:
+                            cover_m = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+                        except ValueError:
+                            cover_m = 0.04
                         if mesh["double"]:
                             hpaths = self._horizontal_paths(base.polygon_m, hzm)
                         else:
                             xs0 = [q[0] for q in base.polygon_m]
                             hpaths = [rs.wall_horizontal_path(min(xs0), max(xs0), mesh_single_offset(mesh),
                                                               hzm["al"], hzm["ar"], 0.0, 0.0)]
-                        extra["horiz"] = {"levels": rs.stirrup_positions(height, zones, rest),
+                        extra["horiz"] = {"levels": mesh_levels(mesh, height, cover_m),
                                           "al": hzm["al"], "ar": hzm["ar"], "paths": hpaths,
                                           "radius": rs.BAR_DIAMETERS_MM.get(hzm["d"], 9.5) / 2000.0}
                     except rs.SpecError as e:
                         messages.append(u"Malla horizontal: {}".format(e))
-                vpaths = self._mesh_vertical(column, mesh)
+                vpaths, vrange = self._mesh_vertical(column, mesh)
                 if vpaths:
                     try:
                         cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
@@ -2070,10 +2086,10 @@ class AceroWindow(forms.WPFWindow):
                         cover = 0.04
                     xs0 = [q[0] for q in base.polygon_m]
                     d_v = rs.BAR_DIAMETERS_MM.get(mesh["vd"], 12.7) / 1000.0
-                    xs_v = rf.distribute(min(xs0) + cover + d_v / 2.0, max(xs0) - cover - d_v / 2.0,
-                                         rf.SPACING, mesh["vs"], 1)
+                    lo, hi = vrange or (min(xs0) + cover + d_v / 2.0, max(xs0) - cover - d_v / 2.0)
+                    xs_v = rf.equal_positions(lo, hi, mesh["vm"], mesh["vs"], mesh["vn"])
                     extra["mesh_v"] = {"xs": list(xs_v), "paths": vpaths, "radius": d_v / 2.0,
-                                       "anchor": max(dep for _, dep in vpaths)}
+                                       "anchor": max([dep for _, dep in vpaths])}
             if index == len(columns) - 1 and not rc.column_above(doc, column, section):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
@@ -2096,7 +2112,7 @@ class AceroWindow(forms.WPFWindow):
                 neighbors.append({
                     "label": n["label"], "seg": index,
                     "box": (x0 + dx, y0 + dy, z0 + dz, x1 + dx, y1 + dy, z1 + dz),
-                    "triangles": [tuple((p[0] + dx, p[1] + dy, p[2] + dz) for p in tri)
+                    "triangles": [tuple([(p[0] + dx, p[1] + dy, p[2] + dz) for p in tri])
                                   for tri in n["triangles"]],
                 })
             families = {rs.KIND_EDGE: edge, rs.KIND_CONFINEMENT: conf}
@@ -2181,14 +2197,14 @@ class AceroWindow(forms.WPFWindow):
         elev = {
             "width": max(xs) - min(xs),
             "height": top,
-            "bars_x": sorted(set(round(x, 3) for x, _, _ in bars)),
+            "bars_x": sorted(set([round(x, 3) for x, _, _ in bars])),
             "message": messages[0] if messages else None,
             "neighbors": neighbors,
             "segments": segments,
             "laps": sorted(set(laps)),
         }
         if len(segments) == 1:  # the single-column keys too
-            elev.update(dict((k, segments[0][k]) for k in ("clear", "edge", "conf", "joint", "joint_conf")))
+            elev.update(dict([(k, segments[0][k]) for k in ("clear", "edge", "conf", "joint", "joint_conf")]))
         mesh_v = segments[0].get("mesh_v")
         if mesh_v:
             if bar_paths is None:
@@ -2695,8 +2711,15 @@ def mesh_setting(cfg):
     out = {"on": bool(m.get("on")), "double": m.get("double", True) is not False,
            "vd": m.get("vd") or u'1/2"', "vt": m.get("vt") or u"", "vs": 0.20, "va": 0.30, "vl": 0.15,
            "hd": m.get("hd") or u'3/8"', "ht": m.get("ht") or u"", "hdist": m.get("hdist") or u"1@0.05, rto@0.20",
-           "hal": 0.30, "har": 0.30, "hk": 0.10}
-    for k in ("vs", "va", "vl", "hal", "har", "hk"):
+           "hal": 0.30, "har": 0.30, "hk": 0.10,
+           "vm": m.get("vm") if m.get("vm") in rf.DIST_MODES else rf.SPACING, "vn": 5,
+           "hm": m.get("hm") if m.get("hm") in rf.DIST_MODES else rf.SPACING, "hn": 7, "hs": 0.20}
+    for k in ("vn", "hn"):
+        try:
+            out[k] = max(1, int(float(m.get(k, out[k]))))
+        except (TypeError, ValueError):
+            pass
+    for k in ("vs", "va", "vl", "hal", "har", "hk", "hs"):
         if k in m:
             try:
                 out[k] = None if m[k] in (None, u"") else max(0.0, float(m[k]))
@@ -2704,12 +2727,21 @@ def mesh_setting(cfg):
                 pass
     if not out["vs"]:
         out["vs"] = 0.20
+    if not out["hs"]:
+        out["hs"] = 0.20
     return out
+
+
+def mesh_levels(mesh, height, cover):
+    """Heights (m from the wall's bottom) of the mesh's horizontal bars:
+    from the bottom cover up to the top one, in equal parts."""
+    d = rs.BAR_DIAMETERS_MM.get(mesh["hd"], 9.5) / 1000.0
+    return rf.equal_positions(cover + d / 2.0, height - cover - d / 2.0, mesh["hm"], mesh["hs"], mesh["hn"])
 
 
 def mesh_horizontal(mesh):
     """The mesh's horizontal bars as horizontal_bars' settings."""
-    return {"on": mesh["on"], "d": mesh["hd"], "dist": mesh["hdist"], "al": mesh["hal"] or 0.0,
+    return {"on": mesh["on"], "d": mesh["hd"], "dist": mesh.get("hdist") or u"", "al": mesh["hal"] or 0.0,
             "ar": mesh["har"] or 0.0, "hook": mesh["hk"] or 0.0}
 
 
@@ -2768,7 +2800,7 @@ def mesh_bars(wall, item):
         lo, hi = planner._range(rf.SIDE, rs.BAR_DIAMETERS_MM[key] / 1000.0)
         bars = []
         for path, depth in paths:
-            for pos in rf.distribute(lo, hi, rf.SPACING, mesh["vs"], 1):
+            for pos in rf.equal_positions(lo, hi, mesh["vm"], mesh["vs"], mesh["vn"]):
                 bars.append((rf.SIDE, pos, path, key, mesh["vt"]))
         bar_type = rc.named_bar_type(doc, mesh["vt"], key) or bar_types.pick(key, rc.type_mark(item.name))
         for view, k, path, first, count, spacing, tname in rf.bar_sets(bars):
@@ -2783,8 +2815,8 @@ def mesh_bars(wall, item):
             rc._tag(rebar, wall)
             made.append((rebar, k, rc.LONGITUDINAL))
     hz = mesh_horizontal(mesh)
-    if hz["dist"].strip():
-        made += horizontal_bars(wall, item, hz, None if mesh["double"] else mesh_single_offset(mesh), mesh["ht"])
+    made += horizontal_bars(wall, item, hz, None if mesh["double"] else mesh_single_offset(mesh), mesh["ht"],
+                            lambda height, cover: mesh_levels(mesh, height, cover))
     return made
 
 
@@ -2828,7 +2860,7 @@ def cut_bars(wall, item):
     return made
 
 
-def horizontal_bars(wall, item, hz=None, single=None, type_name=u""):
+def horizontal_bars(wall, item, hz=None, single=None, type_name=u"", levels=None):
     """The wall's horizontal bars (EA_Muro_Horizontal): one per face at each
     level of its distribution, run into the columns at both ends by their
     anchorage, with a leg towards the other face. [(rebar, key, kind)].
@@ -2838,7 +2870,7 @@ def horizontal_bars(wall, item, hz=None, single=None, type_name=u""):
     cfg = item.config()
     if hz is None:
         hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
-    if not hz.get("on") or not (hz.get("dist") or u"").strip():
+    if not hz.get("on") or (levels is None and not (hz.get("dist") or u"").strip()):
         return []
     section = rc.Section(wall)
     key = hz.get("d") or u'3/8"'
@@ -2851,8 +2883,11 @@ def horizontal_bars(wall, item, hz=None, single=None, type_name=u""):
     ys = [q[1] for q in section.polygon_m]
     y_face = (max(ys) - min(ys)) / 2.0 - cover - d / 2.0
     height = (section.z_top - section.z_bottom) * rc.FT
-    zones, rest = rs.parse_distribution(hz["dist"])
-    levels = rs.stirrup_positions(height, zones, rest)
+    if levels is None:
+        zones, rest = rs.parse_distribution(hz["dist"])
+        levels = rs.stirrup_positions(height, zones, rest)
+    elif callable(levels):  # the mesh: its heights for this wall's own height
+        levels = levels(height, cover)
     bar_type = rc.named_bar_type(doc, type_name, key) or bar_types.pick(key, rc.type_mark(item.name))
     made = []
     al, ar = float(hz.get("al", 0.3)), float(hz.get("ar", 0.3))

@@ -55,10 +55,15 @@
                                 <ComboBox x:Name="cbo_mv_type" Width="150" SelectionChanged="mesh_type_changed"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
-                                <TextBlock Text="@ " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_mv_m" Width="82" SelectionChanged="mesh_changed"
+                                          ToolTip="Espaciado: las barras necesarias para no pasar de @, repartidas en partes iguales. Cantidad: n barras en partes iguales. Ambos: n barras cada @, centradas."/>
+                                <TextBox x:Name="txt_mv_n" Width="30" Margin="3,0,0,0" Text="5" TextChanged="mesh_changed" ToolTip="Cantidad de barras"/>
+                                <TextBlock Text=" @ " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_mv_s" Width="40" Text="0.20" TextChanged="mesh_changed"
                                          ToolTip="Espaciamiento (m) a lo largo del muro."/>
-                                <TextBlock Text="  Anclaje " VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="Anclaje " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_mv_anchor" Width="40" Text="0.30" TextChanged="mesh_changed"
                                          ToolTip="Cu&#225;nto entra en el elemento de abajo, desde la base del muro (m). Vac&#237;o: hasta su recubrimiento inferior."/>
                                 <TextBlock Text="  Pata " VerticalAlignment="Center"/>
@@ -74,9 +79,11 @@
                                 <ComboBox x:Name="cbo_mh_type" Width="150" SelectionChanged="mesh_type_changed"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
-                                <TextBlock Text="Distribuci&#243;n " VerticalAlignment="Center"/>
-                                <TextBox x:Name="txt_mh_dist" Width="140" Text="1@0.05, rto@0.20" TextChanged="mesh_changed"
-                                         ToolTip="En la altura del muro, desde abajo. Ej. 1@0.05, rto@0.20"/>
+                                <ComboBox x:Name="cbo_mh_m" Width="82" SelectionChanged="mesh_changed"
+                                          ToolTip="En la altura del muro, de abajo arriba en partes iguales. Espaciado: las necesarias para no pasar de @. Cantidad: n barras. Ambos: n barras cada @, centradas."/>
+                                <TextBox x:Name="txt_mh_n" Width="30" Margin="3,0,0,0" Text="7" TextChanged="mesh_changed" ToolTip="Cantidad de barras"/>
+                                <TextBlock Text=" @ " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mh_s" Width="40" Text="0.20" TextChanged="mesh_changed" ToolTip="Espaciamiento (m) en la altura del muro."/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
                                 <TextBlock Text="Anclaje izq " VerticalAlignment="Center"/>
