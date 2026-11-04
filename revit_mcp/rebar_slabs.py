@@ -427,7 +427,7 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
     doc = model.element.Document
     # the room under the 5 cm on top, across the face (the type's thickness is vertical)
     room = model.thickness_across - 0.05  # what fits under the 5 cm on top, across the face
-    bricks = trim_bricks(model, ribbed_plan)  # none out of the slab at a sloped / curved edge
+    bricks = trim_bricks(model, ribbed_plan, avoid=beam_tris(model))  # none out of the slab, none into a beam
     sizes = _brick_sizes(types, bricks, room)
     symbols = bf.ensure_loaded(doc, sorted(set(sizes.values())), folder)
     if not symbols:
@@ -542,16 +542,58 @@ def _in_tris(p, tris, eps=1e-7):
     return False
 
 
-def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10):
+def beam_tris(model):
+    """Plan triangles (the slab's local frame, m) of the beams that run
+    into the slab: their top / bottom faces."""
+    slab = model.element
+    doc = slab.Document
+    hit = DB.ElementIntersectsElementFilter(slab)
+    beams = [b for b in DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+             .WhereElementIsNotElementType().WherePasses(hit)]
+    seen = set(b.Id for b in beams)
+    for i in DB.JoinGeometryUtils.GetJoinedElements(doc, slab):  # a joined beam does not "intersect"
+        e = doc.GetElement(i)
+        if (i not in seen and e is not None and e.Category is not None
+                and e.Category.Id.IntegerValue == int(DB.BuiltInCategory.OST_StructuralFraming)):
+            beams.append(e)
+    out = []
+    for beam in beams:
+        for g in beam.get_Geometry(DB.Options()):
+            solids = [g] if isinstance(g, DB.Solid) else (
+                list(g.GetInstanceGeometry()) if isinstance(g, DB.GeometryInstance) else [])
+            for s in solids:
+                if not isinstance(s, DB.Solid) or s.Volume <= 0:
+                    continue
+                for face in s.Faces:
+                    if abs(face.ComputeNormal(DB.UV(0.5, 0.5)).Z) < 0.3:
+                        continue
+                    mesh = face.Triangulate()
+                    for i in range(mesh.NumTriangles):
+                        tr = mesh.get_Triangle(i)
+                        out.append([model.f.local(tr.get_Vertex(k))[:2] for k in range(3)])
+    return out
+
+
+def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     """A brick at a sloped or curved edge pulled in: its end shortened until
     its four corners are on the slab (no corner out of the concrete, the
     rest filled with the slab's concrete, as built); one too short dropped.
-    Returns the bricks kept."""
+    avoid: plan triangles (beam_tris) a brick ends flush against, its end
+    square, never inside them. Returns the bricks kept."""
     axis = ribbed_plan["axis"]
     tris = model.slab_tris
 
+    def ok(s, t):
+        p = model.point_xy(axis, s, t)
+        return _in_tris(p, tris) and not (avoid and _in_tris(p, avoid, eps=-1e-4))
+
+    def ts(t0, t1):  # the end's corners (and its middle, against a beam)
+        return (t0, t1, (t0 + t1) / 2.0) if avoid else (t0, t1)
+
     def fits(s0, s1, t0, t1):
-        return all(_in_tris(model.point_xy(axis, s, t), tris) for s in (s0, s1) for t in (t0, t1))
+        return all(ok(s, t) for s in (s0, s1) for t in ts(t0, t1))
+    if avoid:
+        step = min(step, 0.005)  # flush with the beam's face
     kept = []
     for b in ribbed_plan["bricks"]:
         s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
@@ -559,7 +601,7 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10):
             kept.append(b)
             continue
         while s1 - s0 >= shortest:  # the end that is out moves in
-            out_end = not all(_in_tris(model.point_xy(axis, s1, t), tris) for t in (t0, t1))
+            out_end = not all(ok(s1, t) for t in ts(t0, t1))
             if out_end:
                 s1 -= step
             else:
