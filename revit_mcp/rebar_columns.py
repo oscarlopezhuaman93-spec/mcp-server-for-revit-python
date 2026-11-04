@@ -1124,13 +1124,10 @@ def leg_pair(doc, x, y, half_b, half_h, bot, top):
     bottom leg's preference, where both fit; else the bottom's best and the
     top one in its plane."""
     if bot and top:
-        bots = leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3], all_fits=True)
-        tops = leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], all_fits=True)
-        pair = next(((b, t) for b in bots for t in tops if _parallel(b, t)), None)
-        if pair is None:
-            b = bots[0] if bots else spec.leg_candidates(x, y, half_b, half_h)[-1]
-            pair = (b, leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], axis=b))
-        return pair
+        # the bottom leg its own best way, as it always bent (out by the nearest
+        # face when there is room); the top one in its plane (user, 2026-11-03)
+        b = leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3])
+        return b, leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], axis=b)
     if bot:
         return leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3]), None
     if top:
