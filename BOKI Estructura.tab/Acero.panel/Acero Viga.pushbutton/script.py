@@ -849,6 +849,11 @@ class AceroWindow(forms.WPFWindow):
             self._status()
             self.redraw()
             args.Handled = True
+        elif (args.Key == Key.Delete and getattr(self, "_nb_sel", None)
+              and not isinstance(Keyboard.FocusedElement, TextBox)):
+            tag, face = self._nb_sel  # a neighbor's bar clicked: out of this beam
+            self._edit_neighbor_bar(u"nbl:{}:{}".format(tag, face), wanted=0.0)
+            args.Handled = True
         elif (args.Key == Key.Delete and self._selected_index() is not None
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             self.sel_delete_click(sender, args)
@@ -2664,7 +2669,7 @@ class AceroWindow(forms.WPFWindow):
                             best = (d, (item["tag"], item["face"]))
         return best[1] if best else None
 
-    def _edit_neighbor_bar(self, tag):
+    def _edit_neighbor_bar(self, tag, wanted=None):
         """'nbl:<type id>:<element id>:<face>' clicked: how far that neighbor
         beam's bars get inside this one, from the support face - set as the
         neighbor's own hand edit of that end (kept until saved, as any beam's)."""
@@ -2677,17 +2682,18 @@ class AceroWindow(forms.WPFWindow):
                      if b["tag"] == u"{}:{}".format(tid, first) and b["face"] == face), None)
         if other is None or item is None:
             return
-        value = forms.ask_for_string(
-            default=u"{:.2f}".format(item.get("inside", 0.0)),
-            prompt=u"Cuánto entran las barras {} de esta viga ({}) dentro de la viga, desde la cara del apoyo (m):".format(
-                u"superiores" if face == bx.TOP else u"inferiores", t.short_name),
-            title=u"Acero longitudinal")
-        if value is None:
-            return
-        try:
-            wanted = max(0.0, float(value.strip().replace(u",", u".")))
-        except ValueError:
-            return
+        if wanted is None:  # asked; given ('Quitar' / Supr: 0, out of this beam)
+            value = forms.ask_for_string(
+                default=u"{:.2f}".format(item.get("inside", 0.0)),
+                prompt=u"Cuánto entran las barras {} de esta viga ({}) dentro de la viga, desde la cara del apoyo (m):".format(
+                    u"superiores" if face == bx.TOP else u"inferiores", t.short_name),
+                title=u"Acero longitudinal")
+            if value is None:
+                return
+            try:
+                wanted = max(0.0, float(value.strip().replace(u",", u".")))
+            except ValueError:
+                return
         key = self._line_key(other)
         if key not in self.state.line_edits:
             self.state.line_edits[key] = bx.read(bx.write(self._line_settings(other)))
@@ -2934,6 +2940,10 @@ class AceroWindow(forms.WPFWindow):
                 return
             if isinstance(tag, basestring) and tag.startswith(u"into:"):  # this beam's bar into the neighbor
                 self._edit_into(tag)
+                args.Handled = True
+                return
+            if isinstance(tag, basestring) and tag.startswith(u"nbx:"):  # a neighbor's bar: out of this beam
+                self._edit_neighbor_bar(u"nbl:" + tag[4:], wanted=0.0)
                 args.Handled = True
                 return
             if isinstance(tag, basestring) and tag.startswith(u"nbh:"):  # a neighbor's bar: its bend inside
