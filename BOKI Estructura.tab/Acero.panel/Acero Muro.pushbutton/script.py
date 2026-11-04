@@ -666,8 +666,9 @@ class AceroWindow(forms.WPFWindow):
                     require_design=has_drawing and type_id in same_section,
                 )
         except rs.SpecError as e:
-            forms.alert(u"Revisa la configuracion: {}".format(e), title="Acero")
-            return False
+            if not self.chk_mesh.IsChecked:  # a wall with its mesh needs no stirrups
+                forms.alert(u"Revisa la configuracion: {}".format(e), title="Acero")
+                return False
         with revit.Transaction("Acero - configuracion de columnas"):
             rc.ensure_parameters(doc)
             for type_id in targets:
@@ -2101,7 +2102,7 @@ class AceroWindow(forms.WPFWindow):
                     pass
             messages += [m for m in (edge_msg and u"Borde: " + edge_msg,
                                      conf_msg and u"Confinamiento: " + conf_msg) if m]
-            if edge is None and not edge_msg:
+            if edge is None and not edge_msg and not self.chk_mesh.IsChecked:
                 messages.append(u"Falta la distribucion del estribo de borde")
             # confinement stirrups/ties keep their "rto" in the joint (rc.generate_column)
             joint_conf = rs.joint_positions(height - clear, conf["rest"]) if joint and conf else []
@@ -2970,7 +2971,10 @@ for t in set(group_of(c) for c in targets):
     try:
         specs[t] = rc.ColumnSpec(by_id[t].config())
     except rs.SpecError as e:
-        spec_errors[t] = u"{}".format(e)
+        if mesh_setting(by_id[t].config())["on"]:
+            specs[t] = None  # only its mesh: no stirrups or column bars
+        else:
+            spec_errors[t] = u"{}".format(e)
 with_spec = [c for c in targets if group_of(c) in specs]
 if not with_spec:
     forms.alert(
@@ -3012,9 +3016,12 @@ try:
             sub = DB.SubTransaction(doc)
             sub.Start()
             try:
-                created, found = rc.generate_stack(
-                    doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
-                )
+                if specs[ct.id] is None:
+                    created, found = dict((id_of(w.Id), []) for w in stack), []
+                else:
+                    created, found = rc.generate_stack(
+                        doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice
+                    )
                 for wall in stack:
                     created[id_of(wall.Id)] += cut_bars(wall, ct)
                     created[id_of(wall.Id)] += horizontal_bars(wall, ct)
