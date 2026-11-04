@@ -374,7 +374,10 @@ class LosaWindow(forms.WPFWindow):
             return out
 
         slabs = []
+        picked = set(self.state.picked_ids)
         for i, pm, pst, lib, prib in others:
+            if i not in picked:  # not picked: drawn for its ridge and supports, no bricks (none placed there)
+                prib = dict(prib or {}, bricks=[])
             slabs.append({
                 "id": i,
                 "tris": [[to_here(pm, p) for p in tri] for tri in pm.slab_tris],
@@ -383,7 +386,7 @@ class LosaWindow(forms.WPFWindow):
                 "dir": direction(pm, prib) if prib and prib.get("bricks") is not None else None,
                 "n_bricks": len((prib or {}).get("bricks", [])),
             })
-        partner_layout = next((lay for lay in others if lay[0] == pid), None)
+        partner_layout = next((lay for lay in others if lay[0] == pid and pid in picked), None)
         view = {
             "slabs": slabs,
             "ridges": ridges,
@@ -645,7 +648,9 @@ class LosaWindow(forms.WPFWindow):
                     hx = end[0] - sgn * ux * 0.25 * L + side * (-uy) * 0.25 * L
                     hy = end[1] - sgn * uy * 0.25 * L + side * ux * 0.25 * L
                     rv._line(canvas, frame, end, (hx, hy), dark, 3)
-            rv._text(canvas, frame, cx, cy + 0.15 * L, u"{}: {} lad.".format(sl["id"], sl["n_bricks"]),
+            rv._text(canvas, frame, cx, cy + 0.15 * L,
+                     u"{}: {} lad.".format(sl["id"], sl["n_bricks"]) if sl["id"] in self.state.picked_ids
+                     else u"{}: sin seleccionar".format(sl["id"]),
                      brush=dark, size=10, bold=True)
         rv._text(canvas, frame, x0 - 1.2, y1 + 1.2, u"X \u2192   Y \u2191", brush=brush((40, 40, 40)), size=10, anchor="left")
 
