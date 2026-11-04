@@ -1008,6 +1008,11 @@ def draw_beam_elevation(canvas, data, frame):
     # Acero Viga: the beams of other types next to it (a flat beam past this
     # one) with their own stirrups - under the bars, which may run into them
     for m in data.get("mixed") or []:
+        if m.get("poly"):  # sloped against this beam: its real outline, stirrups square to it
+            _polygon(canvas, frame, [(s, y * k) for s, y in m["poly"]], _brush(236, 228, 214), _brush(150, 120, 80))
+            for sa, ya, sb, yb in m.get("segs") or []:
+                _line(canvas, frame, (sa, ya * k), (sb, yb * k), C_EDGE, 1.5)
+            continue
         _rect(canvas, frame, m["s0"], m["y0"] * k, m["s1"], m["y1"] * k, _brush(236, 228, 214), _brush(150, 120, 80))
         for s in m.get("stirrups") or []:  # its own stirrups, as its type sets them
             _line(canvas, frame, (s, m["y0"] * k + cover * 0.5), (s, m["y1"] * k - cover * 0.5), C_EDGE, 1.5)

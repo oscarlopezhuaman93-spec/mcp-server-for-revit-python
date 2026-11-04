@@ -1756,9 +1756,15 @@ class AceroWindow(forms.WPFWindow):
                 s0, s1 = min(p[2] for p in pts), max(p[2] for p in pts)
                 if s0 > line.length + rb.LINE_GAP_M or s1 < -rb.LINE_GAP_M:
                     continue  # not next to it
+                xs_o = [p[0] for p in other.section.polygon_m]
+                if abs(abs(other.direction.DotProduct(line.direction)) - 1.0) > 1e-3:
+                    # sloped against this one (a level flat beam by a sloped deep one):
+                    # its real outline - a stub along its own axis from the end by
+                    # this beam -, its stirrups square to it; no run-on bars to show
+                    out.append(self._sloped_neighbor(line, other, t, tid))
+                    continue
                 # drawn as a stub at most NEIGHBOR_SHOWN_M long: this beam keeps its scale
                 s0, s1 = max(s0, -self.NEIGHBOR_SHOWN_M), min(s1, line.length + self.NEIGHBOR_SHOWN_M)
-                xs_o = [p[0] for p in other.section.polygon_m]
                 out.append({"line": other,  # the neighbor itself (this beam's run on into it)
                             "s0": s0, "s1": s1, "y0": min(p[1] for p in pts), "y1": max(p[1] for p in pts),
                             "x0": min(xs_o), "x1": max(xs_o),
@@ -1768,9 +1774,35 @@ class AceroWindow(forms.WPFWindow):
                             "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))})
         return out
 
-    def _neighbor_stirrups(self, line, other, t):
+    def _sloped_neighbor(self, line, other, t, tid):
+        """A neighbor beam not parallel to this line (sloped against it):
+        'poly' its side outline over NEIGHBOR_SHOWN_M from its end by this
+        beam, 'segs' its stirrups square to its axis - in this line's frame."""
+        ys = [p[1] for p in other.section.polygon_m]
+        y_lo, y_hi = min(ys), max(ys)
+        near0 = abs(line.local(other.point(0.0, 0.0, 0.0))[2] - line.length / 2.0)
+        near1 = abs(line.local(other.point(0.0, 0.0, other.length))[2] - line.length / 2.0)
+        L = min(self.NEIGHBOR_SHOWN_M, other.length)
+        a, b = (0.0, L) if near0 <= near1 else (other.length - L, other.length)
+
+        def at(s, y):
+            p = line.local(other.point(0.0, y, s))
+            return (p[2], p[1])
+        poly = [at(a, y_lo), at(b, y_lo), at(b, y_hi), at(a, y_hi)]
+        cover = 0.04
+        segs = [at(s, y_lo + cover) + at(s, y_hi - cover)
+                for s in self._neighbor_stirrups(line, other, t, raw=True) if a <= s <= b]
+        return {"line": other, "poly": poly, "segs": segs,
+                "s0": min(p[0] for p in poly), "s1": max(p[0] for p in poly),
+                "y0": min(p[1] for p in poly), "y1": max(p[1] for p in poly),
+                "x0": min(p[0] for p in other.section.polygon_m), "x1": max(p[0] for p in other.section.polygon_m),
+                "label": self._kind_text(other, t.name), "stirrups": [], "bars": [],
+                "tag": u"line:{}:{}".format(tid, id_of(other.elements[0].Id))}
+
+    def _neighbor_stirrups(self, line, other, t, raw=False):
         """A neighbor beam's stirrups as its own type sets them (its spans,
-        a cantilever from its support), in this line's elevation frame."""
+        a cantilever from its support), in this line's elevation frame
+        (`raw`: as positions along the neighbor itself, m)."""
         try:
             cfg = t.config()
             zones, rest = rs.parse_distribution(cfg["EA_Estribo_Borde_Distribucion"])
@@ -1783,7 +1815,7 @@ class AceroWindow(forms.WPFWindow):
                 own = bx.span_text(settings, index, "edge")
                 z, r = rs.parse_distribution(own) if own else (zones, rest)
                 for offset, _ in rs.span_zone_positions(b - a, z, r, free.get(index)):
-                    out.append(line.local(other.point(0.0, 0.0, a + offset))[2])
+                    out.append(a + offset if raw else line.local(other.point(0.0, 0.0, a + offset))[2])
             return out
         except Exception:
             return []  # not set up: drawn without them
