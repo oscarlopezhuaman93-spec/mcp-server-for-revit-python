@@ -413,7 +413,7 @@ def _brick_sizes(types, bricks, max_h=None):
             u"{}{}L={:.3f} A={:.3f}".format(base, CUT_MARK, largo, ancho)
         h = h0
         if max_h is not None and max_h < h0 - 1e-3:  # a sloped slab is thinner across its face
-            h = max(0.05, math.floor(max_h / 0.005) * 0.005)
+            h = max(0.05, math.floor(max_h / 0.005 + 1e-6) * 0.005)  # 0.1499999.. is 0.150
             name += u" H={:.3f}".format(h)
         out[(b["type"], round(largo, 3), round(ancho, 3))] = (name, largo, ancho, h)
     return out
