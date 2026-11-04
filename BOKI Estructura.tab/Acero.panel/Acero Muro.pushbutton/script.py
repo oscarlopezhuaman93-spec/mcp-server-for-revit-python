@@ -626,7 +626,9 @@ class AceroWindow(forms.WPFWindow):
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
             config["EA_Muro_Corte"] = json.dumps(self.cut_items) if self.cut_items else u""
             config["EA_Muro_Horizontal"] = json.dumps(self._horizontal_form())
-            config["EA_Muro_Malla"] = json.dumps(self._mesh_form(), ensure_ascii=False)
+        # the mesh fits any wall (each lays it on its own length and beam):
+        # to every checked wall, whatever its section
+        config["EA_Muro_Malla"] = json.dumps(self._mesh_form(), ensure_ascii=False)
         return config
 
     def save_click(self, sender, args):
