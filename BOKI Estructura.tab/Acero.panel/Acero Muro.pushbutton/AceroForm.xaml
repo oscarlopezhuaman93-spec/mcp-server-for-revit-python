@@ -37,6 +37,61 @@
                           Click="all_click"/>
 
                 <!-- Lap splices of the longitudinal bars (settings kept per user) -->
+                <Expander DockPanel.Dock="Bottom" Header="6. Malla de acero" Margin="0,8,0,0">
+                    <StackPanel Margin="6,4,6,4">
+                        <CheckBox x:Name="chk_mesh" Content="Colocar malla autom&#225;tica" Click="mesh_changed"
+                                  ToolTip="Malla del muro: barras verticales ancladas en el elemento de abajo (viga, zapata...) y horizontales ancladas en las columnas de los extremos."/>
+                        <StackPanel IsEnabled="{Binding IsChecked, ElementName=chk_mesh}">
+                            <StackPanel Orientation="Horizontal" Margin="16,3,0,3">
+                                <RadioButton x:Name="rb_mesh_double" GroupName="meshlayers" Content="Doble malla" IsChecked="True" Click="mesh_changed"
+                                             ToolTip="Una malla en cada cara del muro."/>
+                                <RadioButton x:Name="rb_mesh_single" GroupName="meshlayers" Content="Malla simple (al centro)" Margin="12,0,0,0" Click="mesh_changed"/>
+                            </StackPanel>
+                            <TextBlock Text="Verticales" FontWeight="Bold" Margin="16,2,0,1"/>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_mv_d" Width="58" SelectionChanged="mesh_changed"/>
+                                <TextBlock Text=" Tipo " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_mv_type" Width="150" SelectionChanged="mesh_type_changed"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="@ " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mv_s" Width="40" Text="0.20" TextChanged="mesh_changed"
+                                         ToolTip="Espaciamiento (m) a lo largo del muro."/>
+                                <TextBlock Text="  Anclaje " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mv_anchor" Width="40" Text="0.30" TextChanged="mesh_changed"
+                                         ToolTip="Cu&#225;nto entra en el elemento de abajo, desde la base del muro (m). Vac&#237;o: hasta su recubrimiento inferior."/>
+                                <TextBlock Text="  Pata " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mv_leg" Width="40" Text="0.15" TextChanged="mesh_changed"
+                                         ToolTip="Doblez al final del anclaje (m): hacia afuera, o hacia adentro si no entra. 0 = recta."/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Horizontales" FontWeight="Bold" Margin="16,4,0,1"/>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="&#216; " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_mh_d" Width="58" SelectionChanged="mesh_changed"/>
+                                <TextBlock Text=" Tipo " VerticalAlignment="Center"/>
+                                <ComboBox x:Name="cbo_mh_type" Width="150" SelectionChanged="mesh_type_changed"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="Distribuci&#243;n " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mh_dist" Width="140" Text="1@0.05, rto@0.20" TextChanged="mesh_changed"
+                                         ToolTip="En la altura del muro, desde abajo. Ej. 1@0.05, rto@0.20"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="24,1,0,1">
+                                <TextBlock Text="Anclaje izq " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mh_al" Width="40" Text="0.30" TextChanged="mesh_changed"/>
+                                <TextBlock Text=" der " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mh_ar" Width="40" Text="0.30" TextChanged="mesh_changed"/>
+                                <TextBlock Text="  Gancho " VerticalAlignment="Center"/>
+                                <TextBox x:Name="txt_mh_hook" Width="40" Text="0.10" TextChanged="mesh_changed"
+                                         ToolTip="Pata al final de cada anclaje en la columna (m). 0 = recta."/>
+                                <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+
                 <Expander DockPanel.Dock="Bottom" Header="5. Barras horizontales (anclaje en columnas)" Margin="0,8,0,0">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_hz" Content="Barras horizontales en ambas caras" Click="config_changed"
@@ -360,20 +415,6 @@
                             <TextBox x:Name="txt_cut_s" Width="40" Text="0.20" ToolTip="Espaciado (m) a lo largo del muro"/>
                             <Button Content="Borrar &#250;ltima" Margin="6,0,0,0" Click="cut_delete"/>
                             <TextBlock x:Name="txt_cut_count" Margin="6,0,0,0" Foreground="Gray" VerticalAlignment="Center"/>
-                        </StackPanel>
-                        <StackPanel x:Name="panel_mesh_tools" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2" Visibility="Collapsed">
-                            <TextBlock Text="Malla:" FontWeight="Bold" VerticalAlignment="Center"/>
-                            <ComboBox x:Name="cbo_mesh_layers" Width="80" Margin="3,0,0,0" SelectedIndex="0">
-                                <ComboBoxItem Content="2 caras"/>
-                                <ComboBoxItem Content="1 central"/>
-                            </ComboBox>
-                            <TextBlock Text=" Anclaje" VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_mesh_anchor" Width="38" Margin="3,0,0,0" Text="0.30"
-                                     ToolTip="Anclaje (m) dentro del elemento de abajo (viga, zapata...), medido desde la base del muro. Vac&#237;o: hasta su recubrimiento inferior."/>
-                            <TextBlock Text=" Pata" VerticalAlignment="Center"/>
-                            <TextBox x:Name="txt_mesh_leg" Width="38" Margin="3,0,0,0" Text="0.15" ToolTip="Pata (m) al final del anclaje: hacia afuera, o hacia adentro si no entra. 0: recta."/>
-                            <Button Content="Colocar malla" Margin="6,0,0,0" Click="mesh_place"
-                                    ToolTip="Coloca las barras verticales de la malla con el &#216; y la distribuci&#243;n de arriba; reemplaza la malla colocada antes (los bocetos a mano se mantienen)."/>
                         </StackPanel>
                         <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                             <Grid>

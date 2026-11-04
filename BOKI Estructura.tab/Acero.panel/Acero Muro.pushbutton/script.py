@@ -391,6 +391,9 @@ class AceroWindow(forms.WPFWindow):
         self.cbo_cut_d.SelectedItem = u'1/2"'
         self.cbo_cut_m.ItemsSource = List[str](list(rf.DIST_MODES))
         self.cbo_hz_d.ItemsSource = List[str](rs.bar_diameter_keys())
+        self.cbo_mv_d.ItemsSource = List[str](rs.bar_diameter_keys())
+        self.cbo_mh_d.ItemsSource = List[str](rs.bar_diameter_keys())
+        self._mesh_cache = {}
         self.cbo_cut_m.SelectedItem = rf.SPACING
         # Plan / elevation / 3D views: zoom-pan state and what they last showed.
         self.plan_nav = rv.Nav2D()
@@ -532,6 +535,9 @@ class AceroWindow(forms.WPFWindow):
         hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
         self.chk_hz.IsChecked = bool(hz.get("on"))
         self.cbo_hz_d.SelectedItem = hz.get("d") or u'3/8"'
+        # the mesh placed from the cut before (section 6 now): left out
+        self.cut_items = [i for i in self.cut_items if not i.get("auto")]
+        self._set_mesh(mesh_setting(cfg))
         self.txt_hz_dist.Text = hz.get("dist") or u"1@0.05, rto@0.20"
         self.txt_hz_al.Text = u"{:g}".format(float(hz.get("al", 0.30)))
         self.txt_hz_ar.Text = u"{:g}".format(float(hz.get("ar", 0.30)))
@@ -618,6 +624,7 @@ class AceroWindow(forms.WPFWindow):
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
             config["EA_Muro_Corte"] = json.dumps(self.cut_items) if self.cut_items else u""
             config["EA_Muro_Horizontal"] = json.dumps(self._horizontal_form())
+            config["EA_Muro_Malla"] = json.dumps(self._mesh_form(), ensure_ascii=False)
         return config
 
     def save_click(self, sender, args):
@@ -996,6 +1003,83 @@ class AceroWindow(forms.WPFWindow):
                     legs.pop(cbo.SelectedItem, None)
         self.config_changed(sender, args)
 
+    # -- 6. Malla de acero ------------------------------------------------
+    def _set_mesh(self, m):
+        self._mesh_loading = True
+        try:
+            names = self._type_names()
+            for combo in (self.cbo_mv_type, self.cbo_mh_type):
+                if combo.ItemsSource is None:
+                    combo.ItemsSource = List[str](names)
+            self.chk_mesh.IsChecked = m["on"]
+            self.rb_mesh_double.IsChecked = m["double"]
+            self.rb_mesh_single.IsChecked = not m["double"]
+            self.cbo_mv_d.SelectedItem = m["vd"]
+            self.cbo_mh_d.SelectedItem = m["hd"]
+            self.cbo_mv_type.SelectedItem = m["vt"] if m["vt"] in names else AUTO_TYPE
+            self.cbo_mh_type.SelectedItem = m["ht"] if m["ht"] in names else AUTO_TYPE
+
+            def text(v):
+                return u"" if v is None else u"{:g}".format(v)
+            self.txt_mv_s.Text = text(m["vs"])
+            self.txt_mv_anchor.Text = text(m["va"])
+            self.txt_mv_leg.Text = text(m["vl"])
+            self.txt_mh_dist.Text = m["hdist"]
+            self.txt_mh_al.Text = text(m["hal"])
+            self.txt_mh_ar.Text = text(m["har"])
+            self.txt_mh_hook.Text = text(m["hk"])
+        finally:
+            self._mesh_loading = False
+
+    def _mesh_form(self):
+        """The mesh as typed (EA_Muro_Malla, see mesh_setting)."""
+        def num(box, default):
+            text = (box.Text or u"").strip().replace(u",", u".")
+            if not text:
+                return default
+            try:
+                return max(0.0, float(text))
+            except ValueError:
+                return default
+        return {"on": bool(self.chk_mesh.IsChecked), "double": not bool(self.rb_mesh_single.IsChecked),
+                "vd": self.cbo_mv_d.SelectedItem or u'1/2"', "vt": self._chosen_type(self.cbo_mv_type),
+                "vs": num(self.txt_mv_s, 0.20), "va": num(self.txt_mv_anchor, None), "vl": num(self.txt_mv_leg, 0.0),
+                "hd": self.cbo_mh_d.SelectedItem or u'3/8"', "ht": self._chosen_type(self.cbo_mh_type),
+                "hdist": (self.txt_mh_dist.Text or u"").strip(), "hal": num(self.txt_mh_al, 0.0),
+                "har": num(self.txt_mh_ar, 0.0), "hk": num(self.txt_mh_hook, 0.0)}
+
+    def mesh_changed(self, sender, args):
+        if getattr(self, "_mesh_loading", True) or not hasattr(self, "_mesh_cache"):
+            return
+        self.dirty = True
+        self.config_changed(sender, args)
+
+    def mesh_type_changed(self, sender, args):
+        """A mesh bar type chosen: its diameter goes beside it."""
+        if getattr(self, "_mesh_loading", True) or not hasattr(self, "type_keys"):
+            return
+        key = self.type_keys.get(self._chosen_type(sender))
+        diameter = self.cbo_mv_d if sender is self.cbo_mv_type else self.cbo_mh_d
+        if key and diameter.SelectedItem != key:
+            self._mesh_loading = True
+            diameter.SelectedItem = key
+            self._mesh_loading = False
+        self.mesh_changed(sender, args)
+
+    def _mesh_vertical(self, wall, mesh):
+        """mesh_vertical_paths of the wall shown, cached."""
+        try:
+            cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+        except ValueError:
+            cover = 0.04
+        key = (id_of(wall.Id), mesh["vd"], mesh["hd"], mesh["double"], mesh["va"], mesh["vl"], cover)
+        if key not in self._mesh_cache:
+            try:
+                self._mesh_cache[key] = mesh_vertical_paths(wall, mesh, cover)[1]
+            except Exception:
+                self._mesh_cache[key] = []
+        return self._mesh_cache[key]
+
     def _horizontal_form(self):
         """The wall's horizontal bars as typed (EA_Muro_Horizontal)."""
         def num(box, default):
@@ -1297,7 +1381,8 @@ class AceroWindow(forms.WPFWindow):
         signature = (self.state.active, tuple(id_of(c.Id) for c in self._view_columns),
                      repr(sorted(splice_now.items())) if splice_now else None,
                      rs.design_to_text(self.design),
-                     tuple(sorted(self._get_form().items())))
+                     tuple(sorted(self._get_form().items())),
+                     repr(sorted(self._mesh_form().items())) if hasattr(self, "_mesh_cache") else None)
         if signature != self._views_sig:
             self._views_sig = signature
             self._refresh_views()
@@ -1612,7 +1697,6 @@ class AceroWindow(forms.WPFWindow):
         cut = bool(self.rb_view_cut.IsChecked)
         self.canvas_cut.Visibility = Visibility.Visible if cut else Visibility.Collapsed
         self.panel_cut_tools.Visibility = Visibility.Visible if cut else Visibility.Collapsed
-        self.panel_mesh_tools.Visibility = Visibility.Visible if cut else Visibility.Collapsed
         self.canvas.Visibility = Visibility.Collapsed if cut else Visibility.Visible
         self._draw_cut()
 
@@ -1697,87 +1781,12 @@ class AceroWindow(forms.WPFWindow):
                 rv._line(canvas, frame, a, b, blue, 2.5)
             label = u"\u00d8{} ".format(item["d"]) + (
                 u"n={}".format(item.get("n")) if item.get("m") == rf.QUANTITY else u"@{:g}".format(float(item["s"])))
-            if item.get("auto"):  # the mesh: its labels and cotas stacked on the left
-                k = len([i for i in self.cut_items[:self.cut_items.index(item)] if i.get("auto")])
-                left = min(min(q[0] for q in i["pts"]) for i in self.cut_items if i.get("auto"))
-                rv._line(canvas, frame, pts[0], (left - 0.05, pts[0][1] - 0.08 - k * 0.09), blue, 0.8)
-                rv._text(canvas, frame, left - 0.06, pts[0][1] - 0.08 - k * 0.09, label, brush=blue, size=10,
-                         anchor="right")
-                if item.get("anchor"):
-                    self._anchor_cota(canvas, frame, item, left - 0.10 - k * 0.09, k)
-                continue
             rv._text(canvas, frame, pts[0][0], pts[0][1] - 0.06, label, brush=blue, size=10)
         if self.cut_draft:
             pts = list(self.cut_draft) + ([self.cut_cursor] if self.cut_cursor else [])
             for a, b in zip(pts, pts[1:]):
                 rv._line(canvas, frame, a, b, brush(230, 80, 30), 2, dash=True)
         self.txt_cut_count.Text = u"{} barra(s)".format(len(self.cut_items))
-
-    def _anchor_cota(self, canvas, frame, item, uc, k=0):
-        """Dimension of a mesh bar's anchorage at `uc`, left of the wall:
-        from the wall's bottom down to the bar's end."""
-        z_end = item["z_end"]
-        z_wall = z_end + float(item["anchor"])
-        red = brush(200, 40, 40)
-        rv._line(canvas, frame, (uc, z_wall), (uc, z_end), red, 1)
-        for z in (z_wall, z_end):
-            rv._line(canvas, frame, (uc - 0.015, z), (uc + 0.015, z), red, 1)
-        rv._line(canvas, frame, (uc, z_end), (item["u_bar"], z_end), red, 0.6, dash=True)
-        rv._text(canvas, frame, uc - 0.02, (z_wall + z_end) / 2.0 + 0.04 - k * 0.08,
-                 u"Anclaje {:.2f}".format(float(item["anchor"])), brush=red, size=10, bold=True, anchor="right")
-
-    def mesh_place(self, sender, args):
-        """The wall's vertical mesh bars placed on the cut: per face (or in
-        the middle), anchored into the element under the wall."""
-        geo, outlines = self._cut_geometry()
-        if not outlines:
-            return
-        outer, inner = max(outlines, key=lambda o: max(q[1] for q in o[0]) - min(q[1] for q in o[0]))
-
-        def num(text, default):
-            text = (text or u"").strip().replace(u",", u".")
-            if not text:
-                return default
-            try:
-                return float(text)
-            except ValueError:
-                return default
-        cover = num(self.txt_cover.Text, 4.0) / 100.0
-        # the vertical bars' axes: inside the horizontal bars (those lie at
-        # the cover, outermost), half a bar further in
-        d_v = rs.BAR_DIAMETERS_MM.get(self.cbo_cut_d.SelectedItem or u'1/2"', 12.7) / 1000.0
-        hz = self._horizontal_form()
-        d_h = rs.BAR_DIAMETERS_MM.get(hz["d"], 9.5) / 1000.0 if hz["on"] else 0.0
-        inner = rf.inner_outline(outer, [cover + d_h + d_v / 2.0] * len(outer))
-        z_wall = min(q[1] for q in outer)
-        us = [q[0] for q in outer if abs(q[1] - z_wall) < 0.01] or [q[0] for q in outer]
-        probe = ((min(us) + max(us)) / 2.0, z_wall - 0.02)
-        below = None
-        for label, pts in getattr(self, "_cut_others", []):
-            if rf.point_inside(pts, probe):
-                c = rf.DEFAULT_COVER_CM / 100.0 if label == u"ZAPATA" else cover
-                below = rf.inner_outline(pts, [c] * len(pts))
-                break
-        layers = 1 if self.cbo_mesh_layers.SelectedIndex == 1 else 2
-        anchor = num(self.txt_mesh_anchor.Text, None)
-        leg = num(self.txt_mesh_leg.Text, 0.0)
-        middle = (min(us) + max(us)) / 2.0
-        self.cut_items = [i for i in self.cut_items if not i.get("auto")]
-        for path, depth in rf.wall_mesh_paths(outer, inner, below, layers, anchor, leg):
-            item = {"view": rf.SIDE, "pts": [[round(u, 4), round(z, 4)] for u, z in path],
-                    "d": self.cbo_cut_d.SelectedItem or u'1/2"',
-                    "m": self.cbo_cut_m.SelectedItem or rf.SPACING,
-                    "n": max(1, int(num(self.txt_cut_n.Text, 5))),
-                    "s": max(0.05, num(self.txt_cut_s.Text, 0.2)), "closed": False, "auto": True}
-            if depth > 0:
-                # the anchored point: the last one before the leg
-                end = path[-2] if len(path) > 2 and abs(path[-1][1] - path[-2][1]) < 1e-9 else path[-1]
-                item.update({"anchor": round(depth, 3), "z_end": round(end[1], 4), "u_bar": round(end[0], 4),
-                             "side": 1 if end[0] >= middle else -1})
-            self.cut_items.append(item)
-        self.dirty = True
-        self._status(u"" if below else u"No se reconoció elemento debajo del muro: barras sin anclaje.", True)
-        self._draw_cut()
 
     @staticmethod
     def _width_at(outlines, z):
@@ -2036,6 +2045,35 @@ class AceroWindow(forms.WPFWindow):
                                       "radius": rs.BAR_DIAMETERS_MM.get(hz["d"], 9.5) / 2000.0}
                 except rs.SpecError as e:
                     messages.append(u"Barras horizontales: {}".format(e))
+            mesh = self._mesh_form()
+            if index == 0 and mesh["on"]:
+                hzm = mesh_horizontal(mesh)
+                if hzm["dist"]:
+                    try:
+                        zones, rest = rs.parse_distribution(hzm["dist"])
+                        if mesh["double"]:
+                            hpaths = self._horizontal_paths(base.polygon_m, hzm)
+                        else:
+                            xs0 = [q[0] for q in base.polygon_m]
+                            hpaths = [rs.wall_horizontal_path(min(xs0), max(xs0), mesh_single_offset(mesh),
+                                                              hzm["al"], hzm["ar"], 0.0, 0.0)]
+                        extra["horiz"] = {"levels": rs.stirrup_positions(height, zones, rest),
+                                          "al": hzm["al"], "ar": hzm["ar"], "paths": hpaths,
+                                          "radius": rs.BAR_DIAMETERS_MM.get(hzm["d"], 9.5) / 2000.0}
+                    except rs.SpecError as e:
+                        messages.append(u"Malla horizontal: {}".format(e))
+                vpaths = self._mesh_vertical(column, mesh)
+                if vpaths:
+                    try:
+                        cover = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+                    except ValueError:
+                        cover = 0.04
+                    xs0 = [q[0] for q in base.polygon_m]
+                    d_v = rs.BAR_DIAMETERS_MM.get(mesh["vd"], 12.7) / 1000.0
+                    xs_v = rf.distribute(min(xs0) + cover + d_v / 2.0, max(xs0) - cover - d_v / 2.0,
+                                         rf.SPACING, mesh["vs"], 1)
+                    extra["mesh_v"] = {"xs": list(xs_v), "paths": vpaths, "radius": d_v / 2.0,
+                                       "anchor": max(dep for _, dep in vpaths)}
             if index == len(columns) - 1 and not rc.column_above(doc, column, section):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["dir_top"] = ends.get("dir_top") or rs.LEG_IN
@@ -2151,6 +2189,13 @@ class AceroWindow(forms.WPFWindow):
         }
         if len(segments) == 1:  # the single-column keys too
             elev.update(dict((k, segments[0][k]) for k in ("clear", "edge", "conf", "joint", "joint_conf")))
+        mesh_v = segments[0].get("mesh_v")
+        if mesh_v:
+            if bar_paths is None:
+                bar_paths = [([(x, y, 0.0), (x, y, top)], rs.BAR_DIAMETERS_MM[k] / 2000.0) for x, y, k in bars]
+            for path, _ in mesh_v["paths"]:
+                for x in mesh_v["xs"]:
+                    bar_paths.append(([(x, -u, z) for u, z in path], mesh_v["radius"]))
         scene = {
             "polygon": base.polygon_m,
             "height": top,
@@ -2641,6 +2686,108 @@ def pick_columns(state):
 AUTO_TYPE = u"(automatico)"
 
 
+def mesh_setting(cfg):
+    """The wall's mesh (EA_Muro_Malla): {"on", "double", vertical "vd" (key),
+    "vt" (type name), "vs" (spacing m), "va" (anchorage m, None: to the
+    bottom cover), "vl" (leg m); horizontal "hd", "ht", "hdist", "hal",
+    "har", "hk"}, defaults filled."""
+    m = rs.read_json_setting(cfg.get("EA_Muro_Malla"))
+    out = {"on": bool(m.get("on")), "double": m.get("double", True) is not False,
+           "vd": m.get("vd") or u'1/2"', "vt": m.get("vt") or u"", "vs": 0.20, "va": 0.30, "vl": 0.15,
+           "hd": m.get("hd") or u'3/8"', "ht": m.get("ht") or u"", "hdist": m.get("hdist") or u"1@0.05, rto@0.20",
+           "hal": 0.30, "har": 0.30, "hk": 0.10}
+    for k in ("vs", "va", "vl", "hal", "har", "hk"):
+        if k in m:
+            try:
+                out[k] = None if m[k] in (None, u"") else max(0.0, float(m[k]))
+            except (TypeError, ValueError):
+                pass
+    if not out["vs"]:
+        out["vs"] = 0.20
+    return out
+
+
+def mesh_horizontal(mesh):
+    """The mesh's horizontal bars as horizontal_bars' settings."""
+    return {"on": mesh["on"], "d": mesh["hd"], "dist": mesh["hdist"], "al": mesh["hal"] or 0.0,
+            "ar": mesh["har"] or 0.0, "hook": mesh["hk"] or 0.0}
+
+
+def mesh_single_offset(mesh):
+    """A single mesh: its horizontal bars beside the vertical ones (both in
+    the middle of the wall), touching, not through them (m off the axis)."""
+    return (rs.BAR_DIAMETERS_MM.get(mesh["vd"], 12.7) + rs.BAR_DIAMETERS_MM.get(mesh["hd"], 9.5)) / 2000.0
+
+
+def mesh_vertical_paths(wall, mesh, cover):
+    """(foundation-like geometry of the wall, [(path [(u, z)] on its cut,
+    anchorage m)]) of the mesh's vertical bars: inside the horizontal ones
+    (those at the cover), run into the element under the wall."""
+    geo = rf.Foundation(wall)
+    at = (geo.extent[0] + geo.extent[1]) / 2.0
+    outlines = geo.section(rf.SIDE, at)
+    if not outlines:
+        return geo, []
+    outer = max((pts for pts, _ in outlines), key=lambda pts: max(q[1] for q in pts) - min(q[1] for q in pts))
+    try:
+        others = geo.neighbor_sections(rf.SIDE, at, reach_m=50.0)
+    except Exception:
+        others = []
+    d_v = rs.BAR_DIAMETERS_MM.get(mesh["vd"], 12.7) / 1000.0
+    d_h = rs.BAR_DIAMETERS_MM.get(mesh["hd"], 9.5) / 1000.0
+    inner = rf.inner_outline(outer, [cover + d_h + d_v / 2.0] * len(outer))
+    z_wall = min(q[1] for q in outer)
+    us = [q[0] for q in outer if abs(q[1] - z_wall) < 0.01] or [q[0] for q in outer]
+    probe = ((min(us) + max(us)) / 2.0, z_wall - 0.02)
+    below = None
+    for label, pts in others:
+        if rf.point_inside(pts, probe):
+            c = rf.DEFAULT_COVER_CM / 100.0 if label == u"ZAPATA" else cover
+            below = rf.inner_outline(pts, [c] * len(pts))
+            break
+    return geo, rf.wall_mesh_paths(outer, inner, below, 2 if mesh["double"] else 1, mesh["va"], mesh["vl"] or 0.0)
+
+
+def mesh_bars(wall, item):
+    """The wall's mesh (EA_Muro_Malla): vertical bars along the wall at
+    their spacing, anchored into the element under it, and horizontal ones
+    into the end columns. [(rebar, key, kind)]."""
+    cfg = item.config()
+    mesh = mesh_setting(cfg)
+    if not mesh["on"]:
+        return []
+    try:
+        cover_cm = float((cfg.get("EA_Recubrimiento_cm") or u"4").replace(u",", u"."))
+    except ValueError:
+        cover_cm = 4.0
+    made = []
+    key = mesh["vd"]
+    geo, paths = mesh_vertical_paths(wall, mesh, cover_cm / 100.0)
+    if paths:
+        planner = rf.BarPlanner(geo, dict((f.number, cover_cm) for f in geo.faces), rs.BAR_DIAMETERS_MM)
+        lo, hi = planner._range(rf.SIDE, rs.BAR_DIAMETERS_MM[key] / 1000.0)
+        bars = []
+        for path, depth in paths:
+            for pos in rf.distribute(lo, hi, rf.SPACING, mesh["vs"], 1):
+                bars.append((rf.SIDE, pos, path, key, mesh["vt"]))
+        bar_type = rc.named_bar_type(doc, mesh["vt"], key) or bar_types.pick(key, rc.type_mark(item.name))
+        for view, k, path, first, count, spacing, tname in rf.bar_sets(bars):
+            pts = [geo.world(first, -u, z) for u, z in path]
+            curves = List[DB.Curve]([DB.Line.CreateBound(pts[i], pts[i + 1]) for i in range(len(pts) - 1)])
+            rebar = DB.Structure.Rebar.CreateFromCurves(
+                doc, RebarStyle.Standard, bar_type, None, None, wall,
+                geo.ux.Negate(), curves, DB.Structure.RebarHookOrientation.Right,
+                DB.Structure.RebarHookOrientation.Right, True, True)
+            if count > 1:
+                rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(count, spacing / rf.FT, False, True, True)
+            rc._tag(rebar, wall)
+            made.append((rebar, k, rc.LONGITUDINAL))
+    hz = mesh_horizontal(mesh)
+    if hz["dist"].strip():
+        made += horizontal_bars(wall, item, hz, None if mesh["double"] else mesh_single_offset(mesh), mesh["ht"])
+    return made
+
+
 def cut_bars(wall, item):
     """The vertical bars sketched on the wall's cut (EA_Muro_Corte),
     repeated along the wall as drawn: [(rebar, key, kind)]."""
@@ -2681,12 +2828,16 @@ def cut_bars(wall, item):
     return made
 
 
-def horizontal_bars(wall, item):
+def horizontal_bars(wall, item, hz=None, single=None, type_name=u""):
     """The wall's horizontal bars (EA_Muro_Horizontal): one per face at each
     level of its distribution, run into the columns at both ends by their
-    anchorage, with a leg towards the other face. [(rebar, key, kind)]."""
+    anchorage, with a leg towards the other face. [(rebar, key, kind)].
+    `hz` given (the mesh, EA_Muro_Malla): those settings instead; `single`:
+    one bar per level, that far from the wall's axis (m), not one per face;
+    `type_name`: the bar type chosen ("Tipo"), else picked by diameter."""
     cfg = item.config()
-    hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
+    if hz is None:
+        hz = rs.read_json_setting(cfg.get("EA_Muro_Horizontal"))
     if not hz.get("on") or not (hz.get("dist") or u"").strip():
         return []
     section = rc.Section(wall)
@@ -2702,16 +2853,18 @@ def horizontal_bars(wall, item):
     height = (section.z_top - section.z_bottom) * rc.FT
     zones, rest = rs.parse_distribution(hz["dist"])
     levels = rs.stirrup_positions(height, zones, rest)
-    bar_type = bar_types.pick(key, rc.type_mark(item.name))
+    bar_type = rc.named_bar_type(doc, type_name, key) or bar_types.pick(key, rc.type_mark(item.name))
     made = []
     al, ar = float(hz.get("al", 0.3)), float(hz.get("ar", 0.3))
-    for face, y in enumerate((-y_face, y_face)):
+    for face, y in enumerate((-y_face, y_face) if single is None else (single,)):
         # both faces' hooks turn towards each other: the second face's bars
         # stop 1.5 diameters short, so their hooks lie beside the first
         # face's ones (touching, as on site), never through them
         back = 1.5 * d if face else 0.0
         path = rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, al - back), max(0.0, ar - back),
                                        float(hz.get("hook", 0.1)), 2 * y_face - d)
+        if single is not None:  # one layer: its legs straight into the columns, inside the cover
+            path = rs.wall_horizontal_path(min(xs), max(xs), y, al, ar, 0.0, 2 * y_face - d)
         for start, n, spacing in rs.group_runs(levels):
             z = section.z_bottom + start / rc.FT
             pts = [section.point_m(px, py, z) for px, py in path]
@@ -2830,6 +2983,7 @@ try:
                 for wall in stack:
                     created[id_of(wall.Id)] += cut_bars(wall, ct)
                     created[id_of(wall.Id)] += horizontal_bars(wall, ct)
+                    created[id_of(wall.Id)] += mesh_bars(wall, ct)
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
                 warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)

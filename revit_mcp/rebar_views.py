@@ -381,6 +381,20 @@ def _foundation_ends(canvas, frame, data, segments, widen, half):
         ztop = base + max(horiz["levels"] or [0.0])
         _edit_text(canvas, frame, cx - half - al - 0.05, ztop + 0.12, u"Anclaje izq {:.2f} m".format(al), "anc_l")
         _edit_text(canvas, frame, cx + half + 0.02, ztop + 0.12, u"Anclaje der {:.2f} m".format(ar), "anc_r")
+    mesh_v = s.get("mesh_v")
+    if mesh_v:
+        # a wall's mesh: its vertical bars, run down into the element under it
+        anchor = mesh_v.get("anchor") or 0.0
+        top = base + s["height"] - 0.04
+        for x in mesh_v["xs"]:
+            _line(canvas, frame, (cx + x * widen, base - anchor), (cx + x * widen, top), C_BAR, 1.5)
+        if anchor:
+            x = cx - half - 0.10
+            _line(canvas, frame, (x, base), (x, base - anchor), C_DIM, 1)
+            for z in (base, base - anchor):
+                _line(canvas, frame, (x - 0.03, z), (x + 0.03, z), C_DIM, 1)
+            _text(canvas, frame, x - 0.04, base - anchor / 2.0, u"Anclaje {:.2f} m".format(anchor),
+                  brush=C_DIM, size=10, anchor="right", bold=True)
     for offset in s.get("izaje", []):
         _line(canvas, frame, (cx - half + 0.01, base + offset), (cx + half - 0.01, base + offset), C_IZAJE, 2)
     if s.get("izaje_h"):
