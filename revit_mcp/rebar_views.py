@@ -1061,6 +1061,23 @@ def draw_beam_elevation(canvas, data, frame):
     for points, radius in data["bar_paths"]:
         for p, q in zip(points, points[1:]):
             _line(canvas, frame, (p[2], p[1] * k), (q[2], q[1] * k), C_BAR, 1.6)
+    # Acero Viga: this beam's main bars into the neighbor beam in line, from the
+    # support face to the bar's end - the value clicked to set it
+    for item in data.get("main_into") or []:
+        rows_top, rows_bot = data.get("cota_rows") or (0, 0)
+        top_face = item["face"] == u"sup"
+        yc = beam_cota_y(data, item["face"], (rows_top if top_face else rows_bot) + 1)
+        dim = _brush(20, 90, 160)
+        yb = (y1 + 0.1 * u) if top_face else (y0 - 0.1 * u)
+        a, b = item["face_s"], item["end_s"]
+        _line(canvas, frame, (a, yc), (b, yc), dim, 1)
+        for s in (a, b):
+            _line(canvas, frame, (s, yc + 0.45 * u), (s, yc - 0.45 * u), dim, 1)
+            _line(canvas, frame, (s - 0.25 * u, yc - 0.25 * u), (s + 0.25 * u, yc + 0.25 * u), dim, 2)
+            _line(canvas, frame, (s, yc), (s, yb), _brush(190, 205, 225), 0.6, dash=True)
+        _edit_text(canvas, frame, (a + b) / 2.0 - 1.6 * u, yc + 0.55 * u,
+                   u"{} {:.2f}".format(u"Entra" , item["inside"]),
+                   u"into:{}:{}".format(item["face"], item["end"]))
     # Acero Viga: the main bars of the face clicked, orange, with their ends
     # to edit - "Largo +0.00" (longer / shorter there) and "Doblez" (its leg)
     face = data.get("main_selected")
