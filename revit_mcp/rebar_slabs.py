@@ -596,6 +596,32 @@ def _end_rows(bricks):
     return out
 
 
+def _gap_rows(bricks):
+    """The rows the plan left out inside the slab (a beam across it took
+    them whole), on the usual pitch, marked 'extra': trim_bricks narrows
+    each to the room left beside the beam (dropped when none fits), so no
+    strip by a beam is left empty."""
+    rows = sorted(set(round(b["t0"], 4) for b in bricks))
+    if len(rows) < 3:
+        return []
+    gaps = sorted(round(b - a, 3) for a, b in zip(rows, rows[1:]))
+    pitch = gaps[len(gaps) // 2]
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if b - a < 1.5 * pitch:
+            continue
+        src = [bk for bk in bricks if abs(round(bk["t0"], 4) - a) < 1e-6]
+        k = 1
+        while a + k * pitch < b - 0.5 * pitch:
+            for bk in src:
+                nb = dict(bk)
+                nb["t0"], nb["t1"], nb["extra"] = bk["t0"] + k * pitch, bk["t1"] + k * pitch, True
+                nb.pop("ancho", None)
+                out.append(nb)
+            k += 1
+    return out
+
+
 def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     """A brick at a sloped or curved edge pulled in: its end shortened until
     its four corners are on the slab (no corner out of the concrete, the
@@ -619,7 +645,7 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     kept = []
     bricks = list(ribbed_plan["bricks"])
     if avoid:
-        bricks += _end_rows(bricks)
+        bricks += _end_rows(bricks) + _gap_rows(bricks)
     for b in bricks:
         s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
         if fits(s0, s1, t0, t1):
