@@ -649,6 +649,74 @@ def _gap_rows(bricks):
     return out
 
 
+def _fill_rows(bricks):
+    """Every row completed along the slab on the fullest row's grid: a
+    brick the plan left out in a row (a lower beam's projection) put back,
+    marked 'extra' (trim_bricks fits or drops it), so no row stops halfway."""
+    rows = {}
+    for b in bricks:
+        rows.setdefault(round(b["t0"], 4), []).append(b)
+    if not rows:
+        return bricks
+    ref = max(rows.values(), key=len)
+    out = list(bricks)
+    for key in list(rows):
+        row = rows[key]
+        if row is not ref and len(row) < 0.7 * len(ref):
+            # a row the plan cut short: laid again whole on the full row's grid
+            gone = set(id(b) for b in row)
+            out = [b for b in out if id(b) not in gone]
+            rows[key] = [dict(row[0], s0=r["s0"], s1=r["s1"], largo=r.get("largo"), extra=True) for r in ref]
+            for b in rows[key]:
+                if b.get("largo") is None:
+                    b.pop("largo")
+            out += rows[key]
+    for row in rows.values():
+        for r in ref:
+            mid = (r["s0"] + r["s1"]) / 2.0
+            if any(b["s0"] - 1e-6 <= mid <= b["s1"] + 1e-6 for b in row):
+                continue
+            s0, s1 = r["s0"], r["s1"]
+            for b in row:  # never over a brick of the row: cut to meet it
+                if b["s0"] < s1 and b["s1"] > s0:
+                    if b["s0"] > mid:
+                        s1 = min(s1, b["s0"])
+                    else:
+                        s0 = max(s0, b["s1"])
+            if s1 - s0 < 0.10:
+                continue
+            nb = dict(r)
+            nb["s0"], nb["s1"] = s0, s1
+            if abs((s1 - s0) - (r["s1"] - r["s0"])) > 1e-6:
+                nb["largo"] = round(s1 - s0, 3)
+            nb["t0"], nb["t1"], nb["extra"] = row[0]["t0"], row[0]["t1"], True
+            if row[0].get("ancho"):
+                nb["ancho"] = row[0]["ancho"]
+            else:
+                nb.pop("ancho", None)
+            out.append(nb)
+    return out
+
+
+def _drop_scraps(kept):
+    """No loose scraps: a row the plan did not have (one added at an end or
+    by a beam) left with less than half a full row's pieces is dropped
+    whole - its room goes to the slab's concrete, as built."""
+    rows = {}
+    for b in kept:
+        rows.setdefault(round(b["t0"], 4), []).append(b)
+    if not rows:
+        return kept
+    full = max(len(r) for r in rows.values())
+    out = []
+    for row in rows.values():
+        added = all(b.get("extra") for b in row)
+        if added and len(row) < 0.5 * full:
+            continue
+        out += row
+    return out
+
+
 def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     """A brick at a sloped or curved edge pulled in: its end shortened until
     its four corners are on the slab (no corner out of the concrete, the
@@ -673,6 +741,7 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     bricks = list(ribbed_plan["bricks"])
     if avoid:
         bricks += _end_rows(bricks) + _gap_rows(bricks)
+        bricks = _fill_rows(bricks)
     for b in bricks:
         s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
         if fits(s0, s1, t0, t1):
@@ -707,6 +776,8 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
                 nb["s0"], nb["s1"], nb["largo"] = s0, s1, round(s1 - s0, 3)
                 kept.append(nb)
                 break
+    if avoid:
+        kept = _drop_scraps(kept)
     return kept
 
 
