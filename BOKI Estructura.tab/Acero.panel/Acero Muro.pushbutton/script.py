@@ -2821,13 +2821,19 @@ def mesh_bars(wall, item):
                 doc, RebarStyle.Standard, bar_type, None, None, wall,
                 geo.ux.Negate(), curves, DB.Structure.RebarHookOrientation.Right,
                 DB.Structure.RebarHookOrientation.Right, True, True)
-            if count > 1:
+            if count > 1 and mesh["vm"] == rf.SPACING:
+                # Revit's own "maximum spacing": the @ typed shown as is,
+                # the bars spread in equal parts within it (as drawn)
+                rebar.GetShapeDrivenAccessor().SetLayoutAsMaximumSpacing(
+                    mesh["vs"] / rf.FT, (count - 1) * spacing / rf.FT, False, True, True)
+            elif count > 1:
                 rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(count, spacing / rf.FT, False, True, True)
             rc._tag(rebar, wall)
             made.append((rebar, k, rc.LONGITUDINAL))
     hz = mesh_horizontal(mesh, cover_cm / 100.0)
     made += horizontal_bars(wall, item, hz, None if mesh["double"] else mesh_single_offset(mesh), mesh["ht"],
-                            lambda height, cover: mesh_levels(mesh, height, cover))
+                            lambda height, cover: mesh_levels(mesh, height, cover),
+                            mesh["hs"] if mesh["hm"] == rf.SPACING else None)
     return made
 
 
@@ -2871,7 +2877,7 @@ def cut_bars(wall, item):
     return made
 
 
-def horizontal_bars(wall, item, hz=None, single=None, type_name=u"", levels=None):
+def horizontal_bars(wall, item, hz=None, single=None, type_name=u"", levels=None, max_spacing=None):
     """The wall's horizontal bars (EA_Muro_Horizontal): one per face at each
     level of its distribution, run into the columns at both ends by their
     anchorage, with a leg towards the other face. [(rebar, key, kind)].
@@ -2919,7 +2925,10 @@ def horizontal_bars(wall, item, hz=None, single=None, type_name=u"", levels=None
             rebar = DB.Structure.Rebar.CreateFromCurves(
                 doc, RebarStyle.Standard, bar_type, None, None, wall, DB.XYZ.BasisZ, curves,
                 DB.Structure.RebarHookOrientation.Right, DB.Structure.RebarHookOrientation.Right, True, True)
-            if n > 1:
+            if n > 1 and max_spacing:  # the mesh's @ shown as typed (Revit's maximum spacing)
+                rebar.GetShapeDrivenAccessor().SetLayoutAsMaximumSpacing(
+                    max_spacing / rc.FT, (n - 1) * spacing / rc.FT, True, True, True)
+            elif n > 1:
                 rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(n, spacing / rc.FT, True, True, True)
             rc._tag(rebar, wall)
             made.append((rebar, key, rc.EDGE))
