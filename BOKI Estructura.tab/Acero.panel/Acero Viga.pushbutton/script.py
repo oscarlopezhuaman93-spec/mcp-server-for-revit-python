@@ -2001,6 +2001,7 @@ class AceroWindow(forms.WPFWindow):
         ridge, as rsl.generate_pair lays them, in this line's frame and cut
         to near the ridge: {"paths": [(points (x, y, s), radius)],
         "by_face": {face: [points]}, "ridge_end": 0/1}; None otherwise."""
+        self._elev_mirror = False
         if not getattr(line, "sloped", False):
             return None
         try:
@@ -2011,6 +2012,9 @@ class AceroWindow(forms.WPFWindow):
             return None
         found = [p for p in pairs if p[0] is line or p[1] is line]
         pair = found[0] if found else None
+        # the second beam of the pair drawn mirrored: both waters keep their
+        # sides as in the model (the first rising to the right, it to the left)
+        self._elev_mirror = pair is not None and pair[1] is line
         if pair is None:
             return None
         a, b, ka, kb = pair
@@ -2441,6 +2445,7 @@ class AceroWindow(forms.WPFWindow):
         if abs(tilt) < 0.5:
             canvas.RenderTransform = None
             return
+        canvas.UpdateLayout()
         w, h = canvas.ActualWidth, canvas.ActualHeight
         r = math.radians(abs(tilt))
         # the drawing's own size (not the canvas's): turned, it is fitted back in
@@ -2449,10 +2454,19 @@ class AceroWindow(forms.WPFWindow):
         cw, ch = (s1 - s0) * scale, (y1 - y0) * scale
         k = min(1.0, w / (cw * math.cos(r) + ch * math.sin(r) or 1.0), h / (cw * math.sin(r) + ch * math.cos(r) or 1.0))
         k = max(k, 0.5)
+        mirror = bool(getattr(self, "_elev_mirror", False))
         group = TransformGroup()
-        group.Children.Add(ScaleTransform(k, k, w / 2.0, h / 2.0))
-        group.Children.Add(RotateTransform(-tilt, w / 2.0, h / 2.0))  # up to the right when rising with s
+        group.Children.Add(ScaleTransform(-k if mirror else k, k, w / 2.0, h / 2.0))
+        # up to the right when rising with s; mirrored, up to the left
+        group.Children.Add(RotateTransform(tilt if mirror else -tilt, w / 2.0, h / 2.0))
         canvas.RenderTransform = group
+        if mirror:  # its texts turned back, to be read
+            from System.Windows.Controls import TextBlock
+            from System.Windows import Point as _Point
+            for child in canvas.Children:
+                if isinstance(child, TextBlock):
+                    child.RenderTransformOrigin = _Point(0.5, 0.5)
+                    child.RenderTransform = ScaleTransform(-1.0, 1.0)
 
     # -- the beam's own settings: spans' stirrups, extras, cuts -----------------
     def _line_settings(self, line):
