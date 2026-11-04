@@ -441,6 +441,7 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
     along = model.direction(axis)
     tag = BRICK_TAG + str(model.element.Id.IntegerValue)
     placed = 0
+    made = []
     for b in bricks:
         name, largo, ancho, altura = sizes[(b["type"], round(b.get("largo") or types[b["type"]][1], 3),
                                             round(b.get("ancho") or types[b["type"]][2], 3))]
@@ -477,7 +478,45 @@ def place_bricks_on_slope(model, ribbed_plan, types, folder):
         if c is not None and not c.IsReadOnly:
             c.Set(tag)
         placed += 1
+        made.append(inst)
+    cut_bricks(model.element, made)
     return placed
+
+
+def cut_bricks(slab, bricks):
+    """The bricks take their room out of the slab (the slab cut by each
+    one) and a beam a brick runs into cuts that brick: no brick out of the
+    slab into a beam. Returns (slab cuts, beam cuts)."""
+    if not bricks:
+        return 0, 0
+    doc = slab.Document
+    S = DB.SolidSolidCutUtils
+    doc.Regenerate()
+    n_slab = n_beam = 0
+    for b in bricks:
+        try:
+            if S.CanElementCutElement(b, slab)[0]:
+                S.AddCutBetweenSolids(doc, slab, b)
+                n_slab += 1
+        except Exception:
+            pass
+    bb = slab.get_BoundingBox(None)
+    if bb is None:
+        return n_slab, 0
+    pad = DB.XYZ(1.0, 1.0, 1.0)
+    beams = list(DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+                 .WhereElementIsNotElementType()
+                 .WherePasses(DB.BoundingBoxIntersectsFilter(DB.Outline(bb.Min - pad, bb.Max + pad))))
+    for b in bricks:
+        hit = DB.ElementIntersectsElementFilter(b)
+        for beam in beams:
+            try:
+                if hit.PassesFilter(beam) and S.CanElementCutElement(beam, b)[0]:
+                    S.AddCutBetweenSolids(doc, b, beam)
+                    n_beam += 1
+            except Exception:
+                pass
+    return n_slab, n_beam
 
 
 def place_bricks(model, ribbed_plan, types, folder=None, tilt=None):
