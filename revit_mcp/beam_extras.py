@@ -45,6 +45,28 @@ def main_edit(settings, face):
     return ((settings or {}).get("main") or {}).get(face) or {}
 
 
+def bar_off(settings, x, y, tol=1e-3):
+    """A main bar of the type's section left out of this beam (deleted in
+    the window, 2026-11-03): its (x, y) in its face's "off" list."""
+    face = TOP if y > 0 else BOTTOM
+    return any(abs(p[0] - x) < tol and abs(p[1] - y) < tol for p in main_edit(settings, face).get("off") or [])
+
+
+def toggle_bar_off(settings, x, y):
+    """Leave the main bar at (x, y) out of this beam, or back in."""
+    face = TOP if y > 0 else BOTTOM
+    edit = settings.setdefault("main", {}).setdefault(face, {})
+    off = [p for p in edit.get("off") or [] if not (abs(p[0] - x) < 1e-3 and abs(p[1] - y) < 1e-3)]
+    if len(off) == len(edit.get("off") or []):
+        off.append([round(x, 4), round(y, 4)])
+    edit["off"] = off
+
+
+def kept_bars(settings, bars):
+    """The type's main bars this beam keeps (bar_off ones left out)."""
+    return [b for b in bars if not bar_off(settings, b[0], b[1])]
+
+
 def apply_main_edit(settings, face, leg0, leg1, s0, s1, lo=None, hi=None):
     """(leg0, leg1, s0, s1) of a face's main bars with its hand edits; a
     bar made longer stops at `lo` / `hi` - the far face of the concrete

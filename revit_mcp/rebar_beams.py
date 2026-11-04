@@ -736,7 +736,7 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     bar_start, bar_end = start_face + cover, end_face - cover
     confinement = spec.confinement_length(beam_spec.edge.zones)
     # the corner bars seated in the stirrups' bends (no overlap with them)
-    seated = design["bars"]
+    seated = bx.kept_bars(line_settings, design["bars"])  # less the ones deleted for this beam
     for kind, (family, loops, ties) in groups.items():
         closed = [pts for pts, is_open, _ in loops if not is_open]
         if not closed:

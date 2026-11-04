@@ -854,6 +854,10 @@ class AceroWindow(forms.WPFWindow):
             tag, face = self._nb_sel  # a neighbor's bar clicked: out of this beam
             self._edit_neighbor_bar(u"nbl:{}:{}".format(tag, face), wanted=0.0)
             args.Handled = True
+        elif (args.Key == Key.Delete and (getattr(self, "_main_bar", None) or getattr(self, "_main_face", None))
+              and not isinstance(Keyboard.FocusedElement, TextBox)):
+            self._delete_main()
+            args.Handled = True
         elif (args.Key == Key.Delete and self._selected_index() is not None
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             self.sel_delete_click(sender, args)
@@ -862,6 +866,23 @@ class AceroWindow(forms.WPFWindow):
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             self.delete_stirrup_click(sender, args)
             args.Handled = True
+
+    def _delete_main(self):
+        """Supr on a main bar: the one clicked in a cut out of this beam (or
+        back in, if it was out); the face clicked in the elevation: all its
+        bars out. Only this beam - the type's section stays as it is."""
+        settings = self._edit_settings()
+        picked = getattr(self, "_main_bar", None)
+        if picked:
+            bx.toggle_bar_off(settings, picked[0], picked[1])
+            self._main_bar = self._main_face = None
+        else:
+            face = self._main_face
+            for x, y, _ in self.design["bars"]:
+                if ((y > 0) == (face == bx.TOP)) and not bx.bar_off(settings, x, y):
+                    bx.toggle_bar_off(settings, x, y)
+            self._main_face = None
+        self._changed()
 
     def delete_stirrup_click(self, sender, args):
         """Delete the selected stirrup, to draw it again."""
@@ -1850,7 +1871,7 @@ class AceroWindow(forms.WPFWindow):
         before = max(near0, near1) <= mid_this  # the neighbor sits before this beam's start
         tag = u"{}:{}".format(id_of(other.type_id), id_of(other.elements[0].Id))
         out = {}
-        for x, y, key in spec_o.design["bars"]:
+        for x, y, key in bx.kept_bars(settings, spec_o.design["bars"]):  # less its deleted ones
             face = bx.TOP if y > 0 else bx.BOTTOM
             try:
                 leg0, leg1, s0, s1 = rb.main_bar_run(other, settings, spec_o.design, y, key, spec_o.cover_m,
@@ -2001,7 +2022,7 @@ class AceroWindow(forms.WPFWindow):
         mixed = self._mixed_neighbors(line)
         # this beam's run on into its neighbors, as generated (rb.mixed_continuations)
         cont = rb.mixed_continuations([line] + [m["line"] for m in mixed]).get(id(line)) if mixed else None
-        for x, y, key in bars:
+        for x, y, key in bx.kept_bars(settings, bars):  # less the ones deleted for this beam
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             top = y > 0
             face = bx.TOP if top else bx.BOTTOM
@@ -2234,8 +2255,14 @@ class AceroWindow(forms.WPFWindow):
             shape.Stroke = brush(60, 60, 60)
             shape.Fill = brush(236, 238, 241)
             box.Children.Add(shape)
-            for x, y, key in bars:
-                self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, brush(30, 30, 30))
+            picked_bar = getattr(self, "_main_bar", None)
+            for x, y, key in bars:  # click one to select it, Supr: out of this beam (or back in)
+                off = bx.bar_off(settings, x, y)
+                on = picked_bar is not None and abs(picked_bar[0] - x) < 1e-3 and abs(picked_bar[1] - y) < 1e-3
+                color = brush(240, 140, 20) if on else (brush(205, 205, 205) if off else brush(30, 30, 30))
+                dot = self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, color, 7.0 if on else 5.0)
+                dot.Tag = u"mbar:{}:{}".format(x, y)
+                dot.Cursor = Cursors.Hand
             placed = []
             for i_extra, extra in enumerate(settings["extras"]):
                 if extra["s0"] - 1e-6 <= s_cut <= extra["s1"] + 1e-6:
@@ -2254,7 +2281,8 @@ class AceroWindow(forms.WPFWindow):
             box.MouseLeftButtonUp += self.cut_dot_up
             lines = [u"{}-{}  (s = {:.2f} m)".format(number, number, s_cut)]
             for face, name in ((bx.TOP, u"Sup"), (bx.BOTTOM, u"Inf")):
-                text, area = bx.steel_at(s_cut, bars, settings["extras"], rs.BAR_DIAMETERS_MM, face)
+                text, area = bx.steel_at(s_cut, bx.kept_bars(settings, bars), settings["extras"],
+                                         rs.BAR_DIAMETERS_MM, face)
                 lines.append(u"{}: {}".format(name, text))
                 lines.append(u"      = {:.2f} cm\u00b2".format(area))
             for extra, pts in placed:  # where the extras sit (x;y cm, see position_text)
@@ -2273,7 +2301,7 @@ class AceroWindow(forms.WPFWindow):
             frame.Margin = Thickness(0, 0, 6, 0)
             frame.Child = box
             panel.Children.Add(frame)
-        self._draw_neighbor_sections(panel, bars, k)
+        self._draw_neighbor_sections(panel, bx.kept_bars(settings, bars), k)
         self._draw_stirrup_plan(panel, line, poly)
 
     def _draw_neighbor_sections(self, panel, bars, k):
@@ -2417,6 +2445,14 @@ class AceroWindow(forms.WPFWindow):
     # -- an extra's bars dragged in a cut: where they really go ----------------
     def cut_dot_down(self, sender, args):
         tag = getattr(args.OriginalSource, "Tag", None)
+        if isinstance(tag, basestring) and tag.startswith(u"mbar:"):  # a main bar: selected (Supr: out)
+            x, y = [float(v) for v in tag[5:].split(u":")]
+            same = getattr(self, "_main_bar", None) == (x, y)
+            self._main_bar = None if same else (x, y)
+            self._main_face = None if same else (bx.TOP if y > 0 else bx.BOTTOM)
+            self._changed()
+            args.Handled = True
+            return
         if not (isinstance(tag, basestring) and tag.startswith(u"dot:")):
             return
         i_extra, k_bar = [int(t) for t in tag[4:].split(u":")]
@@ -3018,6 +3054,7 @@ class AceroWindow(forms.WPFWindow):
             nb = None if face else self._nb_near(s, y_click, scale)  # else a neighbor beam's bar
             if (face, nb) != (getattr(self, "_main_face", None), getattr(self, "_nb_sel", None)):
                 self._main_face, self._nb_sel = face, nb  # a bar clicked (or off one): orange to edit
+                self._main_bar = None  # the whole face (a bar of it: picked in a cut)
                 self._views_sig = None
                 self.redraw()
                 return
