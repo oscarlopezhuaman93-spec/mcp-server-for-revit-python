@@ -1342,7 +1342,10 @@ def place_bricks_only(state, models):
         fw_params.ensure_parameters(doc, "Acero", [(rsl.PARAM, True, [FLOORS_BIC], True)])
         types = rsl.brick_types(doc)
         layouts, failed = brick_layouts(state, models, types)
+        picked = set(state.picked_ids)
         for element_id, model, settings, lib, rib in layouts:
+            if element_id not in picked:
+                continue  # the slab across the ridge: only to line the viguetas up, no bricks of its own
             floor = model.element
             try:
                 rsl.write_settings(floor, settings)
