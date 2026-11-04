@@ -574,6 +574,25 @@ def beam_tris(model):
     return out
 
 
+def _end_rows(bricks):
+    """One more row past each end row of the plan (a vigueta further on),
+    marked 'extra': the room left before the beam / edge gets its bricks,
+    narrowed to fit by trim_bricks (dropped when none fits)."""
+    rows = sorted(set(round(b["t0"], 4) for b in bricks))
+    if len(rows) < 2:
+        return []
+    gaps = sorted(round(b - a, 3) for a, b in zip(rows, rows[1:]))
+    pitch = gaps[len(gaps) // 2]  # the usual one (an end row may come narrowed)
+    out = []
+    for edge, shift in ((rows[0], -pitch), (rows[-1], pitch)):
+        for b in bricks:
+            if abs(round(b["t0"], 4) - edge) < 1e-6:
+                nb = dict(b)
+                nb["t0"], nb["t1"], nb["extra"] = b["t0"] + shift, b["t1"] + shift, True
+                out.append(nb)
+    return out
+
+
 def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     """A brick at a sloped or curved edge pulled in: its end shortened until
     its four corners are on the slab (no corner out of the concrete, the
@@ -595,11 +614,32 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     if avoid:
         step = min(step, 0.005)  # flush with the beam's face
     kept = []
-    for b in ribbed_plan["bricks"]:
+    bricks = list(ribbed_plan["bricks"])
+    if avoid:
+        bricks += _end_rows(bricks)
+    for b in bricks:
         s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
         if fits(s0, s1, t0, t1):
             kept.append(b)
             continue
+        if avoid:  # a row along a beam: narrowed, its side flush with the beam's face
+            def in_beam(t):
+                return any(not ok(s, t) if b.get("extra") else  # an added row: off the slab too
+                           _in_tris(model.point_xy(axis, s, t), avoid, eps=-1e-4)
+                           for s in (s0, s1, (s0 + s1) / 2.0))
+            n0, n1 = t0, t1
+            while n1 - n0 >= shortest and (in_beam(n0) or in_beam(n1)):
+                if in_beam(n1):
+                    n1 -= step
+                if in_beam(n0):
+                    n0 += step
+            if n1 - n0 >= shortest and (n0, n1) != (t0, t1):
+                nb = dict(b)
+                nb["t0"], nb["t1"], nb["ancho"] = n0, n1, round(n1 - n0, 3)
+                if fits(s0, s1, n0, n1):
+                    kept.append(nb)
+                    continue
+                b, t0, t1 = nb, n0, n1  # still out at an end: shortened below
         while s1 - s0 >= shortest:  # the end that is out moves in
             out_end = not all(ok(s1, t) for t in ts(t0, t1))
             if out_end:
