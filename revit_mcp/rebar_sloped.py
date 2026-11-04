@@ -208,6 +208,8 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
     warnings = []
 
     n = min(len(sa["top"]), len(sb["top"]))
+    if sa.get("ld_top") is not None or sb.get("ld_top") is not None:
+        n = 0  # the top bars' run past the ridge typed: each side's bars anchored, not continuous
     paths = []
     for i in range(n):
         (row_a, key_a, w), (row_b, key_b, _) = sa["top"][i], sb["top"][i]

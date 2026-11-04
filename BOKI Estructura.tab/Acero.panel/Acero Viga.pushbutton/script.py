@@ -2063,8 +2063,12 @@ class AceroWindow(forms.WPFWindow):
                 continue
             (eave, _), key, _ = rows[0]
             eave_leg = own["leg"].get(eave, 0.0)
-            ridge_leg = 0.0 if face == bx.TOP else (float(ld_edit) if ld_edit is not None
-                                                    else rs.e060_lap_cm(key, factor=1.0) / 100.0)
+            if ld_edit is not None:
+                ridge_leg = float(ld_edit)
+            elif face == bx.TOP and sides[0].get("ld_top") is None and sides[1].get("ld_top") is None:
+                ridge_leg = 0.0  # continuous over the ridge
+            else:
+                ridge_leg = rs.e060_lap_cm(key, factor=1.0) / 100.0
             legs_view[face] = (ridge_leg, eave_leg) if ridge_end == 0 else (eave_leg, ridge_leg)
         return {"paths": out, "by_face": by_face, "ridge_end": ridge_end, "legs": legs_view,
                 "stirrups": self._other_stirrups(line, other, form)}
