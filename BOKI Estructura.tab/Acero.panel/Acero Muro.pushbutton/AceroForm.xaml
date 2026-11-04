@@ -361,6 +361,20 @@
                             <Button Content="Borrar &#250;ltima" Margin="6,0,0,0" Click="cut_delete"/>
                             <TextBlock x:Name="txt_cut_count" Margin="6,0,0,0" Foreground="Gray" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel x:Name="panel_mesh_tools" DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2" Visibility="Collapsed">
+                            <TextBlock Text="Malla:" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="cbo_mesh_layers" Width="80" Margin="3,0,0,0" SelectedIndex="0">
+                                <ComboBoxItem Content="2 caras"/>
+                                <ComboBoxItem Content="1 central"/>
+                            </ComboBox>
+                            <TextBlock Text=" Anclaje" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_mesh_anchor" Width="38" Margin="3,0,0,0" Text="0.30"
+                                     ToolTip="Anclaje (m) dentro del elemento de abajo (viga, zapata...), medido desde la base del muro. Vac&#237;o: hasta su recubrimiento inferior."/>
+                            <TextBlock Text=" Pata" VerticalAlignment="Center"/>
+                            <TextBox x:Name="txt_mesh_leg" Width="38" Margin="3,0,0,0" Text="0.15" ToolTip="Pata (m) al final del anclaje: hacia afuera, o hacia adentro si no entra. 0: recta."/>
+                            <Button Content="Colocar malla" Margin="6,0,0,0" Click="mesh_place"
+                                    ToolTip="Coloca las barras verticales de la malla con el &#216; y la distribuci&#243;n de arriba; reemplaza la malla colocada antes (los bocetos a mano se mantienen)."/>
+                        </StackPanel>
                         <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                             <Grid>
                                 <Canvas x:Name="canvas" Background="White"

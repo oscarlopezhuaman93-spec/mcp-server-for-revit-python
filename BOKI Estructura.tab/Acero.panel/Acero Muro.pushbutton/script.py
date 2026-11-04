@@ -1612,6 +1612,7 @@ class AceroWindow(forms.WPFWindow):
         cut = bool(self.rb_view_cut.IsChecked)
         self.canvas_cut.Visibility = Visibility.Visible if cut else Visibility.Collapsed
         self.panel_cut_tools.Visibility = Visibility.Visible if cut else Visibility.Collapsed
+        self.panel_mesh_tools.Visibility = Visibility.Visible if cut else Visibility.Collapsed
         self.canvas.Visibility = Visibility.Collapsed if cut else Visibility.Visible
         self._draw_cut()
 
@@ -1696,12 +1697,81 @@ class AceroWindow(forms.WPFWindow):
                 rv._line(canvas, frame, a, b, blue, 2.5)
             label = u"\u00d8{} ".format(item["d"]) + (
                 u"n={}".format(item.get("n")) if item.get("m") == rf.QUANTITY else u"@{:g}".format(float(item["s"])))
+            if item.get("auto"):  # the mesh: its labels and cotas stacked on the left
+                k = len([i for i in self.cut_items[:self.cut_items.index(item)] if i.get("auto")])
+                left = min(min(q[0] for q in i["pts"]) for i in self.cut_items if i.get("auto"))
+                rv._line(canvas, frame, pts[0], (left - 0.05, pts[0][1] - 0.08 - k * 0.09), blue, 0.8)
+                rv._text(canvas, frame, left - 0.06, pts[0][1] - 0.08 - k * 0.09, label, brush=blue, size=10,
+                         anchor="right")
+                if item.get("anchor"):
+                    self._anchor_cota(canvas, frame, item, left - 0.10 - k * 0.09, k)
+                continue
             rv._text(canvas, frame, pts[0][0], pts[0][1] - 0.06, label, brush=blue, size=10)
         if self.cut_draft:
             pts = list(self.cut_draft) + ([self.cut_cursor] if self.cut_cursor else [])
             for a, b in zip(pts, pts[1:]):
                 rv._line(canvas, frame, a, b, brush(230, 80, 30), 2, dash=True)
         self.txt_cut_count.Text = u"{} barra(s)".format(len(self.cut_items))
+
+    def _anchor_cota(self, canvas, frame, item, uc, k=0):
+        """Dimension of a mesh bar's anchorage at `uc`, left of the wall:
+        from the wall's bottom down to the bar's end."""
+        z_end = item["z_end"]
+        z_wall = z_end + float(item["anchor"])
+        red = brush(200, 40, 40)
+        rv._line(canvas, frame, (uc, z_wall), (uc, z_end), red, 1)
+        for z in (z_wall, z_end):
+            rv._line(canvas, frame, (uc - 0.015, z), (uc + 0.015, z), red, 1)
+        rv._line(canvas, frame, (uc, z_end), (item["u_bar"], z_end), red, 0.6, dash=True)
+        rv._text(canvas, frame, uc - 0.02, (z_wall + z_end) / 2.0 + 0.04 - k * 0.08,
+                 u"Anclaje {:.2f}".format(float(item["anchor"])), brush=red, size=10, bold=True, anchor="right")
+
+    def mesh_place(self, sender, args):
+        """The wall's vertical mesh bars placed on the cut: per face (or in
+        the middle), anchored into the element under the wall."""
+        geo, outlines = self._cut_geometry()
+        if not outlines:
+            return
+        outer, inner = max(outlines, key=lambda o: max(q[1] for q in o[0]) - min(q[1] for q in o[0]))
+
+        def num(text, default):
+            text = (text or u"").strip().replace(u",", u".")
+            if not text:
+                return default
+            try:
+                return float(text)
+            except ValueError:
+                return default
+        cover = num(self.txt_cover.Text, 4.0) / 100.0
+        z_wall = min(q[1] for q in outer)
+        us = [q[0] for q in outer if abs(q[1] - z_wall) < 0.01] or [q[0] for q in outer]
+        probe = ((min(us) + max(us)) / 2.0, z_wall - 0.02)
+        below = None
+        for label, pts in getattr(self, "_cut_others", []):
+            if rf.point_inside(pts, probe):
+                c = rf.DEFAULT_COVER_CM / 100.0 if label == u"ZAPATA" else cover
+                below = rf.inner_outline(pts, [c] * len(pts))
+                break
+        layers = 1 if self.cbo_mesh_layers.SelectedIndex == 1 else 2
+        anchor = num(self.txt_mesh_anchor.Text, None)
+        leg = num(self.txt_mesh_leg.Text, 0.0)
+        middle = (min(us) + max(us)) / 2.0
+        self.cut_items = [i for i in self.cut_items if not i.get("auto")]
+        for path, depth in rf.wall_mesh_paths(outer, inner, below, layers, anchor, leg):
+            item = {"view": rf.SIDE, "pts": [[round(u, 4), round(z, 4)] for u, z in path],
+                    "d": self.cbo_cut_d.SelectedItem or u'1/2"',
+                    "m": self.cbo_cut_m.SelectedItem or rf.SPACING,
+                    "n": max(1, int(num(self.txt_cut_n.Text, 5))),
+                    "s": max(0.05, num(self.txt_cut_s.Text, 0.2)), "closed": False, "auto": True}
+            if depth > 0:
+                # the anchored point: the last one before the leg
+                end = path[-2] if len(path) > 2 and abs(path[-1][1] - path[-2][1]) < 1e-9 else path[-1]
+                item.update({"anchor": round(depth, 3), "z_end": round(end[1], 4), "u_bar": round(end[0], 4),
+                             "side": 1 if end[0] >= middle else -1})
+            self.cut_items.append(item)
+        self.dirty = True
+        self._status(u"" if below else u"No se reconoció elemento debajo del muro: barras sin anclaje.", True)
+        self._draw_cut()
 
     @staticmethod
     def _width_at(outlines, z):

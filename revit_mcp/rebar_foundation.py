@@ -763,3 +763,70 @@ def merge_collinear(edges, tol=1e-3):
             if merged:
                 break
     return edges
+
+
+def wall_mesh_paths(wall_outer, wall_inner, below_inner=None, layers=2, anchor=None, leg=0.15):
+    """Vertical bar paths [(u, z)] of a wall's mesh on its cut: one per
+    face (layers 2) or one in the middle (layers 1), from the top cover
+    down the face; into the element under the wall (`below_inner`, its
+    cover outline) by `anchor` m under the wall's bottom (None: to its
+    bottom cover), with a leg of `leg` m outwards (inwards when there is
+    no room). [(path, anchorage m)]."""
+    zs = [p[1] for p in wall_inner]
+    top = polygon_spans(wall_inner, max(zs) - 1e-4)
+    bot = polygon_spans(wall_inner, min(zs) + 1e-4)
+    if not top or not bot:
+        return []
+    t0, t1 = top[0][0], top[-1][1]
+    b0, b1 = bot[0][0], bot[-1][1]
+    z_t, z_b = max(zs), min(zs)
+    z_wall = min(p[1] for p in wall_outer)
+    if layers == 1:
+        faces = [((t0 + t1) / 2.0, (b0 + b1) / 2.0)]
+    else:
+        faces = [(t0, b0), (t1, b1)]
+    middle = (b0 + b1) / 2.0
+    out = []
+    for ut, ub in faces:
+        path = [(ut, z_t), (ub, z_b)]
+        depth = 0.0
+        if below_inner:
+            z_min = min(p[1] for p in below_inner)
+            z_end = z_min if anchor is None else max(z_min, z_wall - anchor)
+            spans = polygon_spans(below_inner, z_end + 1e-4)
+
+            def gap(s):
+                return 0.0 if s[0] <= ub <= s[1] else min(abs(ub - s[0]), abs(ub - s[1]))
+            span = min(spans, key=gap) if spans else None
+            if span is not None and z_end < z_b:
+                u = min(max(ub, span[0]), span[1])
+                path[-1] = (ub, z_wall) if abs(u - ub) > 1e-6 else path[-1]
+                path.append((u, z_end))
+                if abs(u - ub) <= 1e-6:
+                    path = [path[0], path[-1]] if abs(ut - ub) < 1e-9 else [path[0], (ub, z_b), (u, z_end)]
+                depth = z_wall - z_end
+                if leg and leg > 0.02:
+                    side = 1.0 if u >= middle else -1.0
+                    room = (span[1] - u) if side > 0 else (u - span[0])
+                    if room < leg - 1e-6:
+                        other = (u - span[0]) if side > 0 else (span[1] - u)
+                        if other > room:
+                            side, room = -side, other
+                    length = min(leg, room)
+                    if length > 0.02:
+                        path.append((u + side * length, z_end))
+        out.append((path, depth))
+    # both legs to the same side: the one crossing the other bar ends a
+    # bar's width higher, lying on the other leg instead of through it
+    if len(out) == 2:
+        (pa, da), (pb, db) = out
+        for k, (p, q) in enumerate(((pa, pb), (pb, pa))):
+            if len(p) < 3 or abs(p[-1][1] - p[-2][1]) > 1e-9 or abs(p[-2][0] - p[-3][0]) > 1e-9:
+                continue
+            lo, hi = sorted((p[-2][0], p[-1][0]))
+            if lo < q[-2][0] < hi and abs(q[-2][1] - p[-1][1]) < 1e-9:
+                z = p[-1][1] + 0.025
+                p[-2] = (p[-2][0], z)
+                p[-1] = (p[-1][0], z)
+                out[k] = (p, out[k][1] - 0.025)
+    return out
