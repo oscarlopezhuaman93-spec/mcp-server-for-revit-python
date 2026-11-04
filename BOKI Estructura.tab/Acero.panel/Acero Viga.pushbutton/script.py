@@ -2007,7 +2007,10 @@ class AceroWindow(forms.WPFWindow):
         try:
             pool = [l for t in self.by_id.values()
                     if t.id == self.state.active or t.id in self.state.checked for l in t.lines]
-            pairs = rsl.ridge_pairs(pool)
+            pkey = tuple([id(l) for l in pool])
+            if getattr(self, "_pairs_key", None) != pkey:  # once: a click redraws fast
+                self._pairs_key, self._pairs = pkey, rsl.ridge_pairs(pool)
+            pairs = self._pairs
         except Exception:
             return None
         found = [p for p in pairs if p[0] is line or p[1] is line]
@@ -2032,9 +2035,18 @@ class AceroWindow(forms.WPFWindow):
         if own_spec is None or other_spec is None:
             return None
         spec_a, spec_b = (own_spec, other_spec) if a is line else (other_spec, own_spec)
-        other_settings = rb.read_line_settings(other)
+        # the other water's settings as edited here (not only as saved): a
+        # change made on it shows from this side too
+        other_settings = self._line_settings(other)
         set_a, set_b = (settings, other_settings) if a is line else (other_settings, settings)
         anchor = form["anchor"]
+        ckey = json.dumps([id(line), set_a, set_b, rs.design_to_text(self.design), anchor, form.get("cover"),
+                           form.get("edge"), form.get("edge_dist"), legs, splice], sort_keys=True, default=str)
+        cache = self.__dict__.setdefault("_ridge_cache", {})
+        if ckey in cache:  # the same as last drawn: no recount (zoom, a click)
+            return cache[ckey]
+        if len(cache) > 20:
+            cache.clear()
         try:
             frame, sides, paths, _ = rsl.pair_paths(doc, pair, spec_a, spec_b, anchor, anchor, splice, legs,
                                                     set_a, set_b)
@@ -2074,8 +2086,10 @@ class AceroWindow(forms.WPFWindow):
             else:
                 ridge_leg = rs.e060_lap_cm(key, factor=1.0) / 100.0
             legs_view[face] = (ridge_leg, eave_leg) if ridge_end == 0 else (eave_leg, ridge_leg)
-        return {"paths": out, "by_face": by_face, "ridge_end": ridge_end, "legs": legs_view,
-                "stirrups": self._other_stirrups(line, other, form)}
+        result = {"paths": out, "by_face": by_face, "ridge_end": ridge_end, "legs": legs_view,
+                  "stirrups": self._other_stirrups(line, other, form)}
+        cache[ckey] = result
+        return result
 
     def _other_stirrups(self, line, other, form):
         """The other water's stirrups (its type's distribution in its clear
@@ -2445,7 +2459,6 @@ class AceroWindow(forms.WPFWindow):
         if abs(tilt) < 0.5:
             canvas.RenderTransform = None
             return
-        canvas.UpdateLayout()
         w, h = canvas.ActualWidth, canvas.ActualHeight
         r = math.radians(abs(tilt))
         # the drawing's own size (not the canvas's): turned, it is fitted back in
