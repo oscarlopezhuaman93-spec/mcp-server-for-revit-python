@@ -1089,9 +1089,20 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
             ends["rise_top"] = leg * cos * rise
             ends["dir_top"] = direction
             if "leg_bottom" in ends:
-                ends["dir_bottom"] = leg_toward_concrete(
-                    doc, section, bottom_column, x, y, half_b, half_h, ends["leg_bottom"],
-                    section.z_bottom - (ends["anchor"] - d) / FT, axis=direction)
+                # the bottom leg as on every column (its own best way, 2026-11-03);
+                # not along the slope: the top leg in its plane, level under the beam's top
+                b = leg_pair(doc, x, y, half_b, half_h,
+                             (section, bottom_column, ends["leg_bottom"],
+                              section.z_bottom - (ends["anchor"] - d) / FT),
+                             (top_section, top_column, leg,
+                              top_section.z_top - (column_spec.cover_m + d) / FT))[0]
+                ends["dir_bottom"] = b
+                if not _parallel(b, direction):
+                    ends["leg_top"] = leg
+                    ends["rise_top"] = 0.0
+                    ends["dir_top"] = leg_toward_concrete(
+                        doc, top_section, top_column, x, y, half_b, half_h, leg,
+                        top_section.z_top - drop / FT, axis=b)
             return ends
     bot =((section, bottom_column, ends["leg_bottom"], section.z_bottom - (ends["anchor"] - d) / FT)
            if "leg_bottom" in ends else None)
