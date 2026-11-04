@@ -1363,8 +1363,7 @@ def place_bricks_only(state, models):
 def _refresh_view():
     """The view redrawn after many bricks cut their slabs: else it may keep
     showing the slabs open over the bricks (holes, loose strips)."""
-    try:
-        doc.Regenerate()
+    try:  # the transaction committed has regenerated the model: only the view
         revit.uidoc.RefreshActiveView()
     except Exception:
         pass
