@@ -717,6 +717,49 @@ def _drop_scraps(kept):
     return out
 
 
+def _grid_rows(bricks):
+    """The rows of a sloped slab laid on one regular grid - the usual pitch
+    and the phase of the plan's whole rows - from one end of the slab to
+    the other, each on the fullest row's pieces, marked 'extra': trim_bricks
+    fits them to the slab and to the beams really in it (beam_tris), so a
+    beam of the floor below the plan took for a support leaves no strip."""
+    rows = {}
+    for b in bricks:
+        rows.setdefault(round(b["t0"], 4), []).append(b)
+    if len(rows) < 3:
+        return bricks
+    ts = sorted(rows)
+    gaps = sorted(round(b - a, 4) for a, b in zip(ts, ts[1:]))
+    pitch = gaps[len(gaps) // 2]
+    counts = {}
+    for t in ts:  # the usual row width (the brick's own), not one the plan stretched
+        w = round(rows[t][0]["t1"] - rows[t][0]["t0"], 3)
+        counts[w] = counts.get(w, 0) + 1
+    width = max(counts, key=lambda w: counts[w])
+    whole = [t for t in ts if abs(rows[t][0]["t1"] - rows[t][0]["t0"] - width) < 1e-3]
+    if not whole or pitch <= width:
+        return bricks
+    phases = {}
+    for t in whole:
+        ph = round(t - math.floor(t / pitch) * pitch, 3)
+        phases[ph] = phases.get(ph, 0) + 1
+    phase = max(phases, key=lambda p: phases[p])
+    ref = max(rows.values(), key=len)
+    k0 = int(math.floor((ts[0] - pitch - phase) / pitch))
+    k1 = int(math.ceil((ts[-1] + pitch - phase) / pitch))
+    out = []
+    for k in range(k0, k1 + 1):
+        t0 = phase + k * pitch
+        if t0 < ts[0] - pitch - 1e-3 or t0 > ts[-1] + pitch + 1e-3:
+            continue
+        for r in ref:
+            nb = dict(r)
+            nb["t0"], nb["t1"], nb["extra"] = t0, t0 + width, True
+            nb.pop("ancho", None)
+            out.append(nb)
+    return out
+
+
 def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     """A brick at a sloped or curved edge pulled in: its end shortened until
     its four corners are on the slab (no corner out of the concrete, the
@@ -740,8 +783,7 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
     kept = []
     bricks = list(ribbed_plan["bricks"])
     if avoid:
-        bricks += _end_rows(bricks) + _gap_rows(bricks)
-        bricks = _fill_rows(bricks)
+        bricks = _grid_rows(bricks)
     for b in bricks:
         s0, s1, t0, t1 = b["s0"], b["s1"], b["t0"], b["t1"]
         if fits(s0, s1, t0, t1):
