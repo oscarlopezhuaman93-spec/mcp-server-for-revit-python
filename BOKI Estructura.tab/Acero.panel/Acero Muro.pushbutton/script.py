@@ -1743,6 +1743,12 @@ class AceroWindow(forms.WPFWindow):
             except ValueError:
                 return default
         cover = num(self.txt_cover.Text, 4.0) / 100.0
+        # the vertical bars' axes: inside the horizontal bars (those lie at
+        # the cover, outermost), half a bar further in
+        d_v = rs.BAR_DIAMETERS_MM.get(self.cbo_cut_d.SelectedItem or u'1/2"', 12.7) / 1000.0
+        hz = self._horizontal_form()
+        d_h = rs.BAR_DIAMETERS_MM.get(hz["d"], 9.5) / 1000.0 if hz["on"] else 0.0
+        inner = rf.inner_outline(outer, [cover + d_h + d_v / 2.0] * len(outer))
         z_wall = min(q[1] for q in outer)
         us = [q[0] for q in outer if abs(q[1] - z_wall) < 0.01] or [q[0] for q in outer]
         probe = ((min(us) + max(us)) / 2.0, z_wall - 0.02)
