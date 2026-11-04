@@ -1119,8 +1119,9 @@ class AceroWindow(forms.WPFWindow):
         paths = []
         for face, y in enumerate((-y_face, y_face)):
             back = 1.5 * d if face else 0.0
-            paths.append(rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, hz["al"] - back),
-                                                 max(0.0, hz["ar"] - back), hz["hook"], 2 * y_face - d))
+            al, ar = hz["al"], hz["ar"]
+            paths.append(rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, al - back) if al > 0 else al,
+                                                 max(0.0, ar - back) if ar > 0 else ar, hz["hook"], 2 * y_face - d))
         return paths
 
     def elev_edit(self, tag):
@@ -2061,13 +2062,13 @@ class AceroWindow(forms.WPFWindow):
                     messages.append(u"Barras horizontales: {}".format(e))
             mesh = self._mesh_form()
             if index == 0 and mesh["on"]:
-                hzm = mesh_horizontal(mesh)
+                try:
+                    cover_m = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
+                except ValueError:
+                    cover_m = 0.04
+                hzm = mesh_horizontal(mesh, cover_m)
                 if True:
                     try:
-                        try:
-                            cover_m = float((self.txt_cover.Text or u"4").replace(u",", u".")) / 100.0
-                        except ValueError:
-                            cover_m = 0.04
                         if mesh["double"]:
                             hpaths = self._horizontal_paths(base.polygon_m, hzm)
                         else:
@@ -2740,10 +2741,12 @@ def mesh_levels(mesh, height, cover):
     return rf.equal_positions(cover + d / 2.0, height - cover - d / 2.0, mesh["hm"], mesh["hs"], mesh["hn"])
 
 
-def mesh_horizontal(mesh):
-    """The mesh's horizontal bars as horizontal_bars' settings."""
-    return {"on": mesh["on"], "d": mesh["hd"], "dist": mesh.get("hdist") or u"", "al": mesh["hal"] or 0.0,
-            "ar": mesh["har"] or 0.0, "hook": mesh["hk"] or 0.0}
+def mesh_horizontal(mesh, cover=0.0):
+    """The mesh's horizontal bars as horizontal_bars' settings: an end
+    with no anchorage stops at the wall's end cover (a negative one)."""
+    return {"on": mesh["on"], "d": mesh["hd"], "dist": mesh.get("hdist") or u"",
+            "al": mesh["hal"] if mesh["hal"] else -cover,
+            "ar": mesh["har"] if mesh["har"] else -cover, "hook": mesh["hk"] or 0.0}
 
 
 def mesh_single_offset(mesh):
@@ -2820,7 +2823,7 @@ def mesh_bars(wall, item):
                 rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(count, spacing / rf.FT, False, True, True)
             rc._tag(rebar, wall)
             made.append((rebar, k, rc.LONGITUDINAL))
-    hz = mesh_horizontal(mesh)
+    hz = mesh_horizontal(mesh, cover_cm / 100.0)
     made += horizontal_bars(wall, item, hz, None if mesh["double"] else mesh_single_offset(mesh), mesh["ht"],
                             lambda height, cover: mesh_levels(mesh, height, cover))
     return made
@@ -2902,7 +2905,8 @@ def horizontal_bars(wall, item, hz=None, single=None, type_name=u"", levels=None
         # stop 1.5 diameters short, so their hooks lie beside the first
         # face's ones (touching, as on site), never through them
         back = 1.5 * d if face else 0.0
-        path = rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, al - back), max(0.0, ar - back),
+        path = rs.wall_horizontal_path(min(xs), max(xs), y, max(0.0, al - back) if al > 0 else al,
+                                       max(0.0, ar - back) if ar > 0 else ar,
                                        float(hz.get("hook", 0.1)), 2 * y_face - d)
         if single is not None:  # one layer: its legs straight into the columns, inside the cover
             path = rs.wall_horizontal_path(min(xs), max(xs), y, al, ar, 0.0, 2 * y_face - d)
