@@ -183,8 +183,14 @@ class BeamLine(object):
                         x, y, s = self.local(curve.GetEndPoint(k))
                         by_s.setdefault(round(s, 3), []).append(y)
         bottom, top = [], []
+        ends = (min(by_s), max(by_s)) if by_s else ()
+        depth = self.ref_top - self.ref_bottom
         for s in sorted(by_s):
             lo, hi = min(by_s[s]), max(by_s[s])
+            if s in ends and 0.02 < hi - lo < 0.5 * depth:
+                continue  # a sliver left at the line's end by a join cut, not a haunch
+            if s in ends and len(by_s) > 2 and hi - lo <= 0.02 and depth > 0.05:
+                continue  # a lone vertex at the very end: same
             if hi - lo > 0.02:
                 bottom.append((s, lo))
                 top.append((s, hi))
@@ -194,8 +200,11 @@ class BeamLine(object):
                 bottom.append((s, lo))
         self.bottom_points = bottom or [(0.0, self.ref_bottom)]
         self.top_points = top or [(0.0, self.ref_top)]
-        self.variable = any(abs(y - self.ref_bottom) > 0.01 for _, y in self.bottom_points) or \
-            any(abs(y - self.ref_top) > 0.01 for _, y in self.top_points)
+        # a haunch changes the depth along a stretch (two points or more of a
+        # face, by more than 3 cm); one point off, or a notch of a cm or two,
+        # is a join's cut - the beam keeps its stirrups in sets
+        self.variable = len([1 for _, y in self.bottom_points if abs(y - self.ref_bottom) > 0.03]) >= 2 or \
+            len([1 for _, y in self.top_points if abs(y - self.ref_top) > 0.03]) >= 2
         self.breaks = sorted(set(s for s, _ in self.bottom_points + self.top_points))
         if self.sloped:  # its plumb-cut ends aren't a haunch: one section all along
             self.bottom_points, self.top_points = [(0.0, self.ref_bottom)], [(0.0, self.ref_top)]
