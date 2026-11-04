@@ -1046,6 +1046,10 @@ def draw_beam_elevation(canvas, data, frame):
                     _line(canvas, frame, (s, yc), (s, yb), _brush(200, 190, 220), 0.6, dash=True)
                 _edit_text(canvas, frame, (face_s + end_s) / 2.0 - 0.8 * u, yc + 0.55 * u,
                            u"{:.2f}".format(item.get("inside", 0.0)), u"nbl:{}:{}".format(item["tag"], item["face"]))
+                if on:  # the clicked bar: its bend at that end, to edit
+                    _edit_text(canvas, frame, end_s + (0.3 * u if before else -4.2 * u), yc + 0.55 * u,
+                               u"Doblez {:.2f}".format(item.get("leg", 0.0)),
+                               u"nbh:{}:{}".format(item["tag"], item["face"]))
                 # chained on: the bar's stretch in the flat beam (its far end to the
                 # support face, the column included) and the whole bar's length
                 far_s = min(ss) if before else max(ss)

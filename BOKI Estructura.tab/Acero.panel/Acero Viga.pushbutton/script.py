@@ -1857,6 +1857,7 @@ class AceroWindow(forms.WPFWindow):
                    for px, py, ps in rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)]
             item = out.setdefault(face, {"face": face, "paths": [], "end": end, "tag": tag})
             item["paths"].append(pts)
+            item["leg"] = leg0 if end == 0 else leg1  # its bend at the end inside this beam
             ss = [p[2] for p in pts]
             item["inside"] = max(0.0, max(ss)) if before else max(0.0, line.length - min(ss))
         return list(out.values())
@@ -2695,6 +2696,37 @@ class AceroWindow(forms.WPFWindow):
         main[d_key] = float(main.get(d_key) or 0.0) + (wanted - item.get("inside", 0.0))
         self._changed()
 
+    def _edit_neighbor_leg(self, tag):
+        """'nbh:<type id>:<element id>:<face>' clicked: the bend (leg) of that
+        neighbor beam's bars at their end inside this one - its own 'Doblez'
+        hand edit of that end (m, 0 straight, empty automatic)."""
+        _, tid, first, face = tag.split(u":")
+        tid, first = int(tid), int(first)
+        t = self.by_id.get(tid)
+        other = next((l for l in (t.lines if t else []) if id_of(l.elements[0].Id) == first), None)
+        data = getattr(self, "_elev_data", None) or {}
+        item = next((b for m in data.get("mixed") or [] for b in m.get("bars") or []
+                     if b["tag"] == u"{}:{}".format(tid, first) and b["face"] == face), None)
+        if other is None or item is None:
+            return
+        value = forms.ask_for_string(
+            default=u"{:.2f}".format(item.get("leg", 0.0)),
+            prompt=u"Doblez de las barras {} de esta viga ({}) en su extremo dentro de la viga (m, 0 = recta, vacío = automático):".format(
+                u"superiores" if face == bx.TOP else u"inferiores", t.short_name),
+            title=u"Acero longitudinal")
+        if value is None:
+            return
+        value = value.strip().replace(u",", u".")
+        key = self._line_key(other)
+        if key not in self.state.line_edits:
+            self.state.line_edits[key] = bx.read(bx.write(self._line_settings(other)))
+        main = self.state.line_edits[key].setdefault("main", {}).setdefault(face, {})
+        try:
+            main[u"h{}".format(item["end"])] = float(value) if value else None
+        except ValueError:
+            return
+        self._changed()
+
     def _edit_into(self, tag):
         """'into:<face>:<end>' clicked: how far this beam's main bars of that
         face get into the neighbor beam there, from the support face - kept
@@ -2902,6 +2934,10 @@ class AceroWindow(forms.WPFWindow):
                 return
             if isinstance(tag, basestring) and tag.startswith(u"into:"):  # this beam's bar into the neighbor
                 self._edit_into(tag)
+                args.Handled = True
+                return
+            if isinstance(tag, basestring) and tag.startswith(u"nbh:"):  # a neighbor's bar: its bend inside
+                self._edit_neighbor_leg(tag)
                 args.Handled = True
                 return
             if isinstance(tag, basestring) and tag.startswith(u"nbl:"):  # a neighbor's bar: how far inside
