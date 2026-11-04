@@ -153,6 +153,11 @@
                         <TextBlock Grid.Row="6" Grid.ColumnSpan="2" Text="Pata abajo:" VerticalAlignment="Center"/>
                         <ComboBox Grid.Row="6" Grid.Column="2" x:Name="cbo_dir_bot" Margin="4,0,0,0" VerticalAlignment="Center" SelectionChanged="config_changed"
                                   ToolTip="Hacia d&#243;nde apunta la pata de abajo: afuera o adentro de la columna."/>
+                        <CheckBox Grid.Row="5" Grid.Column="3" Grid.ColumnSpan="2" Grid.RowSpan="2" x:Name="chk_slope_top" Margin="6,0,0,0"
+                                  VerticalAlignment="Center" Click="config_changed"
+                                  ToolTip="Si sobre la columna hay una viga inclinada (techo): la barra sube hasta la cara superior de la viga y la pata se dobla a lo largo de la viga. En una columna de cumbrera, cada barra se dobla hacia el agua de su lado. Largo: la pata sup.">
+                            <TextBlock Text="Pata sup. siguiendo la viga inclinada" TextWrapping="Wrap" FontSize="10"/>
+                        </CheckBox>
                         <TextBlock Grid.Row="7" Grid.ColumnSpan="2" Text="Pata arriba:" VerticalAlignment="Center"/>
                         <ComboBox Grid.Row="7" Grid.Column="2" x:Name="cbo_dir_top" Margin="4,0,0,0" VerticalAlignment="Center" SelectionChanged="config_changed"
                                   ToolTip="Hacia d&#243;nde apunta la pata de arriba: adentro de la columna o afuera, dentro de la viga o losa."/>

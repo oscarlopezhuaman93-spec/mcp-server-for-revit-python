@@ -875,6 +875,13 @@ class TestIzajeAndBarEnds:
         assert pts == pytest.approx([(0.35, 0.0, -0.5), (0.1, 0.0, -0.5), (0.1, 0.0, 2.95), (-0.1, 0.0, 2.95)])
         assert bar_with_ends([(0, 0, 0), (0, 0, 3)]) == [(0, 0, 0), (0, 0, 3)]
 
+    def test_bar_with_ends_rise_top(self):
+        from revit_mcp.rebar_spec import bar_with_ends
+
+        pts = bar_with_ends([(0.0, 0.0, 0.0), (0.0, 0.0, 3.0)], top_drop=0.05, leg_top=0.4,
+                            dir_top=(1.0, 0.0), rise_top=0.1)
+        assert pts[-1] == pytest.approx((0.4, 0.0, 3.05))
+
 
 def test_leg_m_takes_meters_or_cm():
     from revit_mcp.rebar_spec import leg_m

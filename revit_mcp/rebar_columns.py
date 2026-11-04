@@ -299,6 +299,9 @@ class ColumnSpec(object):
         self.anchor_m = float(anchor) if anchor else None  # None: to the footing's bottom
         self.leg_bottom_cm = dict((k, float(v)) for k, v in (ends.get("bot") or {}).items() if v)
         self.leg_top_cm = dict((k, float(v)) for k, v in (ends.get("top") or {}).items() if v)
+        # (2026-11-03) the top bars into a sloped beam over the column, bent along
+        # it (a ridge column: each bar along the water on its side); off: as before
+        self.slope_top = bool(ends.get("slope_top"))
         self.dir_bottom = ends.get("dir_bot") or spec.LEG_OUT
         self.dir_top = ends.get("dir_top") or spec.LEG_IN
         if not require_design:
@@ -987,6 +990,66 @@ REVIT_MAX_BAR_M = 10.95  # Revit's longest bar (36 ft), anchorage and legs inclu
 FOUNDATION_COVER_M = 0.075  # on the ground: the bar stops over the bottom mesh
 
 
+SLOPE_MIN = 0.02  # a beam rising less than this (per unit length) is level
+
+
+def sloped_beams_over(doc, column, section, reach_m=0.6):
+    """The sloped beams over the column's top (a roof's): each
+    {"dir": unit plan vector away from the column (world), "rise": its rise
+    per unit plan length that way (+ up, - down), "plane": (normal, origin)
+    of its top face}. A ridge column: one each side."""
+    top = section.point_m(0.0, 0.0, section.z_top)
+    r = reach_m / FT
+    outline = DB.Outline(DB.XYZ(top.X - r, top.Y - r, top.Z - r), DB.XYZ(top.X + r, top.Y + r, top.Z + 2 * r))
+    found = []
+    for e in (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+              .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        curve = getattr(getattr(e, "Location", None), "Curve", None)
+        if not isinstance(curve, DB.Line):
+            continue
+        p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
+        plan = math.hypot(p1.X - p0.X, p1.Y - p0.Y)
+        if plan < 1e-6 or abs(p1.Z - p0.Z) / plan < SLOPE_MIN:
+            continue  # vertical or level
+        near, far = (p0, p1) if math.hypot(p0.X - top.X, p0.Y - top.Y) <= math.hypot(p1.X - top.X, p1.Y - top.Y) \
+            else (p1, p0)
+        if math.hypot(near.X - top.X, near.Y - top.Y) * FT > reach_m:
+            continue  # its end isn't at this column
+        direction = ((far.X - near.X) / plan, (far.Y - near.Y) / plan)
+        best = None
+        for solid in _solids(e.get_Geometry(DB.Options())):
+            for face in solid.Faces:
+                if isinstance(face, DB.PlanarFace) and face.FaceNormal.Z > 0.3 and (best is None or face.Area > best.Area):
+                    best = face
+        if best is None:
+            continue
+        found.append({"dir": direction, "rise": (far.Z - near.Z) / plan, "plane": (best.FaceNormal, best.Origin)})
+    return found
+
+
+def slope_top_end(doc, column, section, x, y, d, cover):
+    """(top_drop m, local plan direction, rise per plan length) of a bar's
+    top in the sloped beam over the column: the beam on the bar's side (a
+    ridge column: each bar the water it stands under), the bar up to under
+    its top face less the cover, then along it. None when no sloped beam."""
+    beams = sloped_beams_over(doc, column, section)
+    if not beams:
+        return None
+    centre = section.point_m(0.0, 0.0, section.z_top)
+    p = section.point_m(x, y, section.z_top)
+    off = (p.X - centre.X, p.Y - centre.Y)
+    beam = max(beams, key=lambda b: b["dir"][0] * off[0] + b["dir"][1] * off[1])
+    n, o = beam["plane"]
+    z_face = o.Z - (n.X * (p.X - o.X) + n.Y * (p.Y - o.Y)) / n.Z  # the beam's top over the bar (ft)
+    cos = 1.0 / math.sqrt(1.0 + beam["rise"] ** 2)
+    z_end = z_face - (cover + d / 2.0) / cos / FT  # the cover square to the beam's face
+    fx, fy = getattr(section, "flip", (1.0, 1.0))
+    v = section.transform.Inverse.OfVector(DB.XYZ(beam["dir"][0], beam["dir"][1], 0.0))
+    lx, ly = fx * v.X, fy * v.Y
+    norm = math.hypot(lx, ly) or 1.0
+    return (section.z_top - z_end) * FT, (lx / norm, ly / norm), beam["rise"]
+
+
 def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     """kwargs of spec.bar_with_ends for a vertical bar (local x, y): into
     the foundation under `bottom_column` (EA_Barra_Extremos anchor, or its
@@ -1013,6 +1076,23 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
         ends["top_drop"] = column_spec.cover_m + d
         ends["leg_top"] = leg
         top_section = Section(top_column)
+        slope = (slope_top_end(doc, top_column, top_section, x, y, d, column_spec.cover_m)
+                 if getattr(column_spec, "slope_top", False) else None)
+        if slope is not None:
+            # into the sloped beam over it, bent along it (2026-11-03): the bar up
+            # to under the beam's top, the leg parallel to the beam - its plan
+            # length and rise -, the bottom leg in the same plane
+            drop, direction, rise = slope
+            cos = 1.0 / math.sqrt(1.0 + rise * rise)
+            ends["top_drop"] = drop
+            ends["leg_top"] = leg * cos
+            ends["rise_top"] = leg * cos * rise
+            ends["dir_top"] = direction
+            if "leg_bottom" in ends:
+                ends["dir_bottom"] = leg_toward_concrete(
+                    doc, section, bottom_column, x, y, half_b, half_h, ends["leg_bottom"],
+                    section.z_bottom - (ends["anchor"] - d) / FT, axis=direction)
+            return ends
     bot =((section, bottom_column, ends["leg_bottom"], section.z_bottom - (ends["anchor"] - d) / FT)
            if "leg_bottom" in ends else None)
     top = ((top_section, top_column, ends["leg_top"], top_section.z_top - (column_spec.cover_m + d) / FT)
@@ -1495,6 +1575,9 @@ def column_stacks(columns, xy_tol_m=0.02, z_tol_m=0.10, same_type=True):
             below = last.point_m(0.0, 0.0, last.z_top)
             if last_column.GetTypeId() == column.GetTypeId():
                 kin = same_type
+            elif (same_type and stack[0][0].GetTypeId() == column.GetTypeId()
+                  and is_nucleus(column.Document, last_column, last)):
+                kin = True  # the stack's column goes on over its joint (one bar through all)
             else:
                 if joint is None:
                     joint = is_nucleus(column.Document, column, section)
@@ -1617,7 +1700,7 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
                 path,
                 **dict((k, v) for k, v in ends.items()
                        if (index == 0 and k in ("anchor", "leg_bottom", "dir_bottom"))
-                       or (index == len(pieces) - 1 and k in ("top_drop", "leg_top", "dir_top"))))
+                       or (index == len(pieces) - 1 and k in ("top_drop", "leg_top", "dir_top", "rise_top"))))
             middle = (z_start + z_end) / 2.0
             host = stack[next((k for k, top in enumerate(tops) if middle <= top + 1e-6), len(stack) - 1)]
             rebar = Rebar.CreateFromCurves(

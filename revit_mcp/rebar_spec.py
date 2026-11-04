@@ -800,11 +800,13 @@ def leg_samples(leg, tip_cover=0.025):
 
 
 def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=0.0,
-                  leg_top=0.0, dir_top=None):
+                  leg_top=0.0, dir_top=None, rise_top=0.0):
     """A vertical bar's points (x, y, z) from bottom to top, run `anchor` m
     further down (into the foundation) and ended `top_drop` m lower at the
     top, with a horizontal leg of `leg_bottom` / `leg_top` m along the
-    unit (x, y) `dir_bottom` / `dir_top` (none when 0), like on site."""
+    unit (x, y) `dir_bottom` / `dir_top` (none when 0), like on site.
+    `rise_top`: the top leg's tip that much higher (lower if negative) - a
+    leg bent along a sloped beam, `leg_top` then its plan length."""
     pts = [tuple(p) for p in points]
     x, y, z = pts[0]
     pts[0] = (x, y, z - anchor)
@@ -813,7 +815,7 @@ def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=
     x, y, z = pts[-1]
     pts[-1] = (x, y, z - top_drop)
     if leg_top > 1e-6 and dir_top:
-        pts.append((x + dir_top[0] * leg_top, y + dir_top[1] * leg_top, z - top_drop))
+        pts.append((x + dir_top[0] * leg_top, y + dir_top[1] * leg_top, z - top_drop + rise_top))
     return pts
 
 

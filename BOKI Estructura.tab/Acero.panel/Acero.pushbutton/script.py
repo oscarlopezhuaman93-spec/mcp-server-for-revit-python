@@ -655,6 +655,7 @@ class AceroWindow(forms.WPFWindow):
         self.legs_bot = dict(ends.get("bot") or {})
         self.legs_top = dict(ends.get("top") or {})
         self.txt_anchor.Text = u"{}".format(ends.get("anchor") or u"")
+        self.chk_slope_top.IsChecked = bool(ends.get("slope_top"))
         self.cbo_dir_bot.SelectedItem = ends.get("dir_bot") if ends.get("dir_bot") in rs.LEG_DIRS else rs.LEG_OUT
         self.cbo_dir_top.SelectedItem = ends.get("dir_top") if ends.get("dir_top") in rs.LEG_DIRS else rs.LEG_IN
         self._fill_slot_types()
@@ -1063,6 +1064,8 @@ class AceroWindow(forms.WPFWindow):
                 "top": dict((k, v) for k, v in self.legs_top.items() if v),
                 "dir_bot": self.cbo_dir_bot.SelectedItem or rs.LEG_OUT,
                 "dir_top": self.cbo_dir_top.SelectedItem or rs.LEG_IN}
+        if self.chk_slope_top.IsChecked:  # the top legs along a sloped beam over it (rc.slope_top_end)
+            data["slope_top"] = True
         if anchor is None and not data["bot"] and not data["top"]:
             return u""
         return json.dumps(data, ensure_ascii=False)
@@ -2008,6 +2011,21 @@ class AceroWindow(forms.WPFWindow):
                     d_top = rs.leg_vector(x, y, half[0], half[1], rs.LEG_IN) if top_leg else None
                 else:  # as generated: in concrete, both legs in one plane
                     d_bot, d_top = rc.leg_pair(doc, x, y, half[0], half[1], bot, top_leg)
+                if top_leg and self.chk_slope_top.IsChecked and key:
+                    # into the sloped beam over it, bent along it (rc.bar_ends / rc.slope_top_end)
+                    try:
+                        cover = float((f["cover"] or u"4").replace(u",", u".")) / 100.0
+                    except ValueError:
+                        cover = 0.04
+                    col, sec = last["top_host"]
+                    slope = rc.slope_top_end(doc, col, sec, x, y, rs.BAR_DIAMETERS_MM[key] / 1000.0, cover)
+                    if slope is not None:
+                        drop, d_top, rise = slope
+                        cos = 1.0 / math.sqrt(1.0 + rise * rise)
+                        kw["top_drop"], kw["leg_top"], kw["rise_top"] = drop, leg * cos, leg * cos * rise
+                        if bot:
+                            d_bot = rc.leg_toward_concrete(doc, bot[0], bot[1], x, y, half[0], half[1], bot[2], bot[3],
+                                                           axis=d_top)
                 if d_bot:
                     kw["dir_bottom"] = d_bot
                 if d_top:
