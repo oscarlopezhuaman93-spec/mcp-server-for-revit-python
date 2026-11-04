@@ -80,21 +80,26 @@ class _Frame(object):
         return DB.XYZ(p.X, p.Y, z / FT)
 
 
-def _rows(frame, line, design, cover, ridge_end, eave_face):
-    """Top and bottom bar rows of a line: [((eave (u, z), dir (du, dz)), key, w)]."""
+def _rows(frame, line, design, cover, ridge_end, eave_face, eave_u=None):
+    """Top and bottom bar rows of a line: [((eave (u, z), dir (du, dz)), key, w)].
+    eave_u: (u0, u1) of the eave support (a column, a wall): each bar runs on
+    along its own line to the support's far face less the cover, so its end
+    and plumb hook are inside it (the face is plumb, the beam sloped)."""
     s_eave = eave_face + cover if ridge_end == 1 else eave_face - cover
     s_ridge = line.length if ridge_end == 1 else 0.0
-    # the eave support's face is plumb, the beam sloped: at a bar's height y
-    # the face lies y * tan along the beam - each bar ends that much on, so
-    # its end and plumb hook stay in the support (not out of its face)
-    up = line.section.up
-    tan = line.direction.Z / up.Z if abs(up.Z) > 1e-6 else 0.0
     top, bottom = [], []
     for x, y, key in design["bars"]:
-        u0, z0, w = frame.uzw(line.point(x, y, s_eave + y * tan))
+        u0, z0, w = frame.uzw(line.point(x, y, s_eave))
         u1, z1, _ = frame.uzw(line.point(x, y, s_ridge))
         L = math.hypot(u1 - u0, z1 - z0) or 1.0
-        row = (((u0, z0), ((u1 - u0) / L, (z1 - z0) / L)), key, w)
+        du, dz = (u1 - u0) / L, (z1 - z0) / L
+        if eave_u is not None and abs(du) > 1e-6:
+            far = eave_u[0] if abs(eave_u[0] - u1) > abs(eave_u[1] - u1) else eave_u[1]
+            inward = 1.0 if u1 > far else -1.0
+            target = far + inward * (cover + spec.BAR_DIAMETERS_MM[key] / 2000.0)
+            z0 = z0 + (target - u0) * dz / du
+            u0 = target
+        row = (((u0, z0), (du, dz)), key, w)
         (top if y > 0 else bottom).append(row)
     top.sort(key=lambda r: r[2])
     bottom.sort(key=lambda r: r[2])
@@ -142,7 +147,15 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
         _, start_face, end_face = rb.spans_and_ends(line, supports)
         eave_end = 1 - ridge_end
         face = start_face if eave_end == 0 else end_face
-        top, bottom = _rows(frame, line, beam_spec.design, beam_spec.cover_m, ridge_end, face)
+        eave_u = None
+        for f in supports:  # the eave support (not a beam): its extent along the frame
+            if f["label"] != u"VIGA" and ((f["s0"] < 0.05) if eave_end == 0 else (f["s1"] > line.length - 0.05)):
+                box = doc.GetElement(DB.ElementId(f["id"])).get_BoundingBox(None)
+                if box is not None:
+                    us = [frame.uzw(DB.XYZ(px, py, box.Min.Z))[0]
+                          for px in (box.Min.X, box.Max.X) for py in (box.Min.Y, box.Max.Y)]
+                    eave_u = (min(us), max(us)) if eave_u is None else (min(eave_u[0], min(us)), max(eave_u[1], max(us)))
+        top, bottom = _rows(frame, line, beam_spec.design, beam_spec.cover_m, ridge_end, face, eave_u)
         hooked = anchor == rb.ANCHOR_HOOK
         # the plumb hook stays inside the eave support (a shallow beam too)
         floor_z = None
