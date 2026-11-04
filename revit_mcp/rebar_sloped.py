@@ -88,6 +88,7 @@ def _rows(frame, line, design, cover, ridge_end, eave_face, eave_u=None):
     s_eave = eave_face + cover if ridge_end == 1 else eave_face - cover
     s_ridge = line.length if ridge_end == 1 else 0.0
     top, bottom = [], []
+    top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
     for x, y, key in design["bars"]:
         u0, z0, w = frame.uzw(line.point(x, y, s_eave))
         u1, z1, _ = frame.uzw(line.point(x, y, s_ridge))
@@ -96,7 +97,10 @@ def _rows(frame, line, design, cover, ridge_end, eave_face, eave_u=None):
         if eave_u is not None and abs(du) > 1e-6:
             far = eave_u[0] if abs(eave_u[0] - u1) > abs(eave_u[1] - u1) else eave_u[1]
             inward = 1.0 if u1 > far else -1.0
-            target = far + inward * (cover + spec.BAR_DIAMETERS_MM[key] / 2000.0)
+            d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+            target = far + inward * (cover + d / 2.0)
+            if y < 0:  # its hook up beside the top bars' (down), not on them
+                target += inward * ((top_d + d) / 2.0 + 0.005)
             z0 = z0 + (target - u0) * dz / du
             u0 = target
         row = (((u0, z0), (du, dz)), key, w)
@@ -166,12 +170,19 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
                     z = box.Min.Z * FT + beam_spec.cover_m
                     floor_z = z if floor_z is None else min(floor_z, z)
         leg = {}
-        for (eave, _), key, _ in top + bottom:
+        top_z = min([e[1] for (e, _), _, _ in top] or [None]) if top else None
+        for (eave, _), key, _ in top:
             want = bx.hook_leg(settings, eave_end, key, legs, spec.BAR_DIAMETERS_MM, hooked)
             if want > 0 and floor_z is not None:
                 room = eave[1] - floor_z - spec.BAR_DIAMETERS_MM[key] / 2000.0
                 want = max(spec.MIN_LEG_M, min(want, room))
-            leg[eave] = want  # per row: a bottom bar has less room than a top one
+            leg[eave] = want
+        for (eave, _), key, _ in bottom:  # its hook up, kept under the top bars
+            want = bx.hook_leg(settings, eave_end, key, legs, spec.BAR_DIAMETERS_MM, hooked)
+            if want > 0 and top_z is not None:
+                room = top_z - eave[1] - 0.03
+                want = max(spec.MIN_LEG_M, min(want, room))
+            leg[eave] = want
         host = line.element_at(0.0 if eave_end == 0 else line.length)
         sides.append({"line": line, "spec": beam_spec, "top": top, "bottom": bottom, "leg": leg,
                       "host": host, "ridge_host": line.element_at(line.length if ridge_end == 1 else 0.0)})
@@ -207,7 +218,8 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
             continue
         for row, key, w in own["top"][n:] + own["bottom"]:
             gap = (top_d(other) + spec.BAR_DIAMETERS_MM[key] / 1000.0) / 2.0
-            path = sp.anchored_path(row, other_top[0], own["leg"].get(row[0], 0.0), ld[key], gap)
+            path = sp.anchored_path(row, other_top[0], own["leg"].get(row[0], 0.0), ld[key], gap,
+                                    up=(row, key, w) in own["bottom"])
             if path is None:
                 continue
             if sp.length(path) > max_length + 1e-6:

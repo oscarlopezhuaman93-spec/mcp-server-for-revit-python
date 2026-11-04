@@ -37,8 +37,9 @@ def _along(p, d, t):
     return (p[0] + d[0] * t, p[1] + d[1] * t)
 
 
-def _with_leg(eave, leg):
-    return [(eave[0], eave[1] - leg), eave] if leg > 0 else [eave]
+def _with_leg(eave, leg, up=False):
+    """The plumb hook at the eave: down (a top bar), up (a bottom one)."""
+    return [(eave[0], eave[1] + (leg if up else -leg)), eave] if leg > 0 else [eave]
 
 
 def top_path(row_a, row_b, leg_a, leg_b):
@@ -49,7 +50,7 @@ def top_path(row_a, row_b, leg_a, leg_b):
     return _with_leg(row_a[0], leg_a) + [ridge] + list(reversed(_with_leg(row_b[0], leg_b)))
 
 
-def anchored_path(row, other_top, leg, ld, gap):
+def anchored_path(row, other_top, leg, ld, gap, up=False):
     """A bar of one beam crossing the ridge and anchored `ld` along the
     other beam, `gap` under that beam's top bar row `other_top`."""
     q0, e = other_top
@@ -59,7 +60,7 @@ def anchored_path(row, other_top, leg, ld, gap):
     if bend is None:
         return None
     back = (-e[0], -e[1])  # from the ridge down the other beam
-    return _with_leg(row[0], leg) + [bend, _along(bend, back, ld)]
+    return _with_leg(row[0], leg, up) + [bend, _along(bend, back, ld)]
 
 
 def split_top(path, ridge_index, lap):
