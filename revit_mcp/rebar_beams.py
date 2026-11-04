@@ -524,6 +524,16 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
                     for i in range(mesh.NumTriangles):
                         tri = mesh.get_Triangle(i)
                         triangles.append(tuple(line.local(tri.get_Vertex(k)) for k in range(3)))
+            if label == u"COLUMNA" and getattr(line, "sloped", False):
+                # a sloped beam (a gable's) resting on a column that stops at
+                # its bottom face (under the ridge): a support all the same,
+                # from where the column meets the beam's bottom
+                touch = _column_under(element, line, bottom, options)
+                if touch is not None and (not triangles or max(p[1] for tri in triangles for p in tri)
+                                          - min(p[1] for tri in triangles for p in tri) < 0.5 * depth):
+                    found.append({"label": label, "s0": touch[0], "s1": touch[1], "under": True,
+                                  "triangles": triangles, "id": element_id_value(element.Id)})
+                    continue
             if not triangles:
                 continue
             pts = [p for tri in triangles for p in tri]
@@ -538,6 +548,29 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
     if vigueta:  # only what it touches: the columnetas at its sides, not a column past them
         found = [f for f in found if f["s1"] >= -0.05 and f["s0"] <= line.length + 0.05]
     return found
+
+
+def _column_under(column, line, bottom, options, tol=0.03):
+    """(s0, s1) along `line` of a column whose top meets the line's bottom
+    face (its vertices on that face, under the beam's width), from where it
+    touches to its far side; None when it does not reach the beam."""
+    xs = [p[0] for p in line.section.polygon_m]
+    half = (max(xs) - min(xs)) / 2.0 + 0.05
+    pts = []
+    for solid in rc._solids(column.get_Geometry(options)):
+        for edge in solid.Edges:
+            curve = edge.AsCurve()
+            pts += [line.local(curve.GetEndPoint(0)), line.local(curve.GetEndPoint(1))]
+    touching = [p for p in pts if abs(p[1] - bottom) <= tol and abs(p[0]) <= half]
+    if not touching:
+        return None
+    top = max([p[1] for p in pts])
+    near = [p for p in pts if top - p[1] <= 0.6 and abs(p[0]) <= half]  # its head, not its foot
+    s0 = min([p[2] for p in touching] + [p[2] for p in near])
+    s1 = max([p[2] for p in touching] + [p[2] for p in near])
+    if s1 - s0 < 0.05:
+        return None
+    return s0, s1
 
 
 def spans_and_ends(line, supports):

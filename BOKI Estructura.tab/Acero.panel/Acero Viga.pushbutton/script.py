@@ -2341,7 +2341,8 @@ class AceroWindow(forms.WPFWindow):
         if missing_laps:
             messages.append(u"Sin empalme (diametro no marcado): barras de " + u", ".join(sorted(missing_laps)))
         polygon = line.section.polygon_m
-        supports_view = [{"label": s["label"], "s0": s["s0"], "s1": s["s1"]} for s in supports]
+        supports_view = [{"label": s["label"], "s0": s["s0"], "s1": s["s1"], "under": s.get("under", False)}
+                         for s in supports]
         # the concrete as it is: each element's outline (elevation) and its
         # stretches between slope changes with their sections (3D)
         outlines, pieces = [], []

@@ -995,7 +995,7 @@ def draw_beam_elevation(canvas, data, frame):
             # plumb in the model, drawn leaning back so it shows plumb
             c = (f["s0"] + f["s1"]) / 2.0
             half = max(0.05, (f["s1"] - f["s0"] - abs(tan) * (y1 - y0)) / 2.0)
-            ya, yb = y0 - reach, y1 + reach
+            ya, yb = y0 - reach, (y0 if f.get("under") else y1 + reach)  # one under the beam stops at it
             _polygon(canvas, frame, [(c - half + ya * tan, ya), (c + half + ya * tan, ya),
                                      (c + half + yb * tan, yb), (c - half + yb * tan, yb)],
                      C_NEIGHBOR, C_NEIGHBOR_EDGE)
