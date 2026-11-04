@@ -947,8 +947,12 @@ def beam_elevation_extent(data):
         room += 1.2 * u
         room_top += 1.2 * u
     side = 7 * u if data.get("hooks") else 2 * u  # room for the "Gancho 0.20" labels
-    return (min(ss) - side,min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0),
-            max(ss) + side, max(ys) + 6 * u + room_top + 1.1 * u * top_rows)
+    s0, y0 = min(ss) - side, min(ys) - 9 * u - room - 1.1 * u * bottom_rows - (2.2 * u if bottom_rows else 0.0)
+    s1, y1 = max(ss) + side, max(ys) + 6 * u + room_top + 1.1 * u * top_rows
+    for pts in data.get("partners") or []:  # the other water of a sloped roof
+        s0, s1 = min([s0] + [p[0] for p in pts]), max([s1] + [p[0] for p in pts])
+        y0, y1 = min([y0] + [p[1] * k for p in pts]), max([y1] + [p[1] * k for p in pts])
+    return (s0, y0, s1, y1)
 
 
 def beam_cota_y(data, face, row):
@@ -989,6 +993,11 @@ def draw_beam_elevation(canvas, data, frame):
         lift = 1.1 * u * (data.get("cota_rows") or (0, 0))[0]  # over the extra bars' dimensions
         _text(canvas, frame, (f["s0"] + f["s1"]) / 2.0, y1 + 3.3 * u + lift + (index % 2) * 1.2 * u, f["label"],
               brush=C_NEIGHBOR_TEXT, size=9, bold=True)
+    for pts in data.get("partners") or []:  # the other water of a sloped roof, as in the project
+        _polygon(canvas, frame, [(p[0], p[1] * k) for p in pts], C_NEIGHBOR, C_NEIGHBOR_EDGE)
+        cs = sum([p[0] for p in pts]) / len(pts)
+        cy = sum([p[1] for p in pts]) / len(pts) * k
+        _text(canvas, frame, cs, cy, u"VIGA (otra agua)", brush=C_NEIGHBOR_TEXT, size=9, bold=True)
     if data.get("outlines"):  # the real outline, a haunch included
         for outline in data["outlines"]:
             _polygon(canvas, frame, [(s, y * k) for s, y in outline], C_CONCRETE, C_BAR)

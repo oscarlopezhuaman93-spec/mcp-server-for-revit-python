@@ -389,6 +389,46 @@ def _natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
+def _clip_s(points, lo, hi):
+    """The polygon [(s, y)] cut to lo <= s <= hi (Sutherland-Hodgman)."""
+    def clip(pts, inside, cut):
+        out = []
+        for i in range(len(pts)):
+            a, b = pts[i - 1], pts[i]
+            if inside(b):
+                if not inside(a):
+                    out.append(cut(a, b))
+                out.append(b)
+            elif inside(a):
+                out.append(cut(a, b))
+        return out
+
+    def at(v):
+        return lambda a, b: (v, a[1] + (b[1] - a[1]) * (v - a[0]) / ((b[0] - a[0]) or 1e-9))
+    pts = clip(list(points), lambda p: p[0] >= lo, at(lo)) if points else []
+    return clip(pts, lambda p: p[0] <= hi, at(hi)) if pts else []
+
+
+def _hull(points):
+    """Convex outline [(a, b)] of the points (monotone chain)."""
+    pts = sorted(set([(round(a, 4), round(b, 4)) for a, b in points]))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
 class AceroWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, types, state):
         # Esc must not close the window (it cancels the current stroke,
@@ -1931,6 +1971,57 @@ class AceroWindow(forms.WPFWindow):
             return None, u"{}".format(e)
         return {"key": key, "zones": zones, "rest": rest}, None
 
+    def _elev_tilt(self):
+        """The slope (degrees, + rising with s) of the beam shown, 0 when it
+        is level: its elevation is drawn at it, as in the project."""
+        line = getattr(self, "_view_line", None)
+        if line is None or not getattr(line, "sloped", False):
+            return 0.0
+        a, b = line.point(0.0, 0.0, 0.0), line.point(0.0, 0.0, 1.0)
+        return math.degrees(math.atan2(b.Z - a.Z, math.hypot(b.X - a.X, b.Y - a.Y)))
+
+    def _ridge_partner(self, line):
+        """Triangles (this line's local x, y, s) of the sloped beam meeting
+        this sloped one at an end in its own vertical plane - the other water
+        of the roof - shown with it in the elevation and the 3D view."""
+        if not getattr(line, "sloped", False):
+            return []
+        cache = self.__dict__.setdefault("_partner_cache", {})
+        key = tuple([id_of(e.Id) for e in line.elements])
+        if key in cache:
+            return cache[key]
+        mine = set(key)
+        d0 = line.point(0.0, 0.0, 1.0) - line.point(0.0, 0.0, 0.0)
+        plan = DB.XYZ(d0.X, d0.Y, 0.0)
+        out = []
+        for s_end in (0.0, line.length):
+            p = line.point(0.0, 0.0, s_end)
+            pad = DB.XYZ(1.5, 1.5, 1.5)  # ft
+            near = (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(DB.Outline(p - pad, p + pad))))
+            for e in near:
+                if id_of(e.Id) in mine or not isinstance(getattr(e, "Location", None), DB.LocationCurve):
+                    continue
+                c = e.Location.Curve
+                d = c.GetEndPoint(1) - c.GetEndPoint(0)
+                if abs(d.Z) < 0.05 * d.GetLength():
+                    continue  # level: a ridge or edge beam, not the other water
+                if abs(plan.CrossProduct(DB.XYZ(d.X, d.Y, 0.0)).Z) > 0.05 * plan.GetLength() * d.GetLength():
+                    continue  # another vertical plane
+                tris = []
+                for solid in rc._solids(e.get_Geometry(DB.Options())):
+                    for face in solid.Faces:
+                        mesh = face.Triangulate()
+                        for i in range(mesh.NumTriangles):
+                            tri = mesh.get_Triangle(i)
+                            tris.append(tuple([line.local(tri.get_Vertex(k)) for k in range(3)]))
+                if tris:
+                    out.append(tris)
+                    mine.add(id_of(e.Id))
+        cache[key] = out
+        return out
+
     def _views_data(self):
         """(elevation data, 3D data) of the beam chosen in "Viga:" with the
         active type as configured and drawn right now (unsaved changes
@@ -2155,13 +2246,18 @@ class AceroWindow(forms.WPFWindow):
             "nb_selected": getattr(self, "_nb_sel", None),  # a neighbor's bar clicked: (its tag, face)
             "kinds": [((a + b) / 2.0, self._kind_text(line, t.name)) for a, b in spans],
         }
+        partners = self._ridge_partner(line)  # the other water of the roof: drawn with it
+        clipped = [_clip_s(_hull([(q[2], q[1]) for tri in tris for q in tri]), -1.2, line.length + 1.2)
+                   for tris in partners]
+        elev["partners"] = [p for p in clipped if len(p) >= 3]
         scene = {
             "polygon": polygon,
             "length": line.length,
             "ranges": line.ranges,
             "bar_paths": bar_paths + neighbor_paths,
             "loops": loops,
-            "supports_mesh": [tri for s in supports for tri in s["triangles"]],
+            "supports_mesh": [tri for s in supports for tri in s["triangles"]]
+                             + [tri for tris in partners for tri in tris],
             "pieces": pieces,
         }
         return elev, scene
@@ -2192,7 +2288,32 @@ class AceroWindow(forms.WPFWindow):
             self.canvas_elev.Children.Clear()
             return
         rv.draw_beam_elevation(self.canvas_elev, self._elev_data, self.elev_nav.resolve(fitted))
+        self._tilt_elevation()
         self._draw_cuts()
+
+    def _tilt_elevation(self):
+        """A sloped beam's elevation turned to its slope (as in the project),
+        shrunk to stay in view; the mouse is read in the canvas's own
+        coordinates (GetPosition undoes the turn), so every click and cota
+        works as on a level beam."""
+        from System.Windows.Media import TransformGroup, ScaleTransform, RotateTransform
+        canvas = self.canvas_elev
+        tilt = self._elev_tilt()
+        if abs(tilt) < 0.5:
+            canvas.RenderTransform = None
+            return
+        w, h = canvas.ActualWidth, canvas.ActualHeight
+        r = math.radians(abs(tilt))
+        # the drawing's own size (not the canvas's): turned, it is fitted back in
+        s0, y0, s1, y1 = rv.beam_elevation_extent(self._elev_data)
+        scale = self.elev_nav.resolve(self._elev_fitted())[0]
+        cw, ch = (s1 - s0) * scale, (y1 - y0) * scale
+        k = min(1.0, w / (cw * math.cos(r) + ch * math.sin(r) or 1.0), h / (cw * math.sin(r) + ch * math.cos(r) or 1.0))
+        k = max(k, 0.5)
+        group = TransformGroup()
+        group.Children.Add(ScaleTransform(k, k, w / 2.0, h / 2.0))
+        group.Children.Add(RotateTransform(-tilt, w / 2.0, h / 2.0))  # up to the right when rising with s
+        canvas.RenderTransform = group
 
     # -- the beam's own settings: spans' stirrups, extras, cuts -----------------
     def _line_settings(self, line):
