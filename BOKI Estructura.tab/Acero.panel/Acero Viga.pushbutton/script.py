@@ -2031,7 +2031,7 @@ class AceroWindow(forms.WPFWindow):
                                                     set_a, set_b)
         except Exception:
             return None
-        lo, hi = -1.2, line.length + 1.2
+        lo, hi = -1e6, 1e6  # both waters whole
         out, by_face = [], {}
         for path, key, w, shares in paths:
             pts = [line.local(frame.world(u, z, w)) for u, z in path]
@@ -2332,8 +2332,7 @@ class AceroWindow(forms.WPFWindow):
             "kinds": [((a + b) / 2.0, self._kind_text(line, t.name)) for a, b in spans],
         }
         partners = self._ridge_partner(line)  # the other water of the roof: drawn with it
-        clipped = [_clip_s(_hull([(q[2], q[1]) for tri in tris for q in tri]), -1.2, line.length + 1.2)
-                   for tris in partners]
+        clipped = [_hull([(q[2], q[1]) for tri in tris for q in tri]) for tris in partners]  # whole: both waters
         elev["partners"] = [p for p in clipped if len(p) >= 3]
         elev["tilt"] = self._elev_tilt()  # its supports drawn plumb in the turned elevation
         scene = {

@@ -84,9 +84,14 @@ def _rows(frame, line, design, cover, ridge_end, eave_face):
     """Top and bottom bar rows of a line: [((eave (u, z), dir (du, dz)), key, w)]."""
     s_eave = eave_face + cover if ridge_end == 1 else eave_face - cover
     s_ridge = line.length if ridge_end == 1 else 0.0
+    # the eave support's face is plumb, the beam sloped: at a bar's height y
+    # the face lies y * tan along the beam - each bar ends that much on, so
+    # its end and plumb hook stay in the support (not out of its face)
+    up = line.section.up
+    tan = line.direction.Z / up.Z if abs(up.Z) > 1e-6 else 0.0
     top, bottom = [], []
     for x, y, key in design["bars"]:
-        u0, z0, w = frame.uzw(line.point(x, y, s_eave))
+        u0, z0, w = frame.uzw(line.point(x, y, s_eave + y * tan))
         u1, z1, _ = frame.uzw(line.point(x, y, s_ridge))
         L = math.hypot(u1 - u0, z1 - z0) or 1.0
         row = (((u0, z0), ((u1 - u0) / L, (z1 - z0) / L)), key, w)
