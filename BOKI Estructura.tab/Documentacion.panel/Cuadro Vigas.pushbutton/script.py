@@ -531,6 +531,7 @@ class CuadroWindow(forms.WPFWindow):
         for t in types:
             cb = CheckBox()
             cb.Content = t.label()
+            cb.ToolTip = t.label()  # the whole name (the list also scrolls sideways)
             cb.IsChecked = t.has_steel()
             cb.Margin = Thickness(0, 2, 0, 2)
             cb.Click += self.options_changed

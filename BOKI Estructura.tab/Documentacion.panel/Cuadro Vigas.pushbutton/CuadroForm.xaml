@@ -57,7 +57,7 @@
                 </StackPanel>
                 <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
                            Text="Cada secci&#243;n sale acotada con el tipo de cota elegido y con etiquetas de barras y estribo. Los datos salen de lo guardado en Acero Viga para cada tipo."/>
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <StackPanel x:Name="panel_types"/>
                 </ScrollViewer>
             </DockPanel>

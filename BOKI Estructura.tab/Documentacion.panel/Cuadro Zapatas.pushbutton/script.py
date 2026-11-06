@@ -375,8 +375,9 @@ class CuadroWindow(forms.WPFWindow):
             row.Margin = Thickness(0, 2, 0, 2)
             cb = CheckBox()
             cb.Content = t.label()
+            cb.ToolTip = t.label()  # the whole name (the list also scrolls sideways)
             cb.IsChecked = t.is_footing()
-            cb.Width = 300
+            cb.MinWidth = 300  # the whole name shown (the list scrolls sideways)
             cb.Click += self.options_changed
             irr = CheckBox()
             irr.Content = u"ver planta"
