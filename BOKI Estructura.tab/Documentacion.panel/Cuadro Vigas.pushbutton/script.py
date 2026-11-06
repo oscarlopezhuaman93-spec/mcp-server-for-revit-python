@@ -511,8 +511,14 @@ class CuadroWindow(forms.WPFWindow):
         self.cbo_alpha.ItemsSource = [str(v) for v in TRANSPARENCIES]
         self.cbo_alpha.SelectedItem = u"20"
         # the TIPO row: a type parameter with the code (Marca de tipo...), or the name
-        names = sorted(set(p.Definition.Name for t in types for p in t.type.Parameters
-                           if p.StorageType == DB.StorageType.String))
+        # the type's text parameters and its elements' own (a shared "CODIGO DE
+        # ELEMENTO" on each column...): all of them listed
+        names = set([p.Definition.Name for t in types for p in t.type.Parameters
+                     if p.StorageType == DB.StorageType.String])
+        for t in types:
+            for e in list(t.columns)[:3]:
+                names.update([p.Definition.Name for p in e.Parameters if p.StorageType == DB.StorageType.String])
+        names = sorted(names)
         self.cbo_param.ItemsSource = [NAME_OPTION] + names
         mark = next((n for n in names if n.lower() in (u"marca de tipo", u"type mark")), None)
         self.cbo_param.SelectedItem = mark if mark and any(
@@ -549,6 +555,16 @@ class CuadroWindow(forms.WPFWindow):
         for t in self.types:  # the TIPO row from the chosen parameter
             p = t.type.LookupParameter(param) if param and param != NAME_OPTION else None
             value = (p.AsString() or u"").strip() if p is not None else u""
+            if not value and param and param != NAME_OPTION:
+                # an element's own parameter: its value on the type's elements
+                # (several different ones joined: C-01/C-02)
+                found = []
+                for e in t.columns:
+                    q = e.LookupParameter(param)
+                    v = (q.AsString() or u"").strip() if q is not None and q.StorageType == DB.StorageType.String else u""
+                    if v and v not in found:
+                        found.append(v)
+                value = u"/".join(sorted(found))
             t.mark = value or t.base_mark
         return (self.chosen(), (self.txt_title.Text or u"").strip() or TITLE,
                 int(self.cbo_scale.SelectedItem or 10), self.cbo_detail.SelectedItem or ct.DETAIL_HIGH,
