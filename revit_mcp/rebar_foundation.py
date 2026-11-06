@@ -303,13 +303,16 @@ def mesh_layer_paths(inner, layer, diameter, hook, level=0, hook_b=None):
         z, sign = max(zs) - r - level * diameter, -1.0
     paths = []
     for u0, u1 in polygon_spans(inner, z + sign * 1e-4):
-        a, b = u0 + r, u1 - r
-        if b - a < 0.05:
-            continue
         room = max(zs) - min(zs) - diameter
         ha = min(hook, room) if hook > 0 else 0.0
         hb = hook if hook_b is None else hook_b
         hb = min(hb, room) if hb > 0 else 0.0
+        # a straight end's tip is the bar's end: right at the cover; a hooked
+        # end has its leg's side there, so its axis a half diameter inside
+        a = u0 + (r if ha > 0.05 else 0.0)
+        b = u1 - (r if hb > 0.05 else 0.0)
+        if b - a < 0.05:
+            continue
         path = [(a, z), (b, z)]
         if ha > 0.05:
             path.insert(0, (a, z + sign * ha))
