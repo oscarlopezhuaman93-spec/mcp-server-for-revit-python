@@ -696,6 +696,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
     bent across its ridge, rebar_sloped).
     Returns ({element id: [(rebar, key, kind, share)]}, warnings)."""
     design = beam_spec.design
+    for element in line.elements:  # Revit's own cover: the one its bars are laid with
+        rc.set_host_cover(doc, element, beam_spec.cover_m)
     supports = line_supports(doc, line) if supports is None else supports
     spans, start_face, end_face = spans_and_ends(line, supports)
     delete_generated(doc, line)

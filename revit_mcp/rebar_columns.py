@@ -936,6 +936,32 @@ def delete_generated(doc, column):
     return len(old)
 
 
+def set_host_cover(doc, element, cover_m):
+    """The element's own rebar cover in Revit (all its faces) set to the
+    cover the bars were laid with, so Revit shows the same one (a cover type
+    'Recubrimiento X cm', made once). The bars made from curves don't move."""
+    from Autodesk.Revit.DB.Structure import RebarHostData, RebarCoverType
+    try:
+        data = RebarHostData.GetRebarHostData(element)
+        if data is None or not cover_m:
+            return False
+        ft = cover_m / FT
+        current = data.GetCommonCoverType()
+        if current is not None and abs(current.CoverDistance - ft) < 1e-4:
+            return False
+        found = None
+        for ct in DB.FilteredElementCollector(doc).OfClass(RebarCoverType):
+            if abs(ct.CoverDistance - ft) < 1e-4:
+                found = ct
+                break
+        if found is None:
+            found = RebarCoverType.Create(doc, u"Recubrimiento {:g} cm".format(round(cover_m * 100.0, 1)), ft)
+        data.SetCommonCoverType(found)
+        return True
+    except Exception:
+        return False
+
+
 def _tag(rebar, column):
     p = rebar.LookupParameter(ORIGIN_PARAM)
     if p is not None and not p.IsReadOnly:
@@ -1620,6 +1646,9 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
     bars are the stack's (column_spec)."""
     def own_spec(column):
         return (type_specs or {}).get(element_id_value(column.GetTypeId())) or column_spec
+
+    for c in stack:  # Revit's own cover of each element: the one its bars are laid with
+        set_host_cover(doc, c, own_spec(c).cover_m)
 
     if splice is None:
         if len(stack) == 1:

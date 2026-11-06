@@ -2804,6 +2804,7 @@ def mesh_bars(wall, item):
     except ValueError:
         cover_cm = 4.0
     made = []
+    rc.set_host_cover(doc, wall, cover_cm / 100.0)  # Revit's own cover: the one its bars are laid with
     key = mesh["vd"]
     geo, paths = mesh_vertical_paths(wall, mesh, cover_cm / 100.0)
     if paths:

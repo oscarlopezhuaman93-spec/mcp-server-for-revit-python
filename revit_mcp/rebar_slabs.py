@@ -250,6 +250,8 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None, skip=None
     Returns ([(rebar, face, axis)], warnings)."""
     from Autodesk.Revit.DB.Structure import Rebar, RebarStyle, RebarHookOrientation
     doc = model.element.Document
+    import rebar_columns as _rc
+    _rc.set_host_cover(doc, model.element, float(settings.get("cover") or 2.0) / 100.0)  # Revit's own, as laid
     lines, _, warnings = model.plan(settings, mm, splice, brick_library(doc, settings))
     made = []
     for (face, axis), layer in sorted(lines.items()):
