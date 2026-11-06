@@ -8,6 +8,7 @@ __title__ = "Cuadro\nColumnas"
 __author__ = "Revit MCP"
 
 import math
+import re
 import os
 import sys
 
@@ -114,16 +115,41 @@ class ColumnType(object):
                 continue
             low = bb.Min.Z if low is None else min(low, bb.Min.Z)
             high = bb.Max.Z if high is None else max(high, bb.Max.Z)
-        self.levels = (ct.levels_between(levels, low * 0.3048 - 0.3, high * 0.3048 - 0.3)
-                       if low is not None else [])
+        self.levels = _storeys(columns) or (ct.levels_between(levels, low * 0.3048 - 0.3, high * 0.3048 - 0.3)
+                                            if low is not None else [])
 
     def has_steel(self):
         return bool(self.design and self.design["bars"])
 
     def label(self):
         state = u"con armado" if self.has_steel() else u"SIN ARMADO"
-        return u"{}  ({}, {} col.) - {}".format(self.mark, ct.shape_text(self.polygon) if self.polygon else u"?",
+        block = re.search(r"\((B\d+)\)", self.name)  # its block (B7...): the same mark in every block
+        mark = u"{} ({})".format(self.mark, block.group(1)) if block and block.group(1) not in self.mark else self.mark
+        return u"{}  ({}, {} col.) - {}".format(mark, ct.shape_text(self.polygon) if self.polygon else u"?",
                                                len(self.columns), state)
+
+
+def _storeys(columns):
+    """The storeys of a column type, one row each in the stirrup
+    distribution: the base levels of its tallest stack (columns one on
+    another at one place); a single storey (no stack): one row, its most
+    usual base level - not every level of the model between them."""
+    stacks, names = {}, {}
+    for c in columns:
+        bb = c.get_BoundingBox(None)
+        p = c.get_Parameter(DB.BuiltInParameter.FAMILY_BASE_LEVEL_PARAM)
+        level = doc.GetElement(p.AsElementId()) if p is not None else None
+        if bb is None or level is None:
+            continue
+        key = (round((bb.Min.X + bb.Max.X) / 2.0 * 0.3048 / 0.05), round((bb.Min.Y + bb.Max.Y) / 2.0 * 0.3048 / 0.05))
+        stacks.setdefault(key, {})[level.Name] = level.Elevation
+        names[level.Name] = names.get(level.Name, 0) + 1
+    if not stacks:
+        return []
+    tallest = max(stacks.values(), key=len)
+    if len(tallest) > 1:
+        return [n for n, z in sorted(tallest.items(), key=lambda kv: kv[1])]
+    return [max(names, key=lambda n: names[n])]
 
 
 def collect_types():
