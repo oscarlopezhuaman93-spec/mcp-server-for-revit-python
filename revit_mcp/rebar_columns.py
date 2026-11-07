@@ -560,6 +560,61 @@ def _hook_angle(shape, end):
 
 def _create_stirrup(doc, shapes, shape_name, column, bar_type, hook, hooks, key, curves,
                     orient_start, orient_end, normal=None):
+    """A stirrup as drawn, its cover kept: Revit's shape lays the leg at the
+    hooks' corner past the drawn outline (beside the other leg); that side
+    is drawn in by as much and the stirrup made again, so no leg is out of
+    the cover (`_create_stirrup_once` does the making)."""
+    rebar = _create_stirrup_once(doc, shapes, shape_name, column, bar_type, hook, hooks, key, curves,
+                                 orient_start, orient_end, normal)
+    try:
+        fixed = _drawn_in(doc, rebar, curves, normal or DB.XYZ.BasisZ)
+    except Exception:
+        fixed = None
+    if fixed is None:
+        return rebar
+    doc.Delete(rebar.Id)
+    return _create_stirrup_once(doc, shapes, shape_name, column, bar_type, hook, hooks, key, fixed,
+                                orient_start, orient_end, normal)
+
+
+def _drawn_in(doc, rebar, curves, normal, tol=1e-4):
+    """The curves with each side the made stirrup runs past moved in by
+    that much (a List[Curve]); None when it keeps to them."""
+    from Autodesk.Revit.DB.Structure import MultiplanarOption
+    doc.Regenerate()
+    made = list(rebar.GetCenterlineCurves(False, True, True, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
+    drawn = list(curves)
+    if not made or not drawn:
+        return None
+    longest = max(drawn, key=lambda c: c.Length)
+    u = (longest.GetEndPoint(1) - longest.GetEndPoint(0)).Normalize()
+    v = normal.CrossProduct(u).Normalize()
+    o = drawn[0].GetEndPoint(0)
+    pts = [c.GetEndPoint(k) for c in drawn for k in (0, 1)]
+    got = [c.GetEndPoint(k) for c in made for k in (0, 1)]
+    moves = []
+    for axis in (u, v):
+        a = [(p - o).DotProduct(axis) for p in pts]
+        b = [(p - o).DotProduct(axis) for p in got]
+        lo, hi = min(a), max(a)
+        if min(b) < lo - tol:
+            moves.append((axis, lo, lo - min(b)))  # that side moved in (up the axis)
+        if max(b) > hi + tol:
+            moves.append((axis, hi, -(max(b) - hi)))
+    if not moves:
+        return None
+
+    def moved(p):
+        q = p
+        for axis, side, d in moves:
+            if abs((p - o).DotProduct(axis) - side) < tol:
+                q = q + axis * d
+        return q
+    return List[DB.Curve]([DB.Line.CreateBound(moved(c.GetEndPoint(0)), moved(c.GetEndPoint(1))) for c in drawn])
+
+
+def _create_stirrup_once(doc, shapes, shape_name, column, bar_type, hook, hooks, key, curves,
+                         orient_start, orient_end, normal=None):
     """A stirrup or tie with the shape drawn for it (its hooks those the
     shape asks for); without one, or if Revit refuses the drawing for that
     shape, the shape Revit matches to the curves (with `hook` at both ends).
