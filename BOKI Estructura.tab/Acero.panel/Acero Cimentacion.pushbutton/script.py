@@ -701,7 +701,8 @@ class CimentacionWindow(forms.WPFWindow):
         steel = self.state.steel[self.state.active]
         covers = self.state.covers.get(self.state.active, {})
         splice = su.splice_for_generation(self._splice_from_form()) if hasattr(self, "lap_boxes") else None
-        sig = json.dumps([steel, sorted(covers.items()), splice], sort_keys=True, default=str)
+        # repr, not json: IronPython's json fails on a type name with "Ø".
+        sig = repr([sorted(steel.items()), sorted(covers.items()), splice])
         if sig == self._steel_sig:
             return
         self._steel_sig = sig
