@@ -1280,6 +1280,22 @@ def rect_measures(outline, section_polygon, tol=1e-4):
     return xs[1] - xs[0], ys[1] - ys[0], xs[0] - left, ys[0] - bottom
 
 
+def drop_collinear(points, tol=1e-4):
+    """A closed polygon without the vertices that lie on a straight side
+    (a point clicked mid-side): its real corners."""
+    pts = list(points)
+    changed = True
+    while changed and len(pts) > 3:
+        changed = False
+        for k in range(len(pts)):
+            (ax, ay), (bx, by), (cx, cy) = pts[k - 1], pts[k], pts[(k + 1) % len(pts)]
+            if abs((bx - ax) * (cy - by) - (by - ay) * (cx - bx)) < tol * max(1e-9, math.hypot(cx - ax, cy - ay)):
+                del pts[k]
+                changed = True
+                break
+    return pts
+
+
 def turned_rect_measures(outline, tol=1e-3):
     """(length, width) of a rectangular stirrup outline at any angle: its
     first side and the next; None if the 4 corners aren't square."""

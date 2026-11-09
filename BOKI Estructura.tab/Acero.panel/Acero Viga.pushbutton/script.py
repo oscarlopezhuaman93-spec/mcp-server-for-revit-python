@@ -1632,6 +1632,8 @@ class AceroWindow(forms.WPFWindow):
             self.panel_measures.Visibility = Visibility.Collapsed
             return
         kind, poly, wrap, is_open = stirrups[self.selected]
+        if not is_open:
+            poly = rs.drop_collinear(poly)  # a point clicked mid-side isn't a corner
         try:
             outline = rs.stirrup_outline(poly, self.design["bars"], self._family_key(kind), wrap, is_open)
         except rs.SpecError:
@@ -1734,6 +1736,7 @@ class AceroWindow(forms.WPFWindow):
         kind, poly, wrap, is_open = self.design["stirrups"][self.selected]
         if is_open:
             return  # open stirrups: edit them by redrawing
+        poly = rs.drop_collinear(poly)  # a point clicked mid-side isn't a corner
         if wrap is None:
             wrap = rs.wrap_radius(poly, self.design["bars"])
         key = self._family_key(kind)

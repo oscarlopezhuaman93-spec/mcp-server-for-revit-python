@@ -191,6 +191,8 @@ class BeamLine(object):
                 continue  # a sliver left at the line's end by a join cut, not a haunch
             if s in ends and len(by_s) > 2 and hi - lo <= 0.02 and depth > 0.05:
                 continue  # a lone vertex at the very end: same
+            if hi - lo > 0.02 and abs(hi - self.ref_top) > 0.03 and abs(lo - self.ref_bottom) > 0.03:
+                continue  # touches neither face: a cut inside (roof bricks), not a haunch
             if hi - lo > 0.02:
                 bottom.append((s, lo))
                 top.append((s, hi))
@@ -203,8 +205,14 @@ class BeamLine(object):
         # a haunch changes the depth along a stretch (two points or more of a
         # face, by more than 3 cm); one point off, or a notch of a cm or two,
         # is a join's cut - the beam keeps its stirrups in sets
-        self.variable = len([1 for _, y in self.bottom_points if abs(y - self.ref_bottom) > 0.03]) >= 2 or \
-            len([1 for _, y in self.top_points if abs(y - self.ref_top) > 0.03]) >= 2
+        # a corner of the section itself (the shoulder of a ridge beam's
+        # pentagon) is no change of depth
+        section_ys = [y for _, y in self.section.polygon_m]
+
+        def off(y, ref):
+            return abs(y - ref) > 0.03 and all(abs(y - v) > 0.01 for v in section_ys)
+        self.variable = len([1 for _, y in self.bottom_points if off(y, self.ref_bottom)]) >= 2 or \
+            len([1 for _, y in self.top_points if off(y, self.ref_top)]) >= 2
         self.breaks = sorted(set(s for s, _ in self.bottom_points + self.top_points))
         if self.sloped:  # its plumb-cut ends aren't a haunch: one section all along
             self.bottom_points, self.top_points = [(0.0, self.ref_bottom)], [(0.0, self.ref_top)]
