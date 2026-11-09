@@ -25,6 +25,7 @@ import selection_hosts
 import formwork_params as fw_params
 import rebar_spec as rs
 import rebar_columns as rc
+import rebar_group as rg
 from rebar_beams import seat_in_bends as rb_seat
 import rebar_views as rv
 import utils as fw_utils
@@ -2669,6 +2670,14 @@ try:
                 created, found = rc.generate_stack(
                     doc, stack, specs[ct.id], bar_types, hooks, rc.type_mark(ct.name), rebar_shapes, splice,
                     type_specs=specs)
+                # Acero Columna only: loose longitudinal bars alike, in a line,
+                # joined into one Revit set (none moves)
+                longs = dict((id_of(item[0].Id), item[0]) for items in created.values()
+                             for item in items if item[2] == rc.LONGITUDINAL)
+                gone = rg.group_loose(doc, list(longs.values()))
+                if gone:
+                    created = dict((k, [item for item in items if item[0].IsValidObject])
+                                   for k, items in created.items())
                 sub.Commit()
                 done += [(column, ct.name, created[id_of(column.Id)]) for column in stack]
                 warnings += [u"{} (columnas {}): {}".format(ct.name, u", ".join(str(id_of(c.Id)) for c in stack), w)
