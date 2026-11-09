@@ -582,7 +582,10 @@ def _drawn_in(doc, rebar, curves, normal, tol=1e-4):
     that much (a List[Curve]); None when it keeps to them."""
     from Autodesk.Revit.DB.Structure import MultiplanarOption
     doc.Regenerate()
-    made = list(rebar.GetCenterlineCurves(False, True, True, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
+    # the bar as made, hooks and bends included: with the hooks suppressed
+    # the side at the hooks reads half a diameter past the drawing even when
+    # the stirrup keeps its cover, and it was drawn in for nothing
+    made = list(rebar.GetCenterlineCurves(False, False, False, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
     drawn = list(curves)
     if not made or not drawn:
         return None
