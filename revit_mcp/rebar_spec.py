@@ -1280,6 +1280,42 @@ def rect_measures(outline, section_polygon, tol=1e-4):
     return xs[1] - xs[0], ys[1] - ys[0], xs[0] - left, ys[0] - bottom
 
 
+def turned_rect_measures(outline, tol=1e-3):
+    """(length, width) of a rectangular stirrup outline at any angle: its
+    first side and the next; None if the 4 corners aren't square."""
+    if len(outline) != 4:
+        return None
+    for k in range(4):
+        (ax, ay), (bx, by), (cx, cy) = outline[k - 1], outline[k], outline[(k + 1) % 4]
+        u, v = (bx - ax, by - ay), (cx - bx, cy - by)
+        lu, lv = math.hypot(*u), math.hypot(*v)
+        if lu < tol or lv < tol or abs(u[0] * v[0] + u[1] * v[1]) / (lu * lv) > 0.01:
+            return None
+    sides = side_lengths(outline)
+    return sides[0], sides[1]
+
+
+def resize_turned_rect(vertices, d_length, d_width):
+    """A rectangle at any angle grown by d_length along its first side and
+    d_width along the next, around its own center."""
+    p0, p1, p2 = vertices[0], vertices[1], vertices[2]
+    ux, uy = p1[0] - p0[0], p1[1] - p0[1]
+    vx, vy = p2[0] - p1[0], p2[1] - p1[1]
+    lu, lv = math.hypot(ux, uy), math.hypot(vx, vy)
+    if lu + d_length < 0.01 or lv + d_width < 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    ux, uy, vx, vy = ux / lu, uy / lu, vx / lv, vy / lv
+    cx = sum(x for x, _ in vertices) / 4.0
+    cy = sum(y for _, y in vertices) / 4.0
+    out = []
+    for x, y in vertices:
+        su = 1.0 if (x - cx) * ux + (y - cy) * uy > 0 else -1.0
+        sv = 1.0 if (x - cx) * vx + (y - cy) * vy > 0 else -1.0
+        out.append((x + su * ux * d_length / 2.0 + sv * vx * d_width / 2.0,
+                    y + su * uy * d_length / 2.0 + sv * vy * d_width / 2.0))
+    return out
+
+
 def rect_from_measures(width, height, to_left, to_bottom, section_polygon, stirrup_key, wrap):
     """Vertices (bar-center rectangle, as drawn) of a rectangular stirrup
     whose outer face measures width x height at the given distances from

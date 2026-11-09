@@ -55,9 +55,9 @@ from System.Windows import (FontWeights, HorizontalAlignment, Point, Size, Thick
                             VerticalAlignment, Visibility)
 from Microsoft.Win32 import OpenFileDialog, SaveFileDialog
 from Autodesk.Revit.DB.Structure import RebarShape, RebarStyle
-from System.Windows.Input import Cursors, Key, Keyboard, MouseButton
+from System.Windows.Input import Cursors, Key, Keyboard, ModifierKeys, MouseButton
 from System.Windows import GridLength, TextWrapping
-from System.Windows.Controls import Border, Dock, DockPanel, Grid, WrapPanel
+from System.Windows.Controls import Border, ComboBox, Dock, DockPanel, Grid, WrapPanel
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import (Color, DoubleCollection, PenLineCap, PenLineJoin, PointCollection,
@@ -909,6 +909,11 @@ class AceroWindow(forms.WPFWindow):
             self._status()
             self.redraw()
             args.Handled = True
+        elif (args.Key in (Key.Left, Key.Right, Key.Up, Key.Down)
+              and self._tool() == "edit" and getattr(self, "selected", None) is not None
+              and not isinstance(Keyboard.FocusedElement, (TextBox, ComboBox))):
+            self._nudge_stirrup(args.Key)
+            args.Handled = True
         elif (args.Key == Key.Delete and getattr(self, "_nb_sel", None)
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             tag, face = self._nb_sel  # a neighbor's bar clicked: out of this beam
@@ -926,6 +931,27 @@ class AceroWindow(forms.WPFWindow):
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             self.delete_stirrup_click(sender, args)
             args.Handled = True
+
+    def _nudge_stirrup(self, key):
+        """Arrow keys in Editar: the selected stirrup moves 1 cm (5 cm with
+        Shift) that way, never out of the cover."""
+        if self.selected >= len(self.design["stirrups"]):
+            return
+        step = 0.05 if Keyboard.Modifiers & ModifierKeys.Shift else 0.01
+        dx, dy = {Key.Left: (-step, 0.0), Key.Right: (step, 0.0),
+                  Key.Up: (0.0, step), Key.Down: (0.0, -step)}[key]
+        kind, poly, wrap, is_open = self.design["stirrups"][self.selected]
+        if wrap is None:
+            wrap = rs.wrap_radius(poly, self.design["bars"])  # kept as it was
+        moved = [(x + dx, y + dy) for x, y in poly]
+        if self._outside_cover(kind, moved, wrap, is_open):
+            self._status(u"Ahi el estribo se sale del recubrimiento; no se movio.")
+            return
+        self._status()
+        self._push_undo()
+        self.design["stirrups"][self.selected] = (kind, moved, wrap, is_open)
+        self.redraw()
+        self._update_measures()
 
     def _delete_main(self):
         """Supr on a main bar: the one clicked in a cut out of this beam (or
@@ -1617,6 +1643,10 @@ class AceroWindow(forms.WPFWindow):
             u"abierto " if is_open else u"", u"borde" if kind == rs.KIND_EDGE else u"confinamiento",
             u" ({})".format(shape) if shape else u"")
         measures = None if is_open else rs.rect_measures(outline, section.polygon_m)
+        turned = None if (is_open or measures) else rs.turned_rect_measures(outline)
+        self.lbl_m_width.Text, self.lbl_m_height.Text = (u"Largo ", u"Ancho ") if turned else (u"Ancho ", u"Alto ")
+        if turned:
+            measures = turned  # a rectangle at an angle: along its own sides
         self._fill_segment_boxes(rs.side_lengths(outline, closed=False) if is_open else [])
         if measures:
             self.panel_rect_fields.Visibility = Visibility.Visible
@@ -1712,6 +1742,21 @@ class AceroWindow(forms.WPFWindow):
                              for box in (self.txt_m_width, self.txt_m_height)]
             if width <= 0 or height <= 0:
                 raise ValueError()
+            outline = rs.stirrup_outline(poly, self.design["bars"], key, wrap)
+            turned = (None if rs.rect_measures(outline, t.section.polygon_m)
+                      else rs.turned_rect_measures(outline))
+            if turned:
+                # At an angle: resized along its own sides, around its center.
+                new_poly = rs.resize_turned_rect(poly, width - turned[0], height - turned[1])
+                if self._outside_cover(kind, new_poly, wrap, False):
+                    self._status(u"Con esas medidas el estribo se sale del recubrimiento; no se aplicaron.")
+                    return
+                self._status()
+                self._push_undo()
+                self.design["stirrups"][self.selected] = (kind, new_poly, wrap, False)
+                self.redraw()
+                self._update_measures()
+                return
             outer = rs.outer_rect(poly, self.design["bars"], key, wrap)
             bounds = self._cover_bounds()
             if bounds:

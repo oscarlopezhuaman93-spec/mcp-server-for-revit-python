@@ -268,9 +268,9 @@
                         <TextBlock x:Name="txt_measures_title" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,8,0"
                                    Text="Estribo seleccionado - medidas exteriores (cm):"/>
                         <StackPanel x:Name="panel_rect_fields" Orientation="Horizontal">
-                            <TextBlock Text="Ancho " VerticalAlignment="Center"/>
+                            <TextBlock x:Name="lbl_m_width" Text="Ancho " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_m_width" Width="48" Margin="0,0,8,0" KeyDown="measure_key"/>
-                            <TextBlock Text="Alto " VerticalAlignment="Center"/>
+                            <TextBlock x:Name="lbl_m_height" Text="Alto " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_m_height" Width="48" Margin="0,0,8,0" KeyDown="measure_key"/>
                             <Button Content="Aplicar" Width="65" Click="measures_apply"
                                     ToolTip="Cambia el tama&#241;o alrededor de su centro, sin salir del recubrimiento."/>
