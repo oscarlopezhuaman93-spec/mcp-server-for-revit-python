@@ -587,7 +587,7 @@ class AceroWindow(forms.WPFWindow):
         self._push_undo()
         self.design = design
         self.draft = []
-        self._select(None)
+        self._select_stirrup(None)
         self._status(u"Armado automático: {} barras Ø{} y estribo Ø{} a {:g} cm de recubrimiento. "
                      u"Pulsa 'Guardar configuración' para guardarlo en el tipo.".format(
                          len(design["bars"]), bar_key, stirrup_key, cover * 100), error=False)
@@ -854,7 +854,7 @@ class AceroWindow(forms.WPFWindow):
             self.design = design
         self.dirty = True
         self.draft = []
-        self._select(None)
+        self._select_stirrup(None)
         self._status(u"Cargada la configuracion de {}{}. Pulsa 'Guardar configuracion en los tipos "
                      u"marcados' para guardarla en el tipo.".format(
                          name, u"" if design is not None else u" (solo estribos)"), error=False)
@@ -977,7 +977,7 @@ class AceroWindow(forms.WPFWindow):
         self._push_undo()
         rs.remove_item(self.design, "stirrups", self.selected)
         self.draft = []
-        self._select(None)
+        self._select_stirrup(None)
         self._status(u"Estribo eliminado (Deshacer lo recupera).")
         self.redraw()
 
@@ -1615,7 +1615,7 @@ class AceroWindow(forms.WPFWindow):
         return fitted if wrap == rs.wrap_radius(fitted, bars) or wrap == 0 else rect
 
     # -- measures of the selected stirrup ------------------------------------
-    def _select(self, index):
+    def _select_stirrup(self, index):
         self.selected = index
         self._refresh_steel()
         self._update_measures()
@@ -1749,6 +1749,7 @@ class AceroWindow(forms.WPFWindow):
                 # At an angle: resized along its own sides, around its center.
                 new_poly = rs.resize_turned_rect(poly, width - turned[0], height - turned[1])
                 if self._outside_cover(kind, new_poly, wrap, False):
+                    self._update_measures()  # the boxes back to its real size
                     self._status(u"Con esas medidas el estribo se sale del recubrimiento; no se aplicaron.")
                     return
                 self._status()
@@ -3597,7 +3598,7 @@ class AceroWindow(forms.WPFWindow):
         elif tool == "tie":
             self._place_tie(self.to_m(frame, p))
         elif tool == "edit":
-            self._select(self._stirrup_at(frame, p))
+            self._select_stirrup(self._stirrup_at(frame, p))
         elif tool == "erase":
             self._erase(frame, p)
         self.redraw()
@@ -3648,7 +3649,7 @@ class AceroWindow(forms.WPFWindow):
             pts = rs.start_on_bar(pts, self.design["bars"])  # the hooks wrap a vertical bar
         rs.add_item(self.design, "stirrups", (kind, pts, wrap, is_open), shape["name"] if shape else None)
         self.draft = []
-        self._select(len(self.design["stirrups"]) - 1)
+        self._select_stirrup(len(self.design["stirrups"]) - 1)
         return True
 
     def _stirrup_at(self, frame, p):
@@ -3751,7 +3752,7 @@ class AceroWindow(forms.WPFWindow):
                 del self.design[kind][i]
             else:
                 rs.remove_item(self.design, kind, i)  # with its shape
-            self._select(None)
+            self._select_stirrup(None)
 
     def _place_bar(self, click_m):
         """Where a new bar goes (rs.place_bar): against the inner face of
@@ -3774,7 +3775,7 @@ class AceroWindow(forms.WPFWindow):
             self.draft = self.draft[:-1]
         elif self.undo_stack:
             self.design = rs.design_from_text(self.undo_stack.pop()) or rs.empty_design()
-            self._select(None)
+            self._select_stirrup(None)
         self.redraw()
 
     # -- rebar shape browser (right panel) ---------------------------------
@@ -3897,7 +3898,7 @@ class AceroWindow(forms.WPFWindow):
         self._push_undo()
         self.design = rs.empty_design()
         self.draft = []
-        self._select(None)
+        self._select_stirrup(None)
         self.redraw()
 
 def pick_beams(state):
