@@ -1142,7 +1142,14 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     bent where there is concrete at that level."""
     ends = _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column)
     if ends.get("rise_top"):
-        return ends  # bent along the sloped beam over it (the user's option): kept as it is
+        # bent along the sloped beam over it (the user's option): the bend kept,
+        # the bar lowered as much as needed so the bar's top and its whole leg
+        # keep the cover under the real concrete top (under a peak the beam's
+        # plane, carried past it, stood higher than the concrete)
+        try:
+            return _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends)
+        except Exception:
+            return ends
     try:
         top_section = Section(top_column)
         run_top = _concrete_top(doc, section, x, y, section.z_bottom + 0.1 / FT)
@@ -1153,7 +1160,7 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     d = spec.BAR_DIAMETERS_MM[key] / 1000.0
     need = (top_section.z_top - run_top) * FT + column_spec.cover_m + d
     if need <= ends.get("top_drop", 0.0) + 0.005:
-        return ends
+        return _level_leg_checked(doc, column_spec, key, x, y, section, top_column, ends)
     ends["top_drop"] = need
     if "leg_top" in ends:
         if ends.get("rise_top"):  # the leg along a sloped beam no longer starts there: level
@@ -1165,6 +1172,67 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
         z_leg = top_section.z_top - need / FT
         ends["dir_top"] = leg_toward_concrete(doc, top_section, top_column, x, y, half_b, half_h,
                                               ends["leg_top"], z_leg, axis=ends.get("dir_bottom"))
+    return _level_leg_checked(doc, column_spec, key, x, y, section, top_column, ends)
+
+
+def _level_leg_checked(doc, column_spec, key, x, y, section, top_column, ends):
+    """A level top leg run under a sloped top keeps the cover all along it."""
+    if not ends.get("leg_top") or not ends.get("dir_top"):
+        return ends
+    try:
+        return _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends)
+    except Exception:
+        return ends
+
+
+def _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends):
+    """`ends` of a bar bent along a sloped beam, its top_drop grown until
+    every point of its top and leg lies the cover (square to the slope)
+    under the concrete over it."""
+    top_section = Section(top_column)
+    d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+    leg, rise = ends.get("leg_top", 0.0), ends.get("rise_top", 0.0)
+    dx, dy = ends.get("dir_top") or (0.0, 0.0)
+    z0 = top_section.z_top - ends.get("top_drop", 0.0) / FT  # the bar's top (world ft)
+    samples = []
+    for k in range(6):
+        t = k / 5.0
+        px, py = x + dx * leg * t, y + dy * leg * t
+        # a leg bent up the slope sits higher than the bar's top by its bend
+        # (about two diameters, as Revit bends it)
+        pz = z0 + (rise * t + (2.0 * d if rise and t > 0 else 0.0)) / FT
+        top = _concrete_top(doc, section, px, py, pz - 0.4 / FT)
+        if top is None and rise and t > 0:
+            # the leg along the slope runs out of the concrete (a bar beside the
+            # sloped beam, not under it): a level leg where there is concrete
+            ends["rise_top"] = 0.0
+            ends["leg_top"] = spec.leg_m(column_spec.leg_top_cm.get(key)) or leg
+            xs = [p[0] for p in section.polygon_m]
+            ys = [p[1] for p in section.polygon_m]
+            ends["dir_top"] = leg_toward_concrete(
+                doc, top_section, top_column, x, y, (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0,
+                ends["leg_top"], z0, axis=ends.get("dir_bottom"))
+            return _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends)
+        if top is not None:
+            samples.append((leg * t, pz, top))
+    # the cover is square to the concrete's top: on a slope it takes more height
+    slope = rise / leg if leg else 0.0
+    for (s0, _, t0), (s1, _, t1) in zip(samples, samples[1:]):
+        if s1 - s0 > 1e-6:
+            slope = max(slope, abs(t1 - t0) * FT / (s1 - s0))
+    need_v = column_spec.cover_m * math.sqrt(1.0 + slope * slope) + d / 2.0
+    worst = 0.0
+    for _, pz, top in samples:
+        worst = max(worst, (pz - (top - need_v / FT)) * FT)
+    if worst > 0.002:
+        ends["top_drop"] = ends.get("top_drop", 0.0) + worst
+        if not ends.get("rise_top") and leg:
+            # a level leg, lowered: its way picked again at its new height
+            xs = [p[0] for p in section.polygon_m]
+            ys = [p[1] for p in section.polygon_m]
+            ends["dir_top"] = leg_toward_concrete(
+                doc, top_section, top_column, x, y, (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0,
+                leg, top_section.z_top - ends["top_drop"] / FT, axis=ends.get("dir_bottom"))
     return ends
 
 
