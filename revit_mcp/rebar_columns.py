@@ -1220,12 +1220,17 @@ def _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends):
     slope = rise / leg if leg else 0.0
     for (s0, _, t0), (s1, _, t1) in zip(samples, samples[1:]):
         if s1 - s0 > 1e-6:
-            slope = max(slope, abs(t1 - t0) * FT / (s1 - s0))
+            step = abs(t1 - t0) * FT / (s1 - s0)
+            if step <= 1.0:  # a roof's slope; a step at an element's edge is no slope
+                slope = max(slope, step)
     need_v = column_spec.cover_m * math.sqrt(1.0 + slope * slope) + d / 2.0
     worst = 0.0
     for _, pz, top in samples:
         worst = max(worst, (pz - (top - need_v / FT)) * FT)
-    if worst > 0.002:
+    if worst > 0.002 and ends.get("rise_top"):
+        # a leg along the slope: lowered under the concrete; a level leg's way
+        # and height are found below, its cover checked there (the way read
+        # before it is picked could point out of the column)
         ends["top_drop"] = ends.get("top_drop", 0.0) + worst
     if not ends.get("rise_top") and leg:
         # a level leg: the way (and, if no way holds it whole, the length)
