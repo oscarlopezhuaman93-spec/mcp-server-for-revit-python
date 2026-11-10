@@ -581,6 +581,89 @@ def _column_under(column, line, bottom, options, tol=0.03):
     return s0, s1
 
 
+class _Concrete(object):
+    """A sloped line's concrete around it: its own elements and the
+    columns and beams it meets. `runs(x, y, own)`: the stretches [(s0, s1)]
+    of the straight fiber at (x, y) of the section inside them (own False:
+    inside the others only)."""
+
+    def __init__(self, doc, line, reach_m=SUPPORT_REACH_M):
+        self.line = line
+        self.reach = reach_m
+        prism = _prism(line, -reach_m, line.length + reach_m)
+        box = prism.GetBoundingBox()
+        t = box.Transform
+        a, b = t.OfPoint(box.Min), t.OfPoint(box.Max)
+        outline = DB.Outline(DB.XYZ(min(a.X, b.X), min(a.Y, b.Y), min(a.Z, b.Z)),
+                             DB.XYZ(max(a.X, b.X), max(a.Y, b.Y), max(a.Z, b.Z)))
+        own = set(element_id_value(e.Id) for e in line.elements)
+        self.solids = []  # (is_own, solid)
+        options = DB.Options()
+        for bic in (DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_StructuralColumns):
+            for e in (DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType()
+                      .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+                is_own = element_id_value(e.Id) in own
+                for solid in rc._solids(e.get_Geometry(options)):
+                    self.solids.append((is_own, solid))
+
+    def runs(self, x, y, own=True):
+        line = self.line
+        a = line.point(x, y, -self.reach)
+        b = line.point(x, y, line.length + self.reach)
+        curve = DB.Line.CreateBound(a, b)
+        found = []
+        for is_own, solid in self.solids:
+            if is_own and not own:
+                continue
+            try:
+                hit = solid.IntersectWithCurve(curve, DB.SolidCurveIntersectionOptions())
+            except Exception:
+                continue
+            for k in range(hit.SegmentCount):
+                seg = hit.GetCurveSegment(k)
+                s = sorted((seg.GetEndPoint(j) - a).DotProduct(line.direction) * FT - self.reach for j in (0, 1))
+                found.append(s)
+        found.sort()
+        merged = []
+        for s0, s1 in found:
+            if merged and s0 <= merged[-1][1] + 0.005:
+                merged[-1][1] = max(merged[-1][1], s1)
+            else:
+                merged.append([s0, s1])
+        return [tuple(m) for m in merged]
+
+    def fiber_ends(self, x, y, default):
+        """(start, end) of the concrete the fiber at (x, y) runs through
+        from the line's middle; `default` where it can't be read."""
+        mid = self.line.length / 2.0
+        for s0, s1 in self.runs(x, y):
+            if s0 <= mid <= s1:
+                return s0, s1
+        return default
+
+
+def sloped_spans(concrete, line, spans):
+    """A sloped beam's clear spans from where its bottom and top faces
+    leave the supports (the beam it rests on included): a stirrup starts
+    clear of them, square to the beam."""
+    ys = [p[1] for p in line.section.polygon_m]
+    fibers = [concrete.runs(0.0, min(ys) + 0.002, own=False), concrete.runs(0.0, max(ys) - 0.002, own=False)]
+    out = []
+    for a, b in spans:
+        moved = True
+        while moved:
+            moved = False
+            for hits in fibers:
+                for h0, h1 in hits:
+                    if h0 <= a + 0.01 and h1 > a + 1e-4 and h1 < b:
+                        a, moved = h1, True
+                    if h1 >= b - 0.01 and h0 < b - 1e-4 and h0 > a:
+                        b, moved = h0, True
+        if b - a > 0.05:
+            out.append((a, b))
+    return out
+
+
 def spans_and_ends(line, supports):
     """(clear spans [(a, b)], start face, end face): the spans between the
     support faces inside the line; the faces are where the bars anchor -
@@ -708,6 +791,10 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         rc.set_host_cover(doc, element, beam_spec.cover_m)
     supports = line_supports(doc, line) if supports is None else supports
     spans, start_face, end_face = spans_and_ends(line, supports)
+    concrete = None
+    if getattr(line, "sloped", False):  # a sloped beam only: its supports read fiber by fiber
+        concrete = _Concrete(doc, line)
+        spans = sloped_spans(concrete, line, spans)
     delete_generated(doc, line)
     created = dict((element_id_value(e.Id), []) for e in line.elements)
     warnings = []
@@ -803,6 +890,20 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         top = y > 0
         leg0, leg1, bar_start, bar_end = main_bar_run(line, line_settings, design, y, key, cover, start_face,
                                                       end_face, anchor, legs, splice, continue_top)
+        if concrete is not None:
+            # a sloped beam: each bar ends inside the concrete its own fiber
+            # runs through (not past a column's top at the corner)
+            # its hook leg too: the end moves in until the whole leg is inside
+            ys = [p[1] for p in line.section.polygon_m]
+            turn = -1.0 if y > 0 else 1.0
+
+            def fibers(leg):
+                tip = min(max(y + turn * leg, min(ys) + 0.005), max(ys) - 0.005)
+                return [y, (y + tip) / 2.0, tip] if leg > 0 else [y]
+            starts = [concrete.fiber_ends(x, f, (start_face, end_face))[0] for f in fibers(leg0)]
+            ends = [concrete.fiber_ends(x, f, (start_face, end_face))[1] for f in fibers(leg1)]
+            bar_start = max(bar_start, max(starts) + cover)
+            bar_end = min(bar_end, min(ends) - cover)
         leg = max(leg0, leg1)
         lap = 0.0
         pieces = [(bar_start, bar_end)]
