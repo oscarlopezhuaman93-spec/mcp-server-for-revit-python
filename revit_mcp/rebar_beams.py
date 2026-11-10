@@ -430,8 +430,18 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
     # own legs; made longer, a bar stops at the far face of the concrete less
     # the cover: the beam it runs into (continue_top's reach), else its support
     reach = (continue_top or {}).get("reach") or [0.0, 0.0]
-    lo = start_face - (reach[0] + 0.05) + cover if reach[0] > 0 else start_face + cover
-    hi = end_face + (reach[1] + 0.05) - cover if reach[1] > 0 else end_face - cover
+    # the reach of the beam it runs into counts only for the face that runs on
+    lo = start_face - (reach[0] + 0.05) + cover if (reach[0] > 0 and runs[0]) else start_face + cover
+    hi = end_face + (reach[1] + 0.05) - cover if (reach[1] > 0 and runs[1]) else end_face - cover
+    if bx.main_edit(line_settings, bx.TOP if top else bx.BOTTOM):
+        # made longer by hand: up to the far end of the concrete at the bar's
+        # own height (its support, and past it the beam it runs into - a chata
+        # level with its bottom), less the cover; never out of it
+        try:
+            fs, fe = _line_concrete(line).fiber_ends(0.0, y, (start_face, end_face))
+            lo, hi = fs + cover, fe - cover  # the concrete itself is the limit
+        except Exception:
+            pass
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
     # an automatic leg never leaves the concrete: in a shallow beam (a chata,
     # a vigueta) it is cut to the depth there is, less the far cover. One typed
@@ -587,7 +597,7 @@ class _Concrete(object):
     of the straight fiber at (x, y) of the section inside them (own False:
     inside the others only)."""
 
-    def __init__(self, doc, line, reach_m=SUPPORT_REACH_M):
+    def __init__(self, doc, line, reach_m=SUPPORT_REACH_M, floors=False):
         self.line = line
         self.reach = reach_m
         prism = _prism(line, -reach_m, line.length + reach_m)
@@ -599,7 +609,10 @@ class _Concrete(object):
         own = set(element_id_value(e.Id) for e in line.elements)
         self.solids = []  # (is_own, solid)
         options = DB.Options()
-        for bic in (DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_StructuralColumns):
+        cats = [DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_StructuralColumns]
+        if floors:  # the slab too (a bar made longer by hand runs on into it)
+            cats.append(DB.BuiltInCategory.OST_Floors)
+        for bic in cats:
             for e in (DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType()
                       .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
                 is_own = element_id_value(e.Id) in own
@@ -640,6 +653,15 @@ class _Concrete(object):
             if s0 <= mid <= s1:
                 return s0, s1
         return default
+
+
+def _line_concrete(line):
+    """The line's _Concrete, read once per line."""
+    found = getattr(line, "_concrete_cache", None)
+    if found is None:
+        found = _Concrete(line.elements[0].Document, line, floors=True)
+        line._concrete_cache = found
+    return found
 
 
 def sloped_spans(concrete, line, spans):
