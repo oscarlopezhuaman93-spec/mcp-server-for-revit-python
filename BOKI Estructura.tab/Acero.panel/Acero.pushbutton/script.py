@@ -871,10 +871,26 @@ class AceroWindow(forms.WPFWindow):
             self._status()
             self.redraw()
             args.Handled = True
+        elif (args.Key == Key.Delete and getattr(self, "sel_bar", None) is not None
+              and not isinstance(Keyboard.FocusedElement, TextBox)):
+            self._delete_bar()
+            args.Handled = True
         elif (args.Key == Key.Delete and getattr(self, "selected", None) is not None
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             self.delete_stirrup_click(sender, args)
             args.Handled = True
+
+    def _delete_bar(self):
+        """Supr on the bar picked in Editar: out of the section (the type's,
+        so of every column of it generated from now on)."""
+        i = self.sel_bar
+        self.sel_bar = None
+        if i is None or i >= len(self.design["bars"]):
+            return
+        self._push_undo()
+        del self.design["bars"][i]
+        self._status(u"Barra eliminada (Deshacer la recupera).")
+        self.redraw()
 
     def delete_stirrup_click(self, sender, args):
         """Delete the selected stirrup, to draw it again."""
@@ -1288,6 +1304,18 @@ class AceroWindow(forms.WPFWindow):
                            closed=True, dash=True)
         except Exception:
             pass
+        sel_bar = getattr(self, "sel_bar", None)
+        if sel_bar is not None and sel_bar < len(bars):  # the bar picked in Editar: a red ring
+            x, y, key = bars[sel_bar]
+            r_px = max(8.0, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale) + 5
+            ring = Ellipse()
+            ring.Width = ring.Height = 2 * r_px
+            ring.Stroke = SolidColorBrush(Color.FromRgb(0xE0, 0x1B, 0x1B))
+            ring.StrokeThickness = 2.5
+            q = self.to_px(frame, x, y)
+            Canvas.SetLeft(ring, q.X - r_px)
+            Canvas.SetTop(ring, q.Y - r_px)
+            self._add(ring)
 
         def color(kind):
             # Edge ("borde") steel in orange, confinement in green.
@@ -2225,7 +2253,17 @@ class AceroWindow(forms.WPFWindow):
         elif tool == "tie":
             self._place_tie(self.to_m(frame, p))
         elif tool == "edit":
-            self._select(self._stirrup_at(frame, p))
+            # a click on a bar picks the bar (Supr deletes it); elsewhere a stirrup
+            self.sel_bar = None
+            if on_bar:
+                self._select(None)
+                self.sel_bar = min(range(len(self.design["bars"])),
+                                   key=lambda k: (self.design["bars"][k][0] - point[0]) ** 2
+                                   + (self.design["bars"][k][1] - point[1]) ** 2)
+                self._status(u"Barra seleccionada: Supr la elimina (Deshacer la recupera).")
+            else:
+                self._status()
+                self._select(self._stirrup_at(frame, p))
         elif tool == "erase":
             self._erase(frame, p)
         self.redraw()

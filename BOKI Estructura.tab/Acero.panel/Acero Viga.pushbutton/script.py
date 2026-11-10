@@ -914,6 +914,15 @@ class AceroWindow(forms.WPFWindow):
               and not isinstance(Keyboard.FocusedElement, (TextBox, ComboBox))):
             self._nudge_stirrup(args.Key)
             args.Handled = True
+        elif (args.Key == Key.Delete and getattr(self, "_pick_bar", None) is not None
+              and not isinstance(Keyboard.FocusedElement, TextBox)):
+            i, self._pick_bar = self._pick_bar, None  # the bar picked in Editar: out of the section
+            if i < len(self.design["bars"]):
+                self._push_undo()
+                del self.design["bars"][i]
+                self._status(u"Barra eliminada (Deshacer la recupera).")
+                self._changed()
+            args.Handled = True
         elif (args.Key == Key.Delete and getattr(self, "_nb_sel", None)
               and not isinstance(Keyboard.FocusedElement, TextBox)):
             tag, face = self._nb_sel  # a neighbor's bar clicked: out of this beam
@@ -1385,6 +1394,18 @@ class AceroWindow(forms.WPFWindow):
                            closed=True, dash=True)
         except Exception:
             pass
+        pick = getattr(self, "_pick_bar", None)
+        if pick is not None and pick < len(bars):  # the bar picked in Editar: a red ring
+            x, y, key = bars[pick]
+            r_px = max(8.0, rs.BAR_DIAMETERS_MM[key] / 1000.0 * scale) + 5
+            ring = Ellipse()
+            ring.Width = ring.Height = 2 * r_px
+            ring.Stroke = SolidColorBrush(Color.FromRgb(0xE0, 0x1B, 0x1B))
+            ring.StrokeThickness = 2.5
+            q = self.to_px(frame, x, y)
+            Canvas.SetLeft(ring, q.X - r_px)
+            Canvas.SetTop(ring, q.Y - r_px)
+            self._add(ring)
 
         def color(kind):
             # Edge ("borde") steel in orange, confinement in green.
@@ -3623,7 +3644,17 @@ class AceroWindow(forms.WPFWindow):
         elif tool == "tie":
             self._place_tie(self.to_m(frame, p))
         elif tool == "edit":
-            self._select_stirrup(self._stirrup_at(frame, p))
+            # a click on a bar picks the bar (Supr deletes it); elsewhere a stirrup
+            self._pick_bar = None
+            if on_bar:
+                self._select_stirrup(None)
+                self._pick_bar = min(range(len(self.design["bars"])),
+                                   key=lambda k: (self.design["bars"][k][0] - point[0]) ** 2
+                                   + (self.design["bars"][k][1] - point[1]) ** 2)
+                self._status(u"Barra seleccionada: Supr la elimina (Deshacer la recupera).")
+            else:
+                self._status()
+                self._select_stirrup(self._stirrup_at(frame, p))
         elif tool == "erase":
             self._erase(frame, p)
         self.redraw()
