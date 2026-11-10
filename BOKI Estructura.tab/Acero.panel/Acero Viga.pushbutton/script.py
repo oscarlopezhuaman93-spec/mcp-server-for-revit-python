@@ -1649,12 +1649,19 @@ class AceroWindow(forms.WPFWindow):
         self.lbl_m_width.Text, self.lbl_m_height.Text = (u"Largo ", u"Ancho ") if turned else (u"Ancho ", u"Alto ")
         if turned:
             measures = turned  # a rectangle at an angle: along its own sides
+        self._other_shape = not (is_open or measures)
+        if self._other_shape:  # any other closed shape (a ridge's peak): its overall size
+            xs = [x for x, _ in outline]
+            ys = [y for _, y in outline]
+            measures = (max(xs) - min(xs), max(ys) - min(ys))
         self._fill_segment_boxes(rs.side_lengths(outline, closed=False) if is_open else [])
         if measures:
             self.panel_rect_fields.Visibility = Visibility.Visible
             for box, value in zip((self.txt_m_width, self.txt_m_height), measures[:2]):
                 box.Text = u"{:.1f}".format(value * 100)
-            self.txt_m_sides.Text = u""
+            self.txt_m_sides.Text = u"" if not self._other_shape else u"Lados:  " + u"   ".join(
+                u"T{} {:.1f}".format(k, v * 100)
+                for k, v in enumerate(rs.side_lengths(rs.counterclockwise(outline)), 1))
         else:
             self.panel_rect_fields.Visibility = Visibility.Collapsed
             # Open stirrups edit their segments in boxes; other shapes
@@ -1748,6 +1755,21 @@ class AceroWindow(forms.WPFWindow):
             outline = rs.stirrup_outline(poly, self.design["bars"], key, wrap)
             turned = (None if rs.rect_measures(outline, t.section.polygon_m)
                       else rs.turned_rect_measures(outline))
+            if not turned and not rs.rect_measures(outline, t.section.polygon_m):
+                # any other shape (a ridge's peak): stretched, its shape kept
+                xs = [x for x, _ in outline]
+                ys = [y for _, y in outline]
+                new_poly = rs.stretch_polygon(poly, width - (max(xs) - min(xs)), height - (max(ys) - min(ys)))
+                if self._outside_cover(kind, new_poly, wrap, False):
+                    self._update_measures()
+                    self._status(u"Con esas medidas el estribo se sale del recubrimiento; no se aplicaron.")
+                    return
+                self._status()
+                self._push_undo()
+                self.design["stirrups"][self.selected] = (kind, new_poly, wrap, False)
+                self.redraw()
+                self._update_measures()
+                return
             if turned:
                 # At an angle: resized along its own sides, around its center.
                 new_poly = rs.resize_turned_rect(poly, width - turned[0], height - turned[1])

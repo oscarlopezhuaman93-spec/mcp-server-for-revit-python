@@ -1280,6 +1280,23 @@ def rect_measures(outline, section_polygon, tol=1e-4):
     return xs[1] - xs[0], ys[1] - ys[0], xs[0] - left, ys[0] - bottom
 
 
+def stretch_polygon(vertices, d_width, d_height):
+    """Any closed stirrup made d_width wider and d_height taller, its shape
+    kept: the corners left of its middle go left by half d_width, those
+    right of it right (one on the middle - a ridge's peak - stays); the
+    corners of its upper half go up by d_height."""
+    xs = [x for x, _ in vertices]
+    ys = [y for _, y in vertices]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    out = []
+    for x, y in vertices:
+        sx = 0.0 if abs(x - cx) < 1e-4 else (0.5 if x > cx else -0.5)
+        out.append((x + sx * d_width, y + (d_height if y > cy else 0.0)))
+    if max(x for x, _ in out) - min(x for x, _ in out) < 0.01 or max(y for _, y in out) - min(y for _, y in out) < 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    return out
+
+
 def drop_collinear(points, tol=1e-4):
     """A closed polygon without the vertices that lie on a straight side
     (a point clicked mid-side): its real corners."""
