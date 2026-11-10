@@ -1194,6 +1194,7 @@ def _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends):
     leg, rise = ends.get("leg_top", 0.0), ends.get("rise_top", 0.0)
     dx, dy = ends.get("dir_top") or (0.0, 0.0)
     z0 = top_section.z_top - ends.get("top_drop", 0.0) / FT  # the bar's top (world ft)
+    near = _solids_near(doc, section.point_m(x, y, z0 - 0.5 / FT), leg + 0.3, 3.0)
     samples = []
     for k in range(6):
         t = k / 5.0
@@ -1201,7 +1202,7 @@ def _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends):
         # a leg bent up the slope sits higher than the bar's top by its bend
         # (about two diameters, as Revit bends it)
         pz = z0 + (rise * t + (2.0 * d if rise and t > 0 else 0.0)) / FT
-        top = _concrete_top(doc, section, px, py, pz - 0.4 / FT)
+        top = _concrete_top(doc, section, px, py, pz - 0.4 / FT, 3.0, near)
         if top is None and rise and t > 0:
             # the leg along the slope runs out of the concrete (a bar beside the
             # sloped beam, not under it): a level leg where there is concrete
@@ -1226,38 +1227,97 @@ def _lowered_under_top(doc, column_spec, key, x, y, section, top_column, ends):
         worst = max(worst, (pz - (top - need_v / FT)) * FT)
     if worst > 0.002:
         ends["top_drop"] = ends.get("top_drop", 0.0) + worst
-        if not ends.get("rise_top") and leg:
-            # a level leg, lowered: its way picked again at its new height
-            xs = [p[0] for p in section.polygon_m]
-            ys = [p[1] for p in section.polygon_m]
-            ends["dir_top"] = leg_toward_concrete(
-                doc, top_section, top_column, x, y, (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0,
-                leg, top_section.z_top - ends["top_drop"] / FT, axis=ends.get("dir_bottom"))
+    if not ends.get("rise_top") and leg:
+        # a level leg: the way (and, if no way holds it whole, the length)
+        # where it stays in concrete with its cover at its height
+        fit = _fit_level_leg(doc, column_spec, section, x, y, leg,
+                             top_section.z_top - ends["top_drop"] / FT, ends.get("dir_bottom"))
+        extra = 0.0
+        while fit is None and extra < 0.40:
+            # no way holds it there (over a column's top, beside the beam):
+            # the bar a little lower, where the column holds the leg
+            extra += 0.02
+            fit = _fit_level_leg(doc, column_spec, section, x, y, leg,
+                                 top_section.z_top - (ends["top_drop"] + extra) / FT, ends.get("dir_bottom"))
+        if fit is not None:
+            ends["top_drop"] += extra
+            ends["dir_top"], ends["leg_top"] = fit
     return ends
+
+
+def _fit_level_leg(doc, column_spec, section, x, y, leg, z_world, axis, step=0.01, shortest=0.10):
+    """(direction, length) of a level top leg at z_world kept in concrete:
+    every 2 cm of it and its tip plus the cover under at least the cover of
+    concrete; the first way of spec.leg_candidates (along `axis` only - one
+    plane with the bottom leg) holding it whole, else the one holding it
+    longest (never under `shortest`); None if none holds it."""
+    xs = [p[0] for p in section.polygon_m]
+    ys = [p[1] for p in section.polygon_m]
+    cands = spec.leg_candidates(x, y, (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0)
+    if axis:
+        cands = [v for v in cands if _parallel(v, axis)]
+    cover = column_spec.cover_m
+    near = _solids_near(doc, section.point_m(x, y, z_world - 0.3 / FT), leg + 0.3, 3.0)
+
+    def holds(v, length):
+        n = max(2, int(length / 0.02))
+        for k in range(1, n + 1):
+            for s in ((length * k / n),) + ((length + cover,) if k == n else ()):
+                # concrete from the cover under it to the cover over it
+                top = _concrete_top(doc, section, x + v[0] * s, y + v[1] * s, z_world - cover / FT, 3.0, near)
+                if top is None or (top - z_world) * FT < cover:
+                    return False
+        return True
+    best = None
+    for v in cands:
+        if holds(v, leg):
+            return v, leg
+        length = leg - step
+        while length >= shortest:
+            if holds(v, length):
+                if best is None or length > best[1]:
+                    best = (v, length)
+                break
+            length -= step
+    return best
 
 
 _TOP_CATS = (DB.BuiltInCategory.OST_StructuralColumns, DB.BuiltInCategory.OST_StructuralFraming,
              DB.BuiltInCategory.OST_Floors)
 
 
-def _concrete_top(doc, section, x, y, z_start, up_m=12.0):
-    """World z (ft) where the concrete over the bar at local (x, y) ends,
-    going up from z_start through columns, beams and slabs; None if the
-    point isn't in concrete."""
-    a = section.point_m(x, y, z_start)
-    b = DB.XYZ(a.X, a.Y, a.Z + up_m / FT)
-    outline = DB.Outline(DB.XYZ(a.X - 0.01, a.Y - 0.01, a.Z), DB.XYZ(a.X + 0.01, a.Y + 0.01, b.Z))
+def _solids_near(doc, point, reach_m=1.0, up_m=12.0):
+    """The concrete solids (columns, beams, slabs) around a world point."""
+    r = reach_m / FT
+    outline = DB.Outline(DB.XYZ(point.X - r, point.Y - r, point.Z - r),
+                         DB.XYZ(point.X + r, point.Y + r, point.Z + up_m / FT))
     cats = List[DB.BuiltInCategory](list(_TOP_CATS))
-    curve = DB.Line.CreateBound(a, b)
-    segs = []
+    out = []
     for e in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
               .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
         try:
-            for s in _solids(e.get_Geometry(DB.Options())):
-                hit = s.IntersectWithCurve(curve, DB.SolidCurveIntersectionOptions())
-                for k in range(hit.SegmentCount):
-                    g = hit.GetCurveSegment(k)
-                    segs.append(sorted((g.GetEndPoint(0).Z, g.GetEndPoint(1).Z)))
+            out += list(_solids(e.get_Geometry(DB.Options())))
+        except Exception:
+            continue
+    return out
+
+
+def _concrete_top(doc, section, x, y, z_start, up_m=12.0, solids=None):
+    """World z (ft) where the concrete over the bar at local (x, y) ends,
+    going up from z_start through columns, beams and slabs; None if the
+    point isn't in concrete. `solids`: the concrete around, read once."""
+    a = section.point_m(x, y, z_start)
+    b = DB.XYZ(a.X, a.Y, a.Z + up_m / FT)
+    if solids is None:
+        solids = _solids_near(doc, a, 0.01, up_m)
+    curve = DB.Line.CreateBound(a, b)
+    segs = []
+    for s in solids:
+        try:
+            hit = s.IntersectWithCurve(curve, DB.SolidCurveIntersectionOptions())
+            for k in range(hit.SegmentCount):
+                g = hit.GetCurveSegment(k)
+                segs.append(sorted((g.GetEndPoint(0).Z, g.GetEndPoint(1).Z)))
         except Exception:
             continue
     segs.sort()
