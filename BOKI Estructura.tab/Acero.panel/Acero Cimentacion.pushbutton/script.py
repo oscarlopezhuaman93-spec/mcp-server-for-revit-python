@@ -1487,6 +1487,12 @@ if window.action == "run":
             try:
                 foundation = rf.Foundation(element)
                 rc.delete_generated(doc, element)
+                # Revit's own cover (the green line) = the one typed per face
+                _up = [covers.get(fc.number) for fc in foundation.faces if fc.normal[2] > 0.9]
+                _dn = [covers.get(fc.number) for fc in foundation.faces if fc.normal[2] < -0.9]
+                _sd = [covers.get(fc.number) for fc in foundation.faces if abs(fc.normal[2]) <= 0.9]
+                rc.set_host_face_covers(doc, element, (max(_up) if _up else 0) / 100.0,
+                                        (max(_dn) if _dn else 0) / 100.0, (max(_sd) if _sd else 0) / 100.0)
                 planner = rf.BarPlanner(foundation, covers, rs.BAR_DIAMETERS_MM)
                 for view, key, path, first, count, spacing, tname in rf.bar_sets(planner.all_bars(steel, splice)):
                     bar_type = rc.named_bar_type(doc, tname, key) or bar_types.pick(key, u"ZAPATA")  # automatic: prefer a footing type

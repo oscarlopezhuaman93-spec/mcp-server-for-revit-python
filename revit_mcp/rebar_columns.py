@@ -1020,6 +1020,36 @@ def set_host_cover(doc, element, cover_m):
         return False
 
 
+def _cover_type(doc, cover_m):
+    from Autodesk.Revit.DB.Structure import RebarCoverType
+    ft = cover_m / FT
+    for ct in DB.FilteredElementCollector(doc).OfClass(RebarCoverType):
+        if abs(ct.CoverDistance - ft) < 1e-4:
+            return ct
+    return RebarCoverType.Create(doc, u"Recubrimiento {:g} cm".format(round(cover_m * 100.0, 1)), ft)
+
+
+def set_host_face_covers(doc, element, top_m, bottom_m, other_m):
+    """(2026-11-10) Revit's own cover per face - top, bottom, the others -
+    for an element that keeps them apart (a footing, a slab): each set to
+    the cover its bars were laid with. Only this element's parameters."""
+    changed = False
+    for bip, cover_m in ((DB.BuiltInParameter.CLEAR_COVER_TOP, top_m),
+                         (DB.BuiltInParameter.CLEAR_COVER_BOTTOM, bottom_m),
+                         (DB.BuiltInParameter.CLEAR_COVER_OTHER, other_m)):
+        try:
+            p = element.get_Parameter(bip)
+            if p is None or p.IsReadOnly or not cover_m:
+                continue
+            ct = _cover_type(doc, cover_m)
+            if p.AsElementId() != ct.Id:
+                p.Set(ct.Id)
+                changed = True
+        except Exception:
+            pass
+    return changed
+
+
 def _tag(rebar, column):
     p = rebar.LookupParameter(ORIGIN_PARAM)
     if p is not None and not p.IsReadOnly:
