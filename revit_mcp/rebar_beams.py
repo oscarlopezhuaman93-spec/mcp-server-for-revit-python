@@ -439,7 +439,9 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
         # level with its bottom), less the cover; never out of it
         try:
             fs, fe = _line_concrete(line).fiber_ends(0.0, y, (start_face, end_face))
-            lo, hi = fs + cover, fe - cover  # the concrete itself is the limit
+            # the concrete only lets it go further (never cuts what ran on before)
+            lo = min(lo, fs + cover)
+            hi = max(hi, fe - cover)
         except Exception:
             pass
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
@@ -659,7 +661,7 @@ def _line_concrete(line):
     """The line's _Concrete, read once per line."""
     found = getattr(line, "_concrete_cache", None)
     if found is None:
-        found = _Concrete(line.elements[0].Document, line, floors=True)
+        found = _Concrete(line.elements[0].Document, line, reach_m=4.0, floors=True)
         line._concrete_cache = found
     return found
 

@@ -1394,6 +1394,8 @@ class AceroWindow(forms.WPFWindow):
                            closed=True, dash=True)
         except Exception:
             pass
+        for x, y, d in self._entering_bars():  # a neighbor's bars run into this beam (purple, not editable)
+            self._dot(frame, x, y, max(3.0, d / 2.0 * scale), brush(120, 70, 190))
         pick = getattr(self, "_pick_bar", None)
         if pick is not None and pick < len(bars):  # the bar picked in Editar: a red ring
             x, y, key = bars[pick]
@@ -2038,12 +2040,37 @@ class AceroWindow(forms.WPFWindow):
             d = rs.BAR_DIAMETERS_MM[key] / 1000.0
             pts = [line.local(other.point(px, py, ps))
                    for px, py, ps in rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)]
-            item = out.setdefault(face, {"face": face, "paths": [], "end": end, "tag": tag})
+            item = out.setdefault(face, {"face": face, "paths": [], "ds": [], "end": end, "tag": tag})
             item["paths"].append(pts)
+            item["ds"].append(d)
             item["leg"] = leg0 if end == 0 else leg1  # its bend at the end inside this beam
             ss = [p[2] for p in pts]
             item["inside"] = max(0.0, max(ss)) if before else max(0.0, line.length - min(ss))
         return list(out.values())
+
+    def _entering_bars(self, s=None):
+        """The neighbors' main bars that run into this beam, [(x, y, d)] in
+        its section: where they cross `s`, or (None) at their deepest point
+        inside it - drawn in its cuts and plan beside its own bars."""
+        out = []
+        line = getattr(self, "_view_line", None)
+        for m in (getattr(self, "_elev_data", None) or {}).get("mixed") or []:
+            for item in m.get("bars") or []:
+                for pts, d in zip(item.get("paths") or [], item.get("ds") or []):
+                    inside = [p for p in pts if line is None or -1e-6 <= p[2] <= line.length + 1e-6]
+                    if not inside:
+                        continue
+                    if s is None:
+                        x, y, _ = max(inside, key=lambda p: min(p[2], line.length - p[2]) if line else 0.0)
+                        out.append((x, y, d))
+                        continue
+                    for a, b in zip(pts, pts[1:]):
+                        lo, hi = min(a[2], b[2]), max(a[2], b[2])
+                        if hi - lo > 1e-6 and lo - 1e-6 <= s <= hi + 1e-6:
+                            t = (s - a[2]) / (b[2] - a[2])
+                            out.append((a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), d))
+                            break
+        return out
 
     def _open_line(self, tag):
         """A neighbor beam clicked in the elevation: its type and that beam
@@ -2643,6 +2670,9 @@ class AceroWindow(forms.WPFWindow):
                 dot = self._cut_dot(box, P(x, y), rs.BAR_DIAMETERS_MM[key] / 2000.0 * k, color, 7.0 if on else 5.0)
                 dot.Tag = u"mbar:{}:{}".format(x, y)
                 dot.Cursor = Cursors.Hand
+            entering = self._entering_bars(s_cut)  # a neighbor's bars run into this beam
+            for x, y, d in entering:
+                self._cut_dot(box, P(x, y), d / 2.0 * k, brush(120, 70, 190))
             placed = []
             for i_extra, extra in enumerate(settings["extras"]):
                 if extra["s0"] - 1e-6 <= s_cut <= extra["s1"] + 1e-6:
@@ -2665,6 +2695,8 @@ class AceroWindow(forms.WPFWindow):
                                          rs.BAR_DIAMETERS_MM, face)
                 lines.append(u"{}: {}".format(name, text))
                 lines.append(u"      = {:.2f} cm\u00b2".format(area))
+            if entering:
+                lines.append(u"+{} de la viga vecina (morado)".format(len(entering)))
             for extra, pts in placed:  # where the extras sit (x;y cm, see position_text)
                 lines.append(u"+{}\u00d8{} {}: {}".format(int(extra["n"]), extra["d"],
                                                           u"sup" if extra["face"] == bx.TOP else u"inf",
