@@ -4383,9 +4383,30 @@ try:
     # past the support between them (rb.mixed_continuations)
     mixed = rb.mixed_continuations(with_spec)
 
-    def settings_of(line):
+    def _own_settings(line):
         key = tuple(id_of(e.Id) for e in line.elements)
         return state.line_edits.get(key) or rb.read_line_settings(line)
+
+    def _pattern(line):
+        # its type and where its bars run on into the beam next to it (a chata at its start...)
+        m = mixed.get(id(line)) or {}
+        return (id_of(line.type_id), tuple(m.get("top") or (False, False)), tuple(m.get("bot") or (False, False)))
+    # the hand edits of the main bars (made longer, their bends) done on one beam
+    # go to the beams of its type laid out the same (the flat beam at the same
+    # end) that have none of their own - picked together, generated alike
+    _donors = {}
+    for _l in with_spec:
+        _m = (_own_settings(_l) or {}).get("main") or {}
+        if any(_m.get(f) for f in (bx.TOP, bx.BOTTOM)):
+            _donors.setdefault(_pattern(_l), _m)
+
+    def settings_of(line):
+        own = _own_settings(line)
+        main = (own or {}).get("main") or {}
+        if not any(main.get(f) for f in (bx.TOP, bx.BOTTOM)) and _pattern(line) in _donors:
+            own = bx.read(bx.write(own or bx.default_settings()))  # a copy: its own spans, extras...
+            own["main"] = json.loads(json.dumps(_donors[_pattern(line)]))
+        return own
     with forms.ProgressBar(title="Acero: {value} de {max_value} vigas") as pb:
         for i, line in enumerate(with_spec):
             bt = by_id[id_of(line.type_id)]
