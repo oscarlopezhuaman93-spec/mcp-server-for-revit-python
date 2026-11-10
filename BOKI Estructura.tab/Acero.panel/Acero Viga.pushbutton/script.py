@@ -297,6 +297,7 @@ class State(object):
         self.picked_ids = []
         self.active = None
         self.drafts = {}  # type id -> design being drawn (unsaved)
+        self.form_drafts = {}  # type id -> its form as typed (unsaved): kept when another type is opened
         self.form = None  # last form field values
         self.scope = "model"  # "pick" when beams were picked in the model
         self.line_edits = {}  # beam line key (element ids) -> its own settings (bx), edited
@@ -642,7 +643,8 @@ class AceroWindow(forms.WPFWindow):
                 self.list_types.SelectedItem = item
                 self.list_types.ScrollIntoView(item)
         cfg = t.config()
-        self._set_form({
+        typed = getattr(self.state, "form_drafts", {}).get(type_id)
+        self._set_form(typed or {  # as typed before another type was opened, else as saved
             "bars_type": cfg["EA_Barras_Tipo"],
             "conf_type": cfg["EA_Estribo_Conf_Tipo"],
             "edge_type": cfg["EA_Estribo_Borde_Tipo"],
@@ -688,6 +690,11 @@ class AceroWindow(forms.WPFWindow):
     def _keep_draft(self):
         if self.dirty and self.state.active is not None:
             self.state.drafts[self.state.active] = self.design
+        if self.state.active is not None:
+            # its form as typed (distributions, diameters, types, cover): back when it is opened again
+            if not hasattr(self.state, "form_drafts"):
+                self.state.form_drafts = {}
+            self.state.form_drafts[self.state.active] = self._get_form()
 
     # -- form --------------------------------------------------------------
     def _set_form(self, f):
@@ -714,7 +721,17 @@ class AceroWindow(forms.WPFWindow):
             "anchor": self.cbo_anchor.SelectedItem or rb.ANCHOR_HOOK,
         }
 
-    def _config_from_form(self, with_drawing):
+    def _config_from_form(self, with_drawing, type_id=None):
+        """The form as config; `type_id` another type opened before with its
+        own form (and drawing) typed: that one's, not the open type's."""
+        own = None
+        if type_id is not None and type_id != self.state.active:
+            own = getattr(self.state, "form_drafts", {}).get(type_id)
+        if own is not None:
+            config = self._config_of(own)
+            if type_id in self.state.drafts:
+                config["EA_Seccion_Armado"] = rs.design_to_text(self.state.drafts[type_id])
+            return config
         f = self._get_form()
         config = {
             "EA_Estribo_Conf_Diametro": f["conf"],
@@ -730,6 +747,20 @@ class AceroWindow(forms.WPFWindow):
         if with_drawing:
             config["EA_Seccion_Armado"] = rs.design_to_text(self.design)
         return config
+
+    @staticmethod
+    def _config_of(f):
+        return {
+            "EA_Estribo_Conf_Diametro": f["conf"],
+            "EA_Estribo_Conf_Distribucion": f["conf_dist"],
+            "EA_Estribo_Conf_Tipo": f["conf_type"],
+            "EA_Estribo_Borde_Tipo": f["edge_type"],
+            "EA_Barras_Tipo": f["bars_type"],
+            "EA_Estribo_Borde_Diametro": f["edge"],
+            "EA_Estribo_Borde_Distribucion": f["edge_dist"],
+            "EA_Recubrimiento_cm": f["cover"],
+            rb.ANCHOR_PARAM: f["anchor"],
+        }
 
     def save_click(self, sender, args):
         self.save()
@@ -764,7 +795,7 @@ class AceroWindow(forms.WPFWindow):
             for type_id in targets:
                 # The drawing is checked only where it gets saved.
                 rc.ColumnSpec(
-                    self._config_from_form(type_id in same_section),
+                    self._config_from_form(type_id in same_section, type_id),
                     require_design=has_drawing and type_id in same_section,
                 )
         except rs.SpecError as e:
@@ -775,7 +806,7 @@ class AceroWindow(forms.WPFWindow):
             for type_id in targets:
                 rb.write_type_config(
                     self.by_id[type_id].element,
-                    self._config_from_form(type_id in same_section),
+                    self._config_from_form(type_id in same_section, type_id),
                 )
             # each edited beam's own settings (spans' stirrups, extras, cuts)
             for key, settings in self.state.line_edits.items():
@@ -787,6 +818,8 @@ class AceroWindow(forms.WPFWindow):
                         q.Set(text)
         for type_id in same_section:
             self.state.drafts.pop(type_id, None)
+        for type_id in targets:  # saved: opened again, it reads what was saved
+            getattr(self.state, "form_drafts", {}).pop(type_id, None)
         self.dirty = False
         self._refresh_type_labels()
         skipped = [self.by_id[t].name for t in targets if t not in same_section]
