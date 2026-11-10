@@ -1141,6 +1141,8 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     where the concrete over its own point ends, less the cover, its top leg
     bent where there is concrete at that level."""
     ends = _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column)
+    if ends.get("rise_top"):
+        return ends  # bent along the sloped beam over it (the user's option): kept as it is
     try:
         top_section = Section(top_column)
         run_top = _concrete_top(doc, section, x, y, section.z_bottom + 0.1 / FT)
