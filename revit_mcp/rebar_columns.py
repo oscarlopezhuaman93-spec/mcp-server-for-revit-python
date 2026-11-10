@@ -1135,6 +1135,74 @@ def slope_top_end(doc, column, section, x, y, d, cover):
 
 
 def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
+    """`_bar_ends`, its top kept in the concrete over the bar itself: under
+    a sloped roof the concrete ends at another height at each bar, and a bar
+    taken to the stack's highest point stood out of the roof - it ends
+    where the concrete over its own point ends, less the cover, its top leg
+    bent where there is concrete at that level."""
+    ends = _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column)
+    try:
+        top_section = Section(top_column)
+        run_top = _concrete_top(doc, section, x, y, section.z_bottom + 0.1 / FT)
+    except Exception:
+        return ends
+    if run_top is None:
+        return ends
+    d = spec.BAR_DIAMETERS_MM[key] / 1000.0
+    need = (top_section.z_top - run_top) * FT + column_spec.cover_m + d
+    if need <= ends.get("top_drop", 0.0) + 0.005:
+        return ends
+    ends["top_drop"] = need
+    if "leg_top" in ends:
+        if ends.get("rise_top"):  # the leg along a sloped beam no longer starts there: level
+            ends["leg_top"] = spec.leg_m(column_spec.leg_top_cm.get(key)) or ends["leg_top"]
+            ends["rise_top"] = 0.0
+        xs = [p[0] for p in section.polygon_m]
+        ys = [p[1] for p in section.polygon_m]
+        half_b, half_h = (max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0
+        z_leg = top_section.z_top - need / FT
+        ends["dir_top"] = leg_toward_concrete(doc, top_section, top_column, x, y, half_b, half_h,
+                                              ends["leg_top"], z_leg, axis=ends.get("dir_bottom"))
+    return ends
+
+
+_TOP_CATS = (DB.BuiltInCategory.OST_StructuralColumns, DB.BuiltInCategory.OST_StructuralFraming,
+             DB.BuiltInCategory.OST_Floors)
+
+
+def _concrete_top(doc, section, x, y, z_start, up_m=12.0):
+    """World z (ft) where the concrete over the bar at local (x, y) ends,
+    going up from z_start through columns, beams and slabs; None if the
+    point isn't in concrete."""
+    a = section.point_m(x, y, z_start)
+    b = DB.XYZ(a.X, a.Y, a.Z + up_m / FT)
+    outline = DB.Outline(DB.XYZ(a.X - 0.01, a.Y - 0.01, a.Z), DB.XYZ(a.X + 0.01, a.Y + 0.01, b.Z))
+    cats = List[DB.BuiltInCategory](list(_TOP_CATS))
+    curve = DB.Line.CreateBound(a, b)
+    segs = []
+    for e in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
+              .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        try:
+            for s in _solids(e.get_Geometry(DB.Options())):
+                hit = s.IntersectWithCurve(curve, DB.SolidCurveIntersectionOptions())
+                for k in range(hit.SegmentCount):
+                    g = hit.GetCurveSegment(k)
+                    segs.append(sorted((g.GetEndPoint(0).Z, g.GetEndPoint(1).Z)))
+        except Exception:
+            continue
+    segs.sort()
+    top = None
+    for z0, z1 in segs:
+        if top is None:
+            if z0 > a.Z + 0.02:
+                return None
+            top = z1
+        elif z0 <= top + 0.003:
+            top = max(top, z1)
+    return top
+
+
+def _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     """kwargs of spec.bar_with_ends for a vertical bar (local x, y): into
     the foundation under `bottom_column` (EA_Barra_Extremos anchor, or its
     depth less the cover and the mesh) with its bottom leg, and - when no

@@ -802,7 +802,11 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         raise spec.SpecError(u"la viga no tiene luz libre entre apoyos")
     axis = line.direction
     # a cantilever (a span with a free end) has its stirrups from the support only
-    free = spec.free_ends(spans, [(f["s0"], f["s1"]) for f in supports])
+    held = [(f["s0"], f["s1"]) for f in supports]
+    if concrete is not None:  # a sloped beam: its spans end at the faces read fiber by fiber
+        ys_ = [p[1] for p in line.section.polygon_m]
+        held += concrete.runs(0.0, min(ys_) + 0.002, own=False) + concrete.runs(0.0, max(ys_) - 0.002, own=False)
+    free = spec.free_ends(spans, held)
 
     # stirrups and ties, per clear span
     groups = {}
