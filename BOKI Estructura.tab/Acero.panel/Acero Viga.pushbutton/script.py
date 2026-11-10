@@ -4387,26 +4387,42 @@ try:
         key = tuple(id_of(e.Id) for e in line.elements)
         return state.line_edits.get(key) or rb.read_line_settings(line)
 
+    _mixed_all = rb.mixed_continuations(lines)  # every picked beam, generated or not
+
     def _pattern(line):
         # its type and where its bars run on into the beam next to it (a chata at its start...)
-        m = mixed.get(id(line)) or {}
+        m = _mixed_all.get(id(line)) or {}
         return (id_of(line.type_id), tuple(m.get("top") or (False, False)), tuple(m.get("bot") or (False, False)))
-    # the hand edits of the main bars (made longer, their bends) done on one beam
-    # go to the beams of its type laid out the same (the flat beam at the same
-    # end) that have none of their own - picked together, generated alike
-    _donors = {}
+    # the hand edits done on one beam - its main bars (longer, bends, left
+    # out), its hooks, its spans' stirrups - go to the beams of its type laid
+    # out the same (the flat beam at the same end) that have none of their
+    # own: picked together, generated alike. The spans only between beams of
+    # one length (the same spans).
+    def _has(settings, key):
+        v = (settings or {}).get(key) or {}
+        if key == "main":
+            return any(v.get(f) for f in (bx.TOP, bx.BOTTOM))
+        return bool(v)
+    _donors = {}  # (pattern, key) -> (value, length)
     for _l in with_spec:
-        _m = (_own_settings(_l) or {}).get("main") or {}
-        if any(_m.get(f) for f in (bx.TOP, bx.BOTTOM)):
-            _donors.setdefault(_pattern(_l), _m)
+        _s = _own_settings(_l) or {}
+        for _k in ("main", "hooks", "spans"):
+            if _has(_s, _k):
+                _donors.setdefault((_pattern(_l), _k), (_s[_k], _l.length))
 
     def settings_of(line):
         own = _own_settings(line)
-        main = (own or {}).get("main") or {}
-        if not any(main.get(f) for f in (bx.TOP, bx.BOTTOM)) and _pattern(line) in _donors:
-            own = bx.read(bx.write(own or bx.default_settings()))  # a copy: its own spans, extras...
-            own["main"] = json.loads(json.dumps(_donors[_pattern(line)]))
-        return own
+        copied = None
+        for key in ("main", "hooks", "spans"):
+            found = _donors.get((_pattern(line), key))
+            if found is None or _has(own, key):
+                continue
+            if abs(found[1] - line.length) > 0.05:
+                continue  # another length: another beam, its own settings
+            if copied is None:
+                copied = bx.read(bx.write(own or bx.default_settings()))  # a copy, its own extras kept
+            copied[key] = json.loads(json.dumps(found[0]))
+        return copied if copied is not None else own
     with forms.ProgressBar(title="Acero: {value} de {max_value} vigas") as pb:
         for i, line in enumerate(with_spec):
             bt = by_id[id_of(line.type_id)]
