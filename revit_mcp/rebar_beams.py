@@ -445,6 +445,13 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
         except Exception:
             pass
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
+    if not top:
+        # made longer up to the same far end as the top bars: its bend still
+        # goes beside theirs (set back the two half diameters + 5 mm), not on it
+        if leg0 > 0:
+            s0 = max(s0, min(lo + gap, s1))
+        if leg1 > 0:
+            s1 = min(s1, max(hi - gap, s0))
     # an automatic leg never leaves the concrete: in a shallow beam (a chata,
     # a vigueta) it is cut to the depth there is, less the far cover. One typed
     # by hand ("Gancho" of the beam, "Doblez" of the face) is kept as typed -
