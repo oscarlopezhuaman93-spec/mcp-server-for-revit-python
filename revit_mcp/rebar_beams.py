@@ -627,10 +627,16 @@ def _column_under(column, line, bottom, options, tol=0.03):
         # all the same, from that edge on to the line's end beyond it
         s_touch = min(p[2] for p in touching)
         if line.length - 1.0 < s_touch < line.length - 0.05:
-            return s_touch, line.length
+            return s_touch, line.length + 0.5  # past the end: no sliver left to the ridge
         if 0.05 < s_touch < 1.0:  # the ridge at the line's start
-            return 0.0, s_touch
+            return -0.5, s_touch
         return None
+    # (2026-11-15) a column under the ridge, ending short of the line's end:
+    # the bit past it (the ridge) is no span - no lone stirrup there
+    if line.length - 0.3 < s1 < line.length:
+        s1 = line.length + 0.5
+    if 0.0 < s0 < 0.3:
+        s0 = -0.5
     return s0, s1
 
 
