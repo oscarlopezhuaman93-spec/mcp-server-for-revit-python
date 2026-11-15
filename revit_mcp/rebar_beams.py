@@ -200,6 +200,15 @@ class BeamLine(object):
                 top.append((s, hi))
             else:
                 bottom.append((s, lo))
+        section_ys = [y for _, y in self.section.polygon_m]
+        # (2026-11-15) a station where only a corner of the section itself
+        # shows (a ridge beam's shoulder, where a support cuts it) is no
+        # change of depth: the face stays where it is
+        def _corner(y, ref):
+            return abs(y - ref) > 0.03 and any(abs(y - v) <= 0.01 for v in section_ys)
+        if not self.section.is_rectangle:
+            bottom = [(s, y) for s, y in bottom if not _corner(y, self.ref_bottom)]
+            top = [(s, y) for s, y in top if not _corner(y, self.ref_top)]
         self.bottom_points = bottom or [(0.0, self.ref_bottom)]
         self.top_points = top or [(0.0, self.ref_top)]
         # a haunch changes the depth along a stretch (two points or more of a
@@ -207,7 +216,6 @@ class BeamLine(object):
         # is a join's cut - the beam keeps its stirrups in sets
         # a corner of the section itself (the shoulder of a ridge beam's
         # pentagon) is no change of depth
-        section_ys = [y for _, y in self.section.polygon_m]
 
         def off(y, ref):
             return abs(y - ref) > 0.03 and all(abs(y - v) > 0.01 for v in section_ys)
