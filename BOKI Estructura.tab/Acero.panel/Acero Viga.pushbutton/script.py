@@ -450,6 +450,22 @@ def _hull(points):
     return lower[:-1] + upper[:-1]
 
 
+def _nominal_bh(line, name=None):
+    """(2026-11-15) The type's own b x h (m), from its name '..._0.20x0.40m':
+    a ridge beam shaped to the roof (0.40 wide, 0.27 high) is still a deep
+    0.20x0.40 beam, not a flat one. None when the name has none."""
+    if name is None:
+        try:
+            name = doc.GetElement(line.type_id).get_Parameter(DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString()
+        except Exception:
+            return None
+    m = re.findall(r"(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*m", name or u"")
+    if not m:
+        return None
+    b, h = float(m[-1][0]), float(m[-1][1])
+    return (b, h) if b > 0 and h > 0 else None
+
+
 class AceroWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, types, state):
         # Esc must not close the window (it cancels the current stroke,
@@ -1943,6 +1959,7 @@ class AceroWindow(forms.WPFWindow):
         poly = line.section.polygon_m
         b = max(p[0] for p in poly) - min(p[0] for p in poly)
         h = max(p[1] for p in poly) - min(p[1] for p in poly)
+        b, h = _nominal_bh(line, name) or (b, h)
         found = re.findall(r"_([A-Z]{1,5}[A-Z0-9'\-]*)_\d", name)
         return u"VIGA {} {}".format(u"CHATA" if h <= b + 1e-6 else u"PERALTADA", found[-1] if found else u"").strip()
 
@@ -2233,9 +2250,7 @@ class AceroWindow(forms.WPFWindow):
             eave_leg = own["leg"].get(eave, 0.0)
             if ld_edit is not None:
                 ridge_leg = float(ld_edit)
-            elif face == bx.TOP and sides[0].get("ld_top") is None and sides[1].get("ld_top") is None:
-                ridge_leg = 0.0  # continuous over the ridge
-            else:
+            else:  # each water's bars anchored past the ridge (rsl.pair_paths)
                 ridge_leg = rs.e060_lap_cm(key, factor=1.0) / 100.0
             legs_view[face] = (ridge_leg, eave_leg) if ridge_end == 0 else (eave_leg, ridge_leg)
         result = {"paths": out, "by_face": by_face, "ridge_end": ridge_end, "legs": legs_view,
@@ -2802,8 +2817,9 @@ class AceroWindow(forms.WPFWindow):
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
         b, h = max(xs) - min(xs), max(ys) - min(ys)
+        nb, nh = _nominal_bh(line) or (b, h)  # flat or not: by the type's b x h, not a shaped end
         cantilever = any(u"(voladizo)" in lbl[2] for lbl in elev["span_labels"])
-        if h > b + 1e-6 and not cantilever:
+        if nh > nb + 1e-6 and not cantilever:
             return
         s_min = min([sp["a"] for sp in elev["spans"]] + [s["s0"] for s in elev["supports"]])
         s_max = max([sp["b"] for sp in elev["spans"]] + [s["s1"] for s in elev["supports"]])
@@ -2863,7 +2879,7 @@ class AceroWindow(forms.WPFWindow):
             total += len(edge["tagged"])
             texts.append(u"luz {:.2f} m: {} est.".format(sp["b"] - sp["a"], len(edge["tagged"])))
         label = TextBlock()
-        kind = u" en ".join(n for n, on in ((u"viga chata", h <= b + 1e-6), (u"voladizo", cantilever)) if on)
+        kind = u" en ".join(n for n, on in ((u"viga chata", nh <= nb + 1e-6), (u"voladizo", cantilever)) if on)
         label.Text = u"PLANTA - {}\n{} estribos Ø{}   ({})".format(kind, total, key or u"-", u"; ".join(texts))
         label.FontSize = 10
         Canvas.SetLeft(label, 8)
@@ -4315,6 +4331,26 @@ else:
     lines = [line for type_id in state.checked for line in by_id[type_id].lines]
     scope_label = u"tipos marcados, todo el modelo"
 
+
+def _key_of(line):
+    return tuple(id_of(e.Id) for e in line.elements)
+
+
+# a beam edited in the window - even from a neighbor's elevation (the bars of
+# the flat beam that run into the deep one: how far, their bend) - is built
+# again with its edits, picked or not: an edit is never left only in the
+# window while the model keeps the standard bars (2026-11-11)
+_in_scope = set(_key_of(line) for line in lines)
+for _key, _edits in state.line_edits.items():
+    if _key in _in_scope or not _key:
+        continue
+    _first = doc.GetElement(DB.ElementId(_key[0]))
+    _type = by_id.get(id_of(_first.GetTypeId())) if _first is not None else None
+    _line = next((l for l in (_type.lines if _type else []) if _key_of(l) == _key), None)
+    if _line is not None:
+        lines.append(_line)
+        _in_scope.add(_key)
+
 specs = {}
 spec_errors = {}
 for type_id in set(id_of(line.type_id) for line in lines):
@@ -4374,6 +4410,12 @@ t.SetFailureHandlingOptions(_opts)
 t.Start()
 try:
     rb.ensure_parameters(doc)
+    # the window's hand edits of each beam kept on it (as "Guardar" does): the
+    # next run - and the window opened again - finds them, not the standard
+    for _line in with_spec:
+        _edits = state.line_edits.get(_key_of(_line))
+        if _edits is not None:
+            rb.write_line_settings(_line, _edits)
     done = []
     # gable frames: two sloped beams meeting at a ridge get their bars bent
     # across it (rsl), their stirrups as any beam
@@ -4488,5 +4530,19 @@ failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Viga ")]
 refused = sorted(set(m for m in _failures.messages if m))  # what Revit refused (that bar left out)
 if refused:
     failed.append(u"Revit no aceptó algunas barras (se omitieron solo esas): " + u"; ".join(refused[:3]))
+# every beam line of the scope is checked: one left with no bar at all (none
+# of its elements holds one) is listed - all counted - and selected in the
+# model, never passed over (2026-11-11)
+_made = dict((id(line), created) for line, _, created in done)
+empty = [line for line in lines
+         if id(line) not in _made or not any(_made[id(line)].get(id_of(e.Id)) for e in line.elements)]
+if empty and not globals().get("dry_run"):
+    failed.insert(0, u"{} VIGA(S) QUEDARON SIN ACERO (seleccionadas en el modelo): {}{}".format(
+        len(empty), u", ".join(str(id_of(l.elements[0].Id)) for l in empty[:15]), u"..." if len(empty) > 15 else u""))
+    try:
+        revit.uidoc.Selection.SetElementIds(List[DB.ElementId]([e.Id for l in empty for e in l.elements]))
+    except Exception:
+        pass
 if failed:
-    forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")
+    more = u"\n(y {} avisos mas)".format(len(failed) - 12) if len(failed) > 12 else u""
+    forms.alert(u"Revisar:\n- " + u"\n- ".join(failed[:12]) + more, title="Acero")
