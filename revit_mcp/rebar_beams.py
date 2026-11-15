@@ -354,12 +354,13 @@ def beam_lines(beams, gap_m=LINE_GAP_M, tol_m=LINE_TOL_M):
     return lines_out
 
 
-def _prism(line, s0, s1):
-    """The beam line's section bounding box swept from s0 to s1 (m)."""
+def _prism(line, s0, s1, inset=0.0):
+    """The beam line's section bounding box swept from s0 to s1 (m),
+    `inset` m smaller on each side."""
     xs = [p[0] for p in line.section.polygon_m]
     ys = [p[1] for p in line.section.polygon_m]
-    corners = [line.point(x, y, s0) for x, y in (
-        (min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys)))]
+    x0, x1, y0, y1 = min(xs) + inset, max(xs) - inset, min(ys) + inset, max(ys) - inset
+    corners = [line.point(x, y, s0) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
     loop = DB.CurveLoop()
     for k in range(4):
         loop.Append(DB.Line.CreateBound(corners[k], corners[(k + 1) % 4]))
@@ -419,7 +420,9 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
             leg1, end_run = 0.0, min(run_on, reach[1])
     # a bottom bar's hook goes inside the top bars' one, side by side (not
     # on it, as built): its end set back the two half diameters + 5 mm
-    b0, b1 = start_face + cover, end_face - cover
+    # the bar itself (its outer face, not its axis) stays inside the cover
+    ec = cover + d / 2.0
+    b0, b1 = start_face + ec, end_face - ec
     if not top:
         top_d = max([spec.BAR_DIAMETERS_MM[k] / 1000.0 for _, yy, k in design["bars"] if yy > 0] or [0.0])
         gap = (top_d + d) / 2.0 + 0.005
@@ -431,8 +434,8 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
     # the cover: the beam it runs into (continue_top's reach), else its support
     reach = (continue_top or {}).get("reach") or [0.0, 0.0]
     # the reach of the beam it runs into counts only for the face that runs on
-    lo = start_face - (reach[0] + 0.05) + cover if (reach[0] > 0 and runs[0]) else start_face + cover
-    hi = end_face + (reach[1] + 0.05) - cover if (reach[1] > 0 and runs[1]) else end_face - cover
+    lo = start_face - (reach[0] + 0.05) + ec if (reach[0] > 0 and runs[0]) else start_face + ec
+    hi = end_face + (reach[1] + 0.05) - ec if (reach[1] > 0 and runs[1]) else end_face - ec
     if bx.main_edit(line_settings, bx.TOP if top else bx.BOTTOM):
         # made longer by hand: up to the far end of the concrete at the bar's
         # own height (its support, and past it the beam it runs into - a chata
@@ -440,8 +443,8 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
         try:
             fs, fe = _line_concrete(line).fiber_ends(0.0, y, (start_face, end_face))
             # the concrete only lets it go further (never cuts what ran on before)
-            lo = min(lo, fs + cover)
-            hi = max(hi, fe - cover)
+            lo = min(lo, fs + ec)
+            hi = max(hi, fe - ec)
         except Exception:
             pass
     leg0, leg1, s0, s1 = bx.apply_main_edit(line_settings, bx.TOP if top else bx.BOTTOM, leg0, leg1, s0, s1, lo, hi)
@@ -470,7 +473,10 @@ def main_bar_run(line, line_settings, design, y, key, cover, start_face, end_fac
     return leg0, leg1, s0, s1
 
 
-def mixed_continuations(lines, gap_m=0.6, tol_m=0.03):
+def mixed_continuations(lines, gap_m=LINE_GAP_M, tol_m=0.03):
+    # gap: the support between them - a 1.00 m placa or a 0.70 m column too,
+    # as for one beam's elements (LINE_GAP_M; was 0.6: those flat beams lost
+    # their run on and the window its cotas, 2026-11-12 with the user)
     """Beam lines of different types on one axis meeting at a support (a
     deep beam and a flat one): {id(line): {"top": [start, end], "bot":
     [start, end]}} True where the bars of that face run on into the next
@@ -539,10 +545,20 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
                         continue  # parallel: a continuation, not a support
             triangles = []
             for solid in rc._solids(element.get_Geometry(options)):
-                try:
-                    part = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
-                        solid, prism, DB.BooleanOperationsType.Intersect)
-                except Exception:
+                part = None
+                # a support this beam cuts (a ridge beam notched by it): its
+                # faces lie on the prism's and Revit's boolean fails - again
+                # with the prism 1 mm, 3 mm in (2026-11-13: the ridge beam
+                # was lost, the gable pair with it)
+                for inset in (0.0, 0.001, 0.003):
+                    try:
+                        prism_k = prism if inset == 0.0 else _prism(line, -reach_m, line.length + reach_m, inset)
+                        part = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
+                            solid, prism_k, DB.BooleanOperationsType.Intersect)
+                        break
+                    except Exception:
+                        part = None
+                if part is None:
                     continue
                 if part is None or part.Volume < 1e-6:
                     continue
@@ -595,7 +611,25 @@ def _column_under(column, line, bottom, options, tol=0.03):
     near = [p for p in pts if top - p[1] <= 0.6 and abs(p[0]) <= half]  # its head, not its foot
     s0 = min([p[2] for p in touching] + [p[2] for p in near])
     s1 = max([p[2] for p in touching] + [p[2] for p in near])
+    ts = [p[2] for p in touching]
+    if max(ts) - min(ts) < 0.05 and s1 - s0 >= 0.05:
+        # (2026-11-15) its head met along one edge: the face is that edge,
+        # not its corners lower down (a vertical face reads further along a
+        # sloped line the lower it goes); the column on from it
+        s_touch = sum(ts) / len(ts)
+        if s1 - s_touch > s_touch - s0:
+            s0 = s_touch
+        else:
+            s1 = s_touch
     if s1 - s0 < 0.05:
+        # (2026-11-15) a column met only along an edge of its head - its top
+        # follows the other slope of the gable, under the ridge -: a support
+        # all the same, from that edge on to the line's end beyond it
+        s_touch = min(p[2] for p in touching)
+        if line.length - 1.0 < s_touch < line.length - 0.05:
+            return s_touch, line.length
+        if 0.05 < s_touch < 1.0:  # the ridge at the line's start
+            return 0.0, s_touch
         return None
     return s0, s1
 
@@ -937,8 +971,8 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
                 return [y, (y + tip) / 2.0, tip] if leg > 0 else [y]
             starts = [concrete.fiber_ends(x, f, (start_face, end_face))[0] for f in fibers(leg0)]
             ends = [concrete.fiber_ends(x, f, (start_face, end_face))[1] for f in fibers(leg1)]
-            bar_start = max(bar_start, max(starts) + cover)
-            bar_end = min(bar_end, min(ends) - cover)
+            bar_start = max(bar_start, max(starts) + cover + d / 2.0)
+            bar_end = min(bar_end, min(ends) - cover - d / 2.0)
         leg = max(leg0, leg1)
         lap = 0.0
         pieces = [(bar_start, bar_end)]
