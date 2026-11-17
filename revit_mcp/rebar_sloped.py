@@ -236,9 +236,23 @@ def pair_paths(doc, pair, spec_a, spec_b, anchor_a, anchor_b, splice, legs, sett
                                     up=(row, key, w) in own["bottom"])
             if path is None:
                 continue
-            if sp.length(path) > max_length + 1e-6:
-                warnings.append(u"Barra {}: {:.2f} m".format(key, sp.length(path)))
-            paths.append((path, key, w, [(own, 1.0)]))
+            # (2026-11-16) a bar over 9 m (its bends counted, ~3 cm each) is
+            # cut and lapped at the middle of its run, the pieces side by side
+            pieces = [path]
+            lap_k = (laps or {}).get(key) if laps else None
+            if sp.length(path) + 0.06 > max_length + 1e-6 and lap_k:
+                segs = list(zip(path, path[1:]))
+                p, q = max(segs, key=lambda s: math.hypot(s[1][0] - s[0][0], s[1][1] - s[0][1]))
+                L = math.hypot(q[0] - p[0], q[1] - p[1]) or 1.0
+                down = sp.down_normal(((q[0] - p[0]) / L, (q[1] - p[1]) / L))
+                is_bottom = (row, key, w) in own["bottom"]
+                inward = (-down[0], -down[1]) if is_bottom else down
+                pieces = sp.split_long(path, max_length - 0.06, lap_k, inward,
+                                       spec.BAR_DIAMETERS_MM[key] / 1000.0)
+            for piece in pieces:
+                if sp.length(piece) > max_length + 1e-6:
+                    warnings.append(u"Barra {}: {:.2f} m".format(key, sp.length(piece)))
+                paths.append((piece, key, w, [(own, 1.0)]))
     return frame, sides, paths, warnings
 
 

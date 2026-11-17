@@ -63,6 +63,40 @@ def anchored_path(row, other_top, leg, ld, gap, up=False):
     return _with_leg(row[0], leg, up) + [bend, _along(bend, back, ld)]
 
 
+def split_long(path, max_length, lap, inward, shift):
+    """(2026-11-16) A bar of one water longer than `max_length` cut into
+    pieces lapping `lap` at the middle of its run, each later piece moved
+    `shift` towards `inward` (the inside of the beam): lapped side by side,
+    in contact, as built. [path] (the path itself when it fits)."""
+    total = length(path)
+    if max_length <= 0 or lap <= 0 or lap >= max_length or total <= max_length + 1e-6:
+        return [path]
+    n = int(math.ceil((total - lap) / (max_length - lap) - 1e-9))
+    cuts = [total * i / float(n) for i in range(1, n)]
+    spans, a = [], 0.0
+    for c in cuts:
+        spans.append((a, c + lap / 2.0))
+        a = c - lap / 2.0
+    spans.append((a, total))
+    out = []
+    for k, (s0, s1) in enumerate(spans):
+        piece, acc = [], 0.0
+        for p, q in zip(path, path[1:]):
+            L = math.hypot(q[0] - p[0], q[1] - p[1])
+            lo, hi = max(s0, acc), min(s1, acc + L)
+            if L > 1e-9 and hi > lo + 1e-9:
+                u = ((q[0] - p[0]) / L, (q[1] - p[1]) / L)
+                x0, x1 = _along(p, u, lo - acc), _along(p, u, hi - acc)
+                if not piece:
+                    piece.append(x0)
+                piece.append(x1)
+            acc += L
+        if k % 2 == 1:
+            piece = [(px + inward[0] * shift, pz + inward[1] * shift) for px, pz in piece]
+        out.append(piece)
+    return out
+
+
 def split_top(path, ridge_index, lap):
     """A top bar too long for one piece, cut at the ridge: each half runs
     `lap` past the ridge along the other beam (the lap)."""

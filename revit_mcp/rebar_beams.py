@@ -79,6 +79,28 @@ def anchor_of(config):
     return value if value in ANCHORS else ANCHOR_HOOK
 
 
+def _section_tilt(poly):
+    """How much a section is turned about the beam axis (radians): the
+    angle of its longest side to the nearest of across / up, when most of
+    its outline runs that way (a turned rectangle); 0 for a section with
+    sides across and up already, or one with no such sides (a ridge
+    beam's pentagon keeps its own frame)."""
+    sides = []
+    for a, b in zip(poly, poly[1:] + poly[:1]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy)
+        if length > 0.02 / FT:
+            ang = math.atan2(dy, dx)
+            ang = (ang + math.pi / 4) % (math.pi / 2) - math.pi / 4  # to (-45, 45] deg
+            sides.append((length, ang))
+    if not sides:
+        return 0.0
+    total = sum(l for l, _ in sides)
+    longest = max(sides)[1]
+    along = sum(l for l, a in sides if abs(a - longest) < math.radians(1.0))
+    return longest if along > 0.9 * total else 0.0
+
+
 class BeamSection(object):
     """Cross-section of a straight beam element, from its end face (the
     element's own geometry). `polygon_m` in the local frame (x across, y
@@ -116,9 +138,19 @@ class BeamSection(object):
                 best = (0.0, [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys))])
         if best is None:
             raise spec.SpecError(u"no se encontro la seccion de la viga {}".format(element_id_value(beam.Id)))
+        poly = best[1]
+        # (2026-11-16) a section turned about the axis (a sloped eave beam
+        # set square to the roof): the frame turned with it, so the section
+        # is drawn upright and its bars are placed square to its faces
+        self.tilt = _section_tilt(poly)
+        if abs(self.tilt) > math.radians(0.3):
+            c, s = math.cos(self.tilt), math.sin(self.tilt)
+            across, up = (across * c + up * s).Normalize(), (up * c - across * s).Normalize()
+            poly = [(x * c + y * s, y * c - x * s) for x, y in poly]
+        else:
+            self.tilt = 0.0
         self.up = up
         self.sloped = abs(d.Z) > 1e-3
-        poly = best[1]
         xs = [p[0] for p in poly]
         ys = [p[1] for p in poly]
         cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
@@ -159,7 +191,7 @@ class BeamLine(object):
         self.direction = d
         if (sec.direction - d).GetLength() > 1e-6:  # the section read from a reversed curve
             sec.direction = d
-            sec.across = DB.XYZ.BasisZ.CrossProduct(d).Normalize()
+            sec.across = -sec.across  # the axis reversed: across too, up kept (a turned section stays turned)
             sec.center = (-sec.center[0], sec.center[1])
             sec.polygon_m = [(-x, y) for x, y in sec.polygon_m]
             sec.up = d.CrossProduct(sec.across).Normalize()
@@ -518,7 +550,7 @@ def mixed_continuations(lines, gap_m=LINE_GAP_M, tol_m=0.03):
                     out[id(b)][face][kb] = True
     return out
 
-def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
+def line_supports(doc, line, reach_m=SUPPORT_REACH_M, mirror=True):
     """What the beam line rests on, along it: columns and walls running
     through most of its depth, and crossing beams at least as deep (a
     shallower beam framing into it is carried, not a support). Each
@@ -598,7 +630,53 @@ def line_supports(doc, line, reach_m=SUPPORT_REACH_M):
     found.sort(key=lambda f: f["s0"])
     if vigueta:  # only what it touches: the columnetas at its sides, not a column past them
         found = [f for f in found if f["s1"] >= -0.05 and f["s0"] <= line.length + 0.05]
+    if mirror and getattr(line, "sloped", False):
+        _mirror_gable(doc, line, found, own, reach_m)
     return found
+
+
+def _mirror_gable(doc, line, found, own, reach_m):
+    """(2026-11-16) A gable pair joined at the ridge: the beam that cuts the
+    other fills the apex, so it read its partner only from the ridge axis on
+    and its stirrups ran on into the apex, while the cut one stopped at the
+    partner's faces. Each end on a sloped partner now stops where the partner
+    sees this beam start - the deeper of the two - so both sides match."""
+    for f in found:
+        if f["label"] != u"VIGA":
+            continue
+        at_end = f["s0"] >= line.length - 0.6 and f["s1"] > line.length
+        at_start = f["s1"] <= 0.6 and f["s0"] < 0.0
+        if not (at_end or at_start):
+            continue
+        partner = doc.GetElement(DB.ElementId(f["id"])) if f.get("id") is not None else None
+        if partner is None:
+            continue
+        try:
+            plines = beam_lines([partner])
+        except Exception:
+            continue
+        mine = (line.length - f["s0"]) if at_end else f["s1"]
+        best = mine
+        for pl in plines:
+            if not getattr(pl, "sloped", False):
+                continue
+            try:
+                seen = line_supports(doc, pl, reach_m, mirror=False)
+            except Exception:
+                continue
+            for g in seen:
+                if g.get("id") not in own or g["label"] != u"VIGA":
+                    continue
+                if g["s0"] >= pl.length - 0.6 and g["s1"] > pl.length:
+                    best = max(best, pl.length - g["s0"])
+                elif g["s1"] <= 0.6 and g["s0"] < 0.0:
+                    best = max(best, g["s1"])
+        if best > mine + 0.005:
+            if at_end:
+                f["s0"] = line.length - best
+            else:
+                f["s1"] = best
+    found.sort(key=lambda f: f["s0"])
 
 
 def _column_under(column, line, bottom, options, tol=0.03):
@@ -990,8 +1068,11 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         leg = max(leg0, leg1)
         lap = 0.0
         pieces = [(bar_start, bar_end)]
-        # the hook legs count in a bar's length (a 9 m bar holds them)
-        if splice is not None and bar_end - bar_start + leg0 + leg1 > splice["max"] + 1e-6:
+        # the hook legs count in a bar's length (a 9 m bar holds them), and
+        # (2026-11-16) each bend's own few cm as Revit measures the bar: a
+        # 9.03 m bar is no 9 m bar - it gets its lap
+        bend_allow = 0.03 * ((1 if leg0 > 0 else 0) + (1 if leg1 > 0 else 0))
+        if splice is not None and bar_end - bar_start + leg0 + leg1 + bend_allow > splice["max"] + 1e-6:
             lap = splice["laps"].get(key)
             if not lap:  # this diameter isn't spliced: one bar, whatever its length
                 warnings.append(u"Barras {} de {}: {:.2f} m sin empalme (diametro no marcado para empalmar)"
@@ -1000,7 +1081,10 @@ def generate_line(doc, line, beam_spec, anchor, bar_types, hooks, shapes=None, s
         if lap:
             zones = spec.beam_lap_zones(spans, top, confinement, lap)
             where = u"un tercio central de tramo" if top else u"un cuarto extremo de tramo (desde la cara del apoyo)"
-            pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap, splice["max"] - leg, where)
+            # (2026-11-16) both hooks off the 9 m (a bar left whole keeps the
+            # two of them), each with its bend's few cm
+            pieces, found = spec.lap_pieces(bar_start, bar_end, zones, lap,
+                                            splice["max"] - leg0 - leg1 - bend_allow, where)
             warnings += [u"Barras {} de {}: {}".format(u"superiores" if top else u"inferiores", key, w)
                          for w in found]
         for index, (s0, s1) in enumerate(pieces):
