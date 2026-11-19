@@ -1,0 +1,8 @@
+title: "Gestión"
+background:
+  panel: "#335F7A94"
+  title: "#FF5F7A94"
+  slideout: "#335F7A94"
+layout:
+  - Filtrar Niveles
+  - Purgar

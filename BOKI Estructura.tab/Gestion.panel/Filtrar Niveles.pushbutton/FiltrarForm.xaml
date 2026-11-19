@@ -1,0 +1,41 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Filtrar niveles"
+        Height="640" Width="520" MinWidth="440" MinHeight="480"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip">
+    <DockPanel Margin="14">
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock FontSize="16" FontWeight="Bold" Text="Filtrar niveles en la vista"/>
+            <TextBlock Foreground="Gray" TextWrapping="Wrap" Margin="0,2,0,12"
+                       Text="Elige el bloque o escribe un texto. Solo se ocultan en la vista: los niveles no se borran."/>
+
+            <TextBlock FontWeight="Bold" Text="1. Bloque (prefijo del nombre)"/>
+            <ComboBox x:Name="cb_prefix" Height="28" Margin="0,4,0,10" SelectionChanged="refresh"/>
+
+            <TextBlock FontWeight="Bold" Text="2. Que contenga el texto (opcional)"/>
+            <TextBox x:Name="txt_contains" Height="28" Margin="0,4,0,2" VerticalContentAlignment="Center" TextChanged="refresh"
+                     ToolTip="Por ejemplo: N.F.Z, PRIMER, CUMBRERA. No importan las mayúsculas."/>
+            <TextBlock Foreground="Gray" FontSize="11" Margin="0,0,0,10" Text="Ejemplos: N.F.Z  ·  PRIMER  ·  CUMBRERA"/>
+
+            <TextBlock FontWeight="Bold" Text="3. Qué hacer"/>
+            <StackPanel Orientation="Horizontal" Margin="0,4,0,6">
+                <RadioButton x:Name="rb_show" Content="Mostrar solo estos" IsChecked="True" Margin="0,0,18,0" Checked="refresh"/>
+                <RadioButton x:Name="rb_hide" Content="Ocultar estos" Checked="refresh"/>
+            </StackPanel>
+            <CheckBox x:Name="chk_general" Content="Dejar siempre visibles los niveles sin bloque (NTN.)" IsChecked="True"
+                      Margin="0,0,0,4" Click="refresh"/>
+            <CheckBox x:Name="chk_all_views" Content="Aplicar también a todas las secciones y elevaciones" Margin="0,0,0,10"/>
+
+            <TextBlock x:Name="txt_count" FontWeight="Bold" Foreground="#FF1F5FAE" Margin="0,0,0,4"/>
+        </StackPanel>
+
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="Aplicar" Width="110" Height="34" FontWeight="Bold" Click="apply_click"/>
+            <Button DockPanel.Dock="Right" Content="Mostrar todos" Width="120" Height="34" Margin="0,0,8,0" Click="show_all_click"
+                    ToolTip="Vuelve a mostrar todos los niveles."/>
+            <Button DockPanel.Dock="Left" Content="Cerrar" Width="90" Height="34" Click="close_click"/>
+        </DockPanel>
+
+        <ListBox x:Name="lst_levels" BorderBrush="#FFD5D8DE"/>
+    </DockPanel>
+</Window>
