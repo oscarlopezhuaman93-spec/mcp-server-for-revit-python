@@ -351,6 +351,30 @@ def _temp_line(view, a, b):
     return line.Id
 
 
+def _start_mark(view, a, size=0.15):
+    """(2026-11-21) A cross at the clicked start of a run, shown while the
+    end is picked: where the run leaves from is seen at once."""
+    ids = []
+    for dx, dy in ((size, size), (size, -size)):
+        ids.append(_temp_line(view, (a[0] - dx, a[1] - dy), (a[0] + dx, a[1] + dy)))
+    return ids
+
+
+def selected_lines_sketch():
+    """(2026-11-21) Runs from lines drawn beforehand with Revit's own Detail
+    / Model Line (live line while drawing, its length shown) and selected
+    before opening Escalera: each line a run, in the order drawn, from its
+    start (the first click) to its end. [] when none is selected."""
+    out = []
+    for i in sorted(uidoc.Selection.GetElementIds(), key=lambda x: x.IntegerValue):
+        e = doc.GetElement(i)
+        c = getattr(e, "GeometryCurve", None)
+        if isinstance(e, DB.CurveElement) and isinstance(c, DB.Line):
+            a, b = c.GetEndPoint(0), c.GetEndPoint(1)
+            out.append(((a.X * FT, a.Y * FT), (b.X * FT, b.Y * FT)))
+    return out
+
+
 def draw_in_plan(state):
     base = doc.GetElement(DB.ElementId(state.base_id))
     view = plan_view_of(base)
@@ -362,9 +386,13 @@ def draw_in_plan(state):
     try:
         while True:
             k = len(state.sketch) + 1
+            mark = []
             try:
                 p = uidoc.Selection.PickPoint(snaps, u"Tramo {}: clic en el INICIO (Esc termina el boceto)".format(k))
                 a = (p.X * FT, p.Y * FT)
+                with revit.Transaction(u"BOKI Escalera - boceto"):
+                    mark = _start_mark(view, a)
+                temp += mark
                 p = uidoc.Selection.PickPoint(snaps, u"Tramo {}: clic en el FIN (Esc cancela este tramo)".format(k))
                 b = (p.X * FT, p.Y * FT)
             except OperationCanceledException:
@@ -383,6 +411,7 @@ def draw_in_plan(state):
 # --- main ----------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
+    state.sketch = selected_lines_sketch()  # lines drawn with Revit's tool, picked before: the runs
     xaml = os.path.join(SCRIPT_DIR, "EscaleraForm.xaml")
     while True:
         window = EscaleraWindow(xaml, state)
