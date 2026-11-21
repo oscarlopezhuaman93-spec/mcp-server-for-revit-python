@@ -55,9 +55,42 @@ def plan_stair(runs, height, max_riser, tread, width):
         left -= n
     landings = []
     for r0, r1 in zip(out, out[1:]):
-        landings.append({"poly": landing_between(r0, r1, width), "z": r0["z1"]})
+        poly = landing_between(r0, r1, width)
+        landings.append({"poly": poly, "z": r0["z1"]})
+        # (2026-11-21) a run never starts inside the landing below it: its
+        # foot clicked a bit into the landing moves out to the landing's edge
+        t = _exit_distance(poly, r1["start"], r1["dir"])
+        if t > 1e-6:
+            d1 = r1["dir"]
+            r1["start"] = (r1["start"][0] + d1[0] * t, r1["start"][1] + d1[1] * t)
+            r1["end"] = (r1["end"][0] + d1[0] * t, r1["end"][1] + d1[1] * t)
     return {"total": total, "riser": riser, "runs": out, "landings": landings,
             "remaining": left, "warnings": warnings}
+
+
+def _inside(poly, p, eps=1e-6):
+    """p strictly inside the convex polygon `poly` (either winding)."""
+    sign = 0
+    for k in range(len(poly)):
+        a, b = poly[k], poly[(k + 1) % len(poly)]
+        c = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+        if abs(c) <= eps:
+            return False
+        s = 1 if c > 0 else -1
+        if sign and s != sign:
+            return False
+        sign = s
+    return True
+
+
+def _exit_distance(poly, p, d, step=0.005, limit=5.0):
+    """How far p must move along d to leave the polygon (0 when outside)."""
+    if not _inside(poly, p):
+        return 0.0
+    t = 0.0
+    while t < limit and _inside(poly, (p[0] + d[0] * t, p[1] + d[1] * t)):
+        t += step
+    return t if t < limit else 0.0
 
 
 def landing_between(r0, r1, width):

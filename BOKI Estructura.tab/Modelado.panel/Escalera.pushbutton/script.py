@@ -233,26 +233,23 @@ class EscaleraWindow(forms.WPFWindow):
         to = self._fit(self.canvas_plan, pts)
         if to is None:
             return
+        # (2026-11-21) as Revit's stair sketch: green boundaries, yellow
+        # risers, orange landings, a purple path with its arrow up
+        green, yellow, orange, purple = (brush(*RGB_BOUNDARY), brush(*RGB_RISER),
+                                         brush(*RGB_LANDING), brush(*RGB_PATH))
         for l in plan["landings"]:
-            self._poly(self.canvas_plan, to, l["poly"], C_LANDING, C_EDGE)
+            self._poly(self.canvas_plan, to, l["poly"], C_LANDING, orange, 3.0)
         for k, (_, corners, r, length) in enumerate(shapes):
-            self._poly(self.canvas_plan, to, corners, C_RUN, C_EDGE, 1.2)
-            d = r["dir"]
-            n = (-d[1], d[0])
-            a = r["start"]
-            for i in range(1, int(round(length / tread))):
-                p0 = (a[0] + d[0] * i * tread + n[0] * width / 2, a[1] + d[1] * i * tread + n[1] * width / 2)
-                p1 = (a[0] + d[0] * i * tread - n[0] * width / 2, a[1] + d[1] * i * tread - n[1] * width / 2)
-                self._poly(self.canvas_plan, to, [p0, p1], None, C_EDGE, 0.6, closed=False)
-            end = (a[0] + d[0] * length, a[1] + d[1] * length)
-            self._poly(self.canvas_plan, to, [a, end], None, C_ARROW, 2.0, closed=False)
-            tip = to(end[0], end[1])
-            dot = Ellipse()
-            dot.Width = dot.Height = 8
-            dot.Fill = C_ARROW
-            Canvas.SetLeft(dot, tip.X - 4)
-            Canvas.SetTop(dot, tip.Y - 4)
-            self.canvas_plan.Children.Add(dot)
+            self._poly(self.canvas_plan, to, corners, C_RUN, None, 0.0)
+            bounds, risers, path, arrow = run_outline(r, width, tread)
+            for p0, p1 in risers:
+                self._poly(self.canvas_plan, to, [p0, p1], None, yellow, 2.0, closed=False)
+            for p0, p1 in bounds:
+                self._poly(self.canvas_plan, to, [p0, p1], None, green, 3.0, closed=False)
+            self._poly(self.canvas_plan, to, list(path), None, purple, 2.0, closed=False)
+            for p0, p1 in arrow:
+                self._poly(self.canvas_plan, to, [p0, p1], None, purple, 2.0, closed=False)
+            a, end = path
             mid = to((a[0] + end[0]) / 2.0, (a[1] + end[1]) / 2.0)
             self._text(self.canvas_plan, mid, u"T{} · {} c.h.".format(k + 1, r["risers"]), brush(22, 50, 79))
 
@@ -340,15 +337,59 @@ def plan_view_of(level):
         return DB.ViewPlan.Create(doc, vft.Id, level.Id)
 
 
-def _temp_line(view, a, b):
+def _temp_line(view, a, b, rgb=SKETCH_RGB, weight=6):
     z = view.GenLevel.Elevation
     line = doc.Create.NewDetailCurve(view, DB.Line.CreateBound(
         DB.XYZ(a[0] / FT, a[1] / FT, z), DB.XYZ(b[0] / FT, b[1] / FT, z)))
     ogs = DB.OverrideGraphicSettings()
-    ogs.SetProjectionLineColor(DB.Color(*SKETCH_RGB))
-    ogs.SetProjectionLineWeight(6)
+    ogs.SetProjectionLineColor(DB.Color(*rgb))
+    ogs.SetProjectionLineWeight(weight)
     view.SetElementOverrides(line.Id, ogs)
     return line.Id
+
+
+# (2026-11-21) the sketch shown as Revit's own stair sketch
+RGB_BOUNDARY, RGB_RISER, RGB_LANDING, RGB_PATH = (0, 128, 80), (240, 200, 0), (255, 90, 0), (80, 20, 200)
+
+
+def run_outline(r, width, tread):
+    """(boundary lines, riser lines, path, arrow) of a planned run, in plan (m)."""
+    d = r["dir"]
+    n = (-d[1], d[0])
+    a = r["start"]
+    treads = r["risers"] if r.get("top_tread") else r["risers"] - 1
+    length = treads * tread
+    h = width / 2.0
+
+    def P(t, v):
+        return (a[0] + d[0] * t + n[0] * v, a[1] + d[1] * t + n[1] * v)
+    bounds = [(P(0, -h), P(length, -h)), (P(0, h), P(length, h))]
+    risers = [(P(i * tread, -h), P(i * tread, h)) for i in range(treads + 1)]
+    end = P(length, 0)
+    head = 0.12
+    arrow = [(end, P(length - head, -head * 0.6)), (end, P(length - head, head * 0.6))]
+    return bounds, risers, (P(0, 0), end), arrow
+
+
+def draw_sketch(view, plan, width, tread):
+    """Every run and landing of `plan` drawn in the view as Revit's stair
+    sketch: green boundaries, yellow risers, orange landings, a purple
+    path with its arrow up. Returns the ids (temporary)."""
+    ids = []
+    for r in plan["runs"]:
+        bounds, risers, path, arrow = run_outline(r, width, tread)
+        for a, b in bounds:
+            ids.append(_temp_line(view, a, b, RGB_BOUNDARY, 7))
+        for a, b in risers:
+            ids.append(_temp_line(view, a, b, RGB_RISER, 4))
+        ids.append(_temp_line(view, path[0], path[1], RGB_PATH, 5))
+        for a, b in arrow:
+            ids.append(_temp_line(view, a, b, RGB_PATH, 5))
+    for l in plan["landings"]:
+        poly = l["poly"]
+        for k in range(len(poly)):
+            ids.append(_temp_line(view, poly[k], poly[(k + 1) % len(poly)], RGB_LANDING, 7))
+    return ids
 
 
 def _start_mark(view, a, size=0.15):
@@ -391,15 +432,30 @@ def draw_in_plan(state):
                 p = uidoc.Selection.PickPoint(snaps, u"Tramo {}: clic en el INICIO (Esc termina el boceto)".format(k))
                 a = (p.X * FT, p.Y * FT)
                 with revit.Transaction(u"BOKI Escalera - boceto"):
-                    mark = _start_mark(view, a)
+                    mark = [_temp_line(view, p0, p1, RGB_PATH, 6) for p0, p1 in
+                            (((a[0] - 0.15, a[1] - 0.15), (a[0] + 0.15, a[1] + 0.15)),
+                             ((a[0] - 0.15, a[1] + 0.15), (a[0] + 0.15, a[1] - 0.15)))]
                 temp += mark
                 p = uidoc.Selection.PickPoint(snaps, u"Tramo {}: clic en el FIN (Esc cancela este tramo)".format(k))
                 b = (p.X * FT, p.Y * FT)
             except OperationCanceledException:
                 break
             state.sketch.append((a, b))
+            # the whole stair sketched again as it will be built (runs fitted
+            # to their risers, landings between, none over another)
+            top = doc.GetElement(DB.ElementId(state.top_id)) if state.top_id else None
             with revit.Transaction(u"BOKI Escalera - boceto"):
-                temp.append(_temp_line(view, a, b))
+                for i in temp:
+                    if doc.GetElement(i) is not None:
+                        doc.Delete(i)
+                temp = []
+                if top is not None and top.Elevation > base.Elevation:
+                    plan = sp.plan_stair(state.sketch, (top.Elevation - base.Elevation) * FT,
+                                         (state.riser or 17.5) / 100.0, (state.tread or 25.0) / 100.0,
+                                         state.width or 1.20)
+                    temp = draw_sketch(view, plan, state.width or 1.20, (state.tread or 25.0) / 100.0)
+                else:
+                    temp.append(_temp_line(view, a, b))
     finally:
         if temp:
             with revit.Transaction(u"BOKI Escalera - boceto"):
