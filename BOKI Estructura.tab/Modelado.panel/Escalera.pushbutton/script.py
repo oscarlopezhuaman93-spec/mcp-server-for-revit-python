@@ -464,13 +464,88 @@ def draw_in_plan(state):
                         doc.Delete(i)
 
 
+# --- editing a stair made here (2026-11-21) -------------------------------------
+TAG_PREFIX = u"BOKI Escalera "
+
+
+def _comment(e):
+    p = e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+    return p.AsString() if p is not None else None
+
+
+def _set_comment(e, text):
+    p = e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+    if p is not None and not p.IsReadOnly:
+        p.Set(text)
+
+
+def stair_pieces(selected):
+    """The runs (Stairs) and landings (floors) of the stair(s) picked: a
+    piece made by Escalera brings every piece of its stair (its tag);
+    otherwise only what was picked. ([Stairs], [Floor])."""
+    from Autodesk.Revit.DB.Architecture import Stairs
+    tags = set(c for c in (_comment(e) for e in selected) if c and c.startswith(TAG_PREFIX))
+    pieces = list(selected)
+    if tags:
+        for cat in (DB.BuiltInCategory.OST_Stairs, DB.BuiltInCategory.OST_Floors):
+            for e in DB.FilteredElementCollector(doc).OfCategory(cat).WhereElementIsNotElementType():
+                if _comment(e) in tags and all(e.Id != x.Id for x in pieces):
+                    pieces.append(e)
+    stairs = [e for e in pieces if isinstance(e, Stairs)]
+    floors = [e for e in pieces if isinstance(e, DB.Floor)]
+    return stairs, floors
+
+
+def read_existing(state):
+    """A stair picked before opening: its runs back as the sketch, its
+    type, levels, riser, tread and width in the window; its pieces noted
+    (state.edit_ids) to be replaced when it is created again. False when
+    no stair is picked."""
+    sel = [doc.GetElement(i) for i in uidoc.Selection.GetElementIds()]
+    stairs, floors = stair_pieces([e for e in sel if e is not None])
+    if not stairs:
+        return False
+    runs = []
+    for s in stairs:
+        base = doc.GetElement(s.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_LEVEL_PARAM).AsElementId())
+        off = s.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_OFFSET).AsDouble()
+        for rid in s.GetStairsRuns():
+            r = doc.GetElement(rid)
+            curves = list(r.GetStairsPath())
+            if not curves:
+                continue
+            a, b = curves[0].GetEndPoint(0), curves[-1].GetEndPoint(1)
+            runs.append((base.Elevation + off, s, r, (a.X * FT, a.Y * FT), (b.X * FT, b.Y * FT)))
+    if not runs:
+        return False
+    runs.sort(key=lambda x: x[0])
+    first = runs[0][1]
+    base = doc.GetElement(first.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_LEVEL_PARAM).AsElementId())
+    top_z = max(z + s.get_Parameter(DB.BuiltInParameter.STAIRS_STAIRS_HEIGHT).AsDouble() for z, s, _, _, _ in runs)
+    top = min(levels(), key=lambda l: abs(l.Elevation - top_z))
+    state.type_name = _name(doc.GetElement(first.GetTypeId()))
+    state.base_id = base.Id.IntegerValue
+    state.top_id = top.Id.IntegerValue
+    state.riser = math.ceil(first.ActualRiserHeight * FT * 1000 - 1e-6) / 10.0  # the max: its own riser
+    state.tread = round(first.ActualTreadDepth * FT * 100, 1)
+    state.width = round(runs[0][2].ActualRunWidth * FT, 2)
+    state.sketch = [(a, b) for _, _, _, a, b in runs]
+    state.edit_ids = [e.Id.IntegerValue for e in stairs + floors]
+    return True
+
+
 # --- main ----------------------------------------------------------------------
 if __name__ == "__main__":
     state = State()
-    state.sketch = selected_lines_sketch()  # lines drawn with Revit's tool, picked before: the runs
+    state.edit_ids = []
+    if not read_existing(state):  # a stair picked: edit it
+        state.sketch = selected_lines_sketch()  # lines drawn with Revit's tool, picked before: the runs
     xaml = os.path.join(SCRIPT_DIR, "EscaleraForm.xaml")
     while True:
         window = EscaleraWindow(xaml, state)
+        if state.edit_ids:
+            window.Title = u"Escalera - EDITANDO la escalera seleccionada ({} piezas)".format(len(state.edit_ids))
+            window.button_create.Content = u"ACTUALIZAR ESCALERA"
         window.ShowDialog()
         if window.action == "draw":
             draw_in_plan(state)
@@ -484,12 +559,22 @@ if __name__ == "__main__":
         tg = DB.TransactionGroup(doc, u"BOKI Escalera de concreto")
         tg.Start()
         try:
+            if state.edit_ids:  # editing: the old pieces replaced by the new ones
+                with revit.Transaction(u"BOKI Escalera - reemplazar"):
+                    for i in state.edit_ids:
+                        if doc.GetElement(DB.ElementId(i)) is not None:
+                            doc.Delete(DB.ElementId(i))
             runs, floors, messages = scr.create_stair(doc, base, top, info, plan, state.tread / 100.0, state.width)
+            import uuid
+            tag = TAG_PREFIX + str(uuid.uuid4())[:8]  # its pieces found together when edited again
+            with revit.Transaction(u"BOKI Escalera - marca"):
+                for e in runs + floors:
+                    _set_comment(e, tag)
             tg.Assimilate()
         except Exception as e:
             tg.RollBack()
             forms.alert(u"No se pudo crear la escalera:\n{}".format(e), title="Escalera")
             raise SystemExit
         uidoc.Selection.SetElementIds(List[DB.ElementId]([e.Id for e in runs + floors]))
-        forms.alert(u"Escalera creada: {} tramos (escaleras rectas del tipo {}) y {} descansos (losas)."
+        forms.alert((u"Escalera actualizada" if state.edit_ids else u"Escalera creada") + u": {} tramos (escaleras rectas del tipo {}) y {} descansos (losas)."
                     u"\nQuedaron seleccionados.".format(len(runs), info.name, len(floors)), title="Escalera")
