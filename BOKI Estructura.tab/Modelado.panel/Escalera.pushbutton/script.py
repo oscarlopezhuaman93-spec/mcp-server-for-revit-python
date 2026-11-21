@@ -67,6 +67,7 @@ class State(object):
         self.base_id = None
         self.top_id = None
         self.riser = self.tread = self.width = None  # cm, cm, m as typed
+        self.waist = self.landing = None  # cm as typed (the type's by default)
         self.sketch = []  # [((x, y), (x, y))] runs drawn, in climbing order (m)
 
 
@@ -103,8 +104,10 @@ class EscaleraWindow(forms.WPFWindow):
         self.txt_riser.Text = u"{:g}".format(s.riser if keep else round(info.max_riser * 100, 1))
         self.txt_tread.Text = u"{:g}".format(s.tread if keep else round(info.min_tread * 100, 1))
         self.txt_width.Text = u"{:g}".format(s.width if keep else max(1.20, round(info.min_width, 2)))
-        self.txt_waist.Text = u"{:g}".format(round(info.waist * 100, 1)) if info.waist else u"(no monolítico)"
-        self.txt_landing.Text = u"{:g}".format(round(info.landing * 100, 1))
+        waist = s.waist if (keep and s.waist) else (round(info.waist * 100, 1) if info.waist else None)
+        landing = s.landing if (keep and s.landing) else round(info.landing * 100, 1)
+        self.txt_waist.Text = u"{:g}".format(waist) if waist else u"(no monolítico)"
+        self.txt_landing.Text = u"{:g}".format(landing)
         self.txt_type_info.Text = (u"Tramo: {}  ·  monolítico (concreto)".format(_name(doc.GetElement(info.type.RunType)))
                                    if info.monolithic else
                                    u"Este tipo no es monolítico: elige uno de concreto para la garganta.")
@@ -133,7 +136,18 @@ class EscaleraWindow(forms.WPFWindow):
         s.riser = _num(self.txt_riser.Text, 17.5)
         s.tread = _num(self.txt_tread.Text, 25.0)
         s.width = _num(self.txt_width.Text, 1.20)
+        # (2026-11-21) waist and landing typed here (cm), not only the type's
+        info = self._info_named(s.type_name)
+        s.waist = _num(self.txt_waist.Text, round(info.waist * 100, 1) if info and info.waist else 0.0) or None
+        s.landing = _num(self.txt_landing.Text, round(info.landing * 100, 1) if info else 15.0)
         return base, top
+
+    def info_used(self):
+        """The chosen type's info with the waist and landing typed here."""
+        info = self._info_named(self.state.type_name)
+        if info is None:
+            return None
+        return scr.with_thickness(info, (self.state.waist or 0) / 100.0 or None, (self.state.landing or 0) / 100.0 or None)
 
     def plan(self):
         base, top = self._read()
@@ -157,7 +171,7 @@ class EscaleraWindow(forms.WPFWindow):
         if error:
             self._status(error, True)
             return
-        info = self._info_named(s.type_name)
+        info = self.info_used()
         value, good = sp.comfort(plan["riser"], s.tread / 100.0)
         lines = [u"Altura {:.2f} m → {} contrahuellas de {:.1f} cm".format(
             plan["total"] * plan["riser"], plan["total"], plan["riser"] * 100)]
@@ -530,6 +544,13 @@ def read_existing(state):
     state.tread = round(first.ActualTreadDepth * FT * 100, 1)
     state.width = round(runs[0][2].ActualRunWidth * FT, 2)
     state.sketch = [(a, b) for _, _, _, a, b in runs]
+    rt = doc.GetElement(runs[0][2].GetTypeId())
+    if rt is not None and getattr(rt, "IsMonolithic", False):
+        state.waist = round(rt.StructuralDepth * FT * 100, 1)
+    if floors:
+        p = floors[0].get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_THICKNESS_PARAM)
+        if p is not None:
+            state.landing = round(p.AsDouble() * FT * 100, 1)
     state.edit_ids = [e.Id.IntegerValue for e in stairs + floors]
     return True
 
@@ -553,7 +574,7 @@ if __name__ == "__main__":
         break
     if window.action == "create":
         plan, _ = window.plan()
-        info = window._info_named(state.type_name)
+        info = window.info_used()  # the type with the waist / landing typed
         base = doc.GetElement(DB.ElementId(state.base_id))
         top = doc.GetElement(DB.ElementId(state.top_id))
         tg = DB.TransactionGroup(doc, u"BOKI Escalera de concreto")

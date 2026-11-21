@@ -6,7 +6,7 @@ run) and Acero Escalera reads it -, every landing a structural floor as
 thick as the type's landing, its top at the landing height."""
 from pyrevit import DB
 from Autodesk.Revit.DB import StairsEditScope
-from Autodesk.Revit.DB.Architecture import StairsType, StairsRun, StairsRunJustification
+from Autodesk.Revit.DB.Architecture import StairsType, StairsRun, StairsRunJustification, StairsRunType
 from System.Collections.Generic import List
 
 import slab_regions as sg
@@ -33,6 +33,46 @@ class StairTypeInfo(object):
         self.waist = run.StructuralDepth * FT if self.monolithic else None
         self.landing = (landing.Thickness * FT if landing is not None and landing.IsMonolithic else None) \
             or self.waist or 0.15
+
+
+def with_thickness(info, waist=None, landing=None):
+    """(2026-11-21) A copy of the type's info with the waist and the landing
+    thickness typed in the window (m; None keeps the type's). A waist other
+    than the type's is built with a stair type of that waist (made once)."""
+    import copy
+    out = copy.copy(info)
+    out.type_waist = info.waist
+    if waist and info.monolithic:
+        out.waist = waist
+    if landing:
+        out.landing = landing
+    return out
+
+
+def stair_type_with_waist(doc, info):
+    """The stair type to build with (inside an open Transaction): the
+    chosen one when its waist is the one wanted; else a copy of it - and of
+    its run type - with that waist, '<type> g=<cm>cm', found again when it
+    exists."""
+    want = getattr(info, "waist", None)
+    have = getattr(info, "type_waist", None)
+    if not want or have is None or abs(want - have) < 1e-4:
+        return info.type
+    cm = round(want * 100, 1)
+    name = u"{} g={:g}cm".format(info.name.split(u" g=")[0], cm)
+    for t in DB.FilteredElementCollector(doc).OfClass(StairsType):
+        if _name(t) == name:
+            return t
+    run = doc.GetElement(info.type.RunType)
+    run_name = u"{} g={:g}cm".format(_name(run).split(u" g=")[0], cm)
+    new_run = next((r for r in DB.FilteredElementCollector(doc).OfClass(StairsRunType)
+                    if _name(r) == run_name), None)
+    if new_run is None:
+        new_run = run.Duplicate(run_name)
+        new_run.StructuralDepth = want / FT
+    new = info.type.Duplicate(name)
+    new.RunType = new_run.Id
+    return new
 
 
 def stair_types(doc):
@@ -126,6 +166,16 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
     Returns ([Stairs], [Floor], messages)."""
     messages = []
     runs = []
+    want = getattr(info, "waist", None)
+    have = getattr(info, "type_waist", None)
+    if want and have is not None and abs(want - have) >= 1e-4:  # a waist typed: its type
+        import copy
+        t = DB.Transaction(doc, u"BOKI Escalera - garganta")
+        t.Start()
+        stype = stair_type_with_waist(doc, info)
+        t.Commit()
+        info = copy.copy(info)
+        info.type = stype
     for k, r in enumerate(plan["runs"]):
         r = dict(r, from_landing=info.landing if k else 0.0)
         runs.append(create_run(doc, base_level, top_level, info, r, plan["riser"], tread, width, messages))

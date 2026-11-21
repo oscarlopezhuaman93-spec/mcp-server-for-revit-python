@@ -71,9 +71,9 @@
                                 <TextBlock Grid.Row="2" Text="Ancho de tramo (m):" VerticalAlignment="Center"/>
                                 <TextBox Grid.Row="2" Grid.Column="1" x:Name="txt_width" VerticalAlignment="Center" TextChanged="config_changed"/>
                                 <TextBlock Grid.Row="3" Text="Garganta (cm):" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Row="3" Grid.Column="1" x:Name="txt_waist" VerticalAlignment="Center" Foreground="#FF556270"/>
+                                <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_waist" VerticalAlignment="Center" TextChanged="config_changed"/>
                                 <TextBlock Grid.Row="4" Text="Espesor de descanso (cm):" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Row="4" Grid.Column="1" x:Name="txt_landing" VerticalAlignment="Center" Foreground="#FF556270"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_landing" VerticalAlignment="Center" TextChanged="config_changed"/>
                             </Grid>
                         </GroupBox>
                         <GroupBox Header="Boceto">
