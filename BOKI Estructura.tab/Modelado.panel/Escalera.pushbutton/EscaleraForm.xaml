@@ -82,7 +82,7 @@
                                         Background="#FF2D8CF0" Foreground="White" BorderThickness="0" Click="draw_click"/>
                                 <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,6,0,0"
                                            Text="Revit abre la planta del nivel base: clic en el INICIO y el FIN de cada tramo, en el orden en que sube. Esc termina el boceto. Los descansos se crean solos entre tramos."/>
-                                <Button Content="&#9998;  DIBUJAR CON BOCETO DE REVIT (Contorno / Contrahuella / Camino)" Height="32" Margin="0,6,0,0"
+                                <Button Content="&#9998;  BOCETO DE REVIT" Height="32" Margin="0,6,0,0"
                                         FontWeight="Bold" Background="#FF7A3FC4" Foreground="White" BorderThickness="0" Click="revit_sketch_click"/>
                                 <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
                                            Text="Abre la herramienta Escalera de Revit: dibuja con su boceto, pulsa Finalizar, selecciona la escalera y vuelve a abrir Escalera: se convierte en escalera de concreto (ACTUALIZAR)."/>
