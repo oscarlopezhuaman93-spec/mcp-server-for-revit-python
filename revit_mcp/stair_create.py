@@ -267,7 +267,7 @@ def _shared_edge(pa, pb, tol=0.05):
     return best
 
 
-def step_connectors(doc, base_level, landings, thickness):
+def step_connectors(doc, base_level, landings, thickness, slope=1.0):
     """(2026-11-22) Landing pieces at two heights side by side (a landing
     drawn with risers across it): under the step between them, the slab
     that joins them - the lower one's soffit rising at 45 degrees to the
@@ -294,7 +294,7 @@ def step_connectors(doc, base_level, landings, thickness):
                 n = (-n[0], -n[1])  # towards the upper piece
             z0 = base_level.Elevation + (lo["z"] - thickness) / FT
             z1 = base_level.Elevation + (hi["z"] - thickness) / FT
-            run = (z1 - z0)  # 45 degrees: as far in as it rises
+            run = (z1 - z0) / max(slope, 0.05)  # as steep as the runs (1.0: 45 degrees)
 
             def P(u, z):
                 return DB.XYZ(p[0] / FT + n[0] * u, p[1] / FT + n[1] * u, z)
@@ -343,6 +343,32 @@ def _hull(points):
             upper.pop()
         upper.append(p)
     return lower[:-1] + upper[:-1]
+
+
+def snap_pieces(landings, tol=0.06):
+    """(2026-11-22) The corners of landing pieces a few cm apart (Revit's
+    sketch leaves slits between them) brought to one point."""
+    pts = [p for l in landings for p in l["poly"]]
+    groups = []
+    for p in pts:
+        g = next((g for g in groups if abs(g[0][0] - p[0]) < tol and abs(g[0][1] - p[1]) < tol), None)
+        if g is None:
+            groups.append([p])
+        else:
+            g.append(p)
+
+    def snap(p):
+        g = next(g for g in groups if p in g)
+        return (sum(q[0] for q in g) / len(g), sum(q[1] for q in g) / len(g))
+    out = []
+    for l in landings:
+        poly = []
+        for p in l["poly"]:
+            q = snap(p)
+            if not poly or abs(q[0] - poly[-1][0]) > 1e-6 or abs(q[1] - poly[-1][1]) > 1e-6:
+                poly.append(q)
+        out.append(dict(l, poly=poly))
+    return out
 
 
 def stepped_landing(doc, base_level, landings, thickness, ftype):
@@ -431,12 +457,7 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
         info = copy.copy(info)
         info.type = stype
     for k, r in enumerate(plan["runs"]):
-        down = info.landing if k else 0.0
-        if k and plan.get("steps") and plan["landings"]:
-            # (2026-11-22) rising from a stepped landing: its waist down to the
-            # landing's one flat soffit
-            down += max(0.0, r["z0"] - min(x["z"] for x in plan["landings"]))
-        r = dict(r, from_landing=down)
+        r = dict(r, from_landing=info.landing if k else 0.0)  # down to its landing piece's soffit
         runs.append(create_run(doc, base_level, top_level, info, r, plan["riser"], tread, width, messages))
     floors = []
     if plan["landings"]:
@@ -446,19 +467,24 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
         t.SetFailureHandlingOptions(options)
         t.Start()
         ftype = landing_floor_type(doc, info.landing)
-        slab = None
-        if plan.get("steps"):  # landing pieces at their heights: one slab, flat soffit, steps on it
-            floors, slab = stepped_landing(doc, base_level, plan["landings"], info.landing, ftype)
-        else:
-            floors = [create_landing(doc, base_level, l, ftype) for l in plan["landings"]]
-        # each run's waist carried on to the soffit of the landing it reaches
+        # (2026-11-22, the user) landing pieces at their heights: each its own
+        # slab, same thickness - the soffit stepped like the top, the pieces
+        # tied by their side (thicker than a riser); or, chosen, a sloped
+        # soffit between them, as steep as the runs
+        floors = [create_landing(doc, base_level, l, ftype) for l in plan["landings"]]
         doc.Regenerate()
+        if plan.get("steps") and plan.get("soffit") == "sloped":
+            try:
+                floors += step_connectors(doc, base_level, plan["landings"], info.landing,
+                                          slope=plan["riser"] / tread)
+            except Exception as e:
+                messages.append(u"Fondo inclinado: {}".format(e))
         for k, r in enumerate(plan["runs"][:-1]):
             # the landing this run reaches: at its top
             if plan.get("steps"):
-                # (2026-11-22) the landing's one flat soffit (its lowest
-                # piece's): the waist carried on up to it, under every piece
-                reached = [slab]
+                # the piece the run reaches (at its top): its waist carried on
+                # to that piece's soffit, under that piece only
+                reached = [x for x in plan["landings"] if abs(x["z"] - r["z1"]) <= 0.01]
             else:
                 l = min(plan["landings"], key=lambda x: abs(x["z"] - r["z1"])) if plan["landings"] else None
                 reached = [l] if (l is not None and abs(l["z"] - r["z1"]) <= 0.01) else []

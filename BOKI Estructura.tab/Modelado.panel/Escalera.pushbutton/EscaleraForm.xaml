@@ -87,8 +87,15 @@
                                 <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
                                            Text="Abre la herramienta Escalera de Revit: dibuja con su boceto, pulsa Finalizar, selecciona la escalera y vuelve a abrir Escalera: se convierte en escalera de concreto (ACTUALIZAR)."/>
                                 <CheckBox x:Name="chk_steps" Visibility="Collapsed" Margin="0,8,0,0" FontWeight="Bold"
-                                          Content="Conservar descansos a distinta altura (con losa de conexión)"
+                                          Content="Conservar descansos a distinta altura"
                                           Checked="steps_changed" Unchecked="steps_changed"/>
+                                <StackPanel x:Name="panel_soffit" Visibility="Collapsed" Margin="18,4,0,0">
+                                    <TextBlock Text="Fondo de los descansos:" Foreground="Gray" FontSize="11"/>
+                                    <RadioButton x:Name="rad_stepped" GroupName="soffit" IsChecked="True" Margin="0,2,0,0"
+                                                 Content="Escalonado (losas de espesor constante)" Checked="soffit_changed"/>
+                                    <RadioButton x:Name="rad_sloped" GroupName="soffit" Margin="0,2,0,0"
+                                                 Content="Inclinado (como la losa de los tramos)" Checked="soffit_changed"/>
+                                </StackPanel>
                                 <Button Content="Borrar boceto" Height="26" Margin="0,6,0,0" Click="clear_click"/>
                                 <TextBlock x:Name="txt_summary" TextWrapping="Wrap" Margin="0,8,0,0"/>
                             </StackPanel>
@@ -97,9 +104,18 @@
                 </ScrollViewer>
                 <Grid Grid.Column="1">
                     <Grid.RowDefinitions><RowDefinition Height="1.4*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                    <GroupBox Header="PLANTA (boceto)">
-                        <Canvas x:Name="canvas_plan" Background="White" ClipToBounds="True" SizeChanged="resized"/>
-                    </GroupBox>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <GroupBox Header="PLANTA (boceto)" Margin="0,0,6,8">
+                            <Canvas x:Name="canvas_plan" Background="White" ClipToBounds="True" SizeChanged="resized"/>
+                        </GroupBox>
+                        <GroupBox Grid.Column="1" Header="VISTA 3D (arrastra para girar)">
+                            <Border x:Name="border_3d" Background="#FFE9EEF3" ClipToBounds="True"
+                                    MouseLeftButtonDown="view3d_down" MouseMove="view3d_move" MouseLeftButtonUp="view3d_up">
+                                <Viewport3D x:Name="view_3d"/>
+                            </Border>
+                        </GroupBox>
+                    </Grid>
                     <GroupBox Grid.Row="1" Header="CORTE POR CADA TRAMO (garganta recta)">
                         <Canvas x:Name="canvas_cut" Background="White" ClipToBounds="True" SizeChanged="resized"/>
                     </GroupBox>

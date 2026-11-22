@@ -61,6 +61,56 @@ def _num(text, default):
         return default
 
 
+def _clean2(pts, eps=1e-6):
+    """A closed polygon without repeated or straight-through points."""
+    out = []
+    for p in pts:
+        if not out or abs(p[0] - out[-1][0]) > eps or abs(p[1] - out[-1][1]) > eps:
+            out.append(p)
+    if len(out) > 1 and abs(out[0][0] - out[-1][0]) <= eps and abs(out[0][1] - out[-1][1]) <= eps:
+        out.pop()
+    keep = []
+    for k, p in enumerate(out):
+        a, b = out[k - 1], out[(k + 1) % len(out)]
+        if abs((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])) > 1e-9:
+            keep.append(p)
+    return keep
+
+
+def _ear_clip(poly):
+    """Triangles (index triples) of a simple polygon (either winding)."""
+    n = len(poly)
+    if n < 3:
+        return []
+    area = sum(poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1] for i in range(n))
+    idx = list(range(n)) if area > 0 else list(reversed(range(n)))
+    tris = []
+
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def inside(p, a, b, c):
+        return cross(a, b, p) >= 0 and cross(b, c, p) >= 0 and cross(c, a, p) >= 0
+    guard = 0
+    while len(idx) > 3 and guard < 10000:
+        guard += 1
+        for k in range(len(idx)):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % len(idx)]
+            a, b, c = poly[i0], poly[i1], poly[i2]
+            if cross(a, b, c) <= 1e-12:
+                continue
+            if any(inside(poly[j], a, b, c) for j in idx if j not in (i0, i1, i2)):
+                continue
+            tris.append((i0, i1, i2))
+            idx.pop(k)
+            break
+        else:
+            break
+    if len(idx) == 3:
+        tris.append(tuple(idx))
+    return tris
+
+
 class State(object):
     def __init__(self):
         self.type_name = None
@@ -161,7 +211,140 @@ class EscaleraWindow(forms.WPFWindow):
 
     def steps_changed(self, sender, args):
         self.state.steps = bool(self.chk_steps.IsChecked)
+        try:
+            from System.Windows import Visibility as _V
+            self.panel_soffit.Visibility = _V.Visible if self.state.steps else _V.Collapsed
+        except Exception:
+            pass
         self.refresh()
+
+    def soffit_changed(self, sender, args):
+        self.state.soffit = "sloped" if self.rad_sloped.IsChecked else "stepped"
+        if not getattr(self, "_filling", True):
+            self.refresh()
+
+    # -- 3D view (2026-11-22) -------------------------------------------------
+    def view3d_down(self, sender, args):
+        self._drag = args.GetPosition(self.border_3d)
+        self.border_3d.CaptureMouse()
+
+    def view3d_move(self, sender, args):
+        if getattr(self, "_drag", None) is None:
+            return
+        p = args.GetPosition(self.border_3d)
+        self._yaw = getattr(self, "_yaw", -50.0) - (p.X - self._drag.X) * 0.5
+        self._pitch = max(-80.0, min(80.0, getattr(self, "_pitch", 30.0) + (p.Y - self._drag.Y) * 0.4))
+        self._drag = p
+        self._place_camera()
+
+    def view3d_up(self, sender, args):
+        self._drag = None
+        self.border_3d.ReleaseMouseCapture()
+
+    def _place_camera(self):
+        from System.Windows.Media.Media3D import PerspectiveCamera, Point3D, Vector3D
+        c, r = getattr(self, "_center", (0, 0, 0)), getattr(self, "_radius", 5.0)
+        yaw, pitch = math.radians(getattr(self, "_yaw", -50.0)), math.radians(getattr(self, "_pitch", 30.0))
+        eye = (c[0] + r * math.cos(pitch) * math.cos(yaw), c[1] + r * math.cos(pitch) * math.sin(yaw),
+               c[2] + r * math.sin(pitch))
+        cam = PerspectiveCamera()
+        cam.Position = Point3D(*eye)
+        cam.LookDirection = Vector3D(c[0] - eye[0], c[1] - eye[1], c[2] - eye[2])
+        cam.UpDirection = Vector3D(0, 0, 1)
+        cam.FieldOfView = 40
+        self.view_3d.Camera = cam
+
+    def _draw_3d(self, plan, info):
+        """The stair as it will be built: runs (steps over a straight waist),
+        landings, the stepped / sloped soffit of a stepped landing."""
+        from System.Windows.Media.Media3D import (Model3DGroup, GeometryModel3D, MeshGeometry3D, Point3D,
+                                                  DiffuseMaterial, ModelVisual3D, AmbientLight, DirectionalLight,
+                                                  Vector3D)
+        from System.Windows.Media import Colors
+        s = self.state
+        tread = s.tread / 100.0
+        waist = (info.waist if info and info.waist else 0.15)
+        thick = info.landing if info else 0.15
+        group = Model3DGroup()
+        group.Children.Add(AmbientLight(Color.FromRgb(110, 110, 110)))
+        group.Children.Add(DirectionalLight(Colors.White, Vector3D(-0.4, 0.6, -1.0)))
+        pts_all = []
+
+        def add_prism(profile, frame, length, color):
+            """profile [(u, z)] in the plane through origin o (direction e for
+            u), extruded `length` along w: frame = (o, e, w)."""
+            o, e, w = frame
+            mesh = MeshGeometry3D()
+
+            def P(u, z, k):
+                return (o[0] + e[0] * u + w[0] * k, o[1] + e[1] * u + w[1] * k, z)
+            n = len(profile)
+            for k in (0.0, length):
+                for u, z in profile:
+                    q = P(u, z, k)
+                    mesh.Positions.Add(Point3D(*q))
+                    pts_all.append(q)
+            for a, b, c in _ear_clip(profile):
+                mesh.TriangleIndices.Add(a); mesh.TriangleIndices.Add(c); mesh.TriangleIndices.Add(b)
+                mesh.TriangleIndices.Add(a + n); mesh.TriangleIndices.Add(b + n); mesh.TriangleIndices.Add(c + n)
+            for i in range(n):
+                j = (i + 1) % n
+                for t in ((i, j, j + n), (i, j + n, i + n)):
+                    for v in t:
+                        mesh.TriangleIndices.Add(v)
+                    for v in reversed(t):
+                        mesh.TriangleIndices.Add(v)
+            m = GeometryModel3D(mesh, DiffuseMaterial(SolidColorBrush(color)))
+            m.BackMaterial = DiffuseMaterial(SolidColorBrush(color))
+            group.Children.Add(m)
+
+        def add_slab(poly, z_top, h, color):
+            mesh = MeshGeometry3D()
+            n = len(poly)
+            for z in (z_top - h, z_top):
+                for x, y in poly:
+                    mesh.Positions.Add(Point3D(x, y, z))
+                    pts_all.append((x, y, z))
+            for a, b, c in _ear_clip(poly):
+                for v in (a, b, c, a + n, b + n, c + n):
+                    mesh.TriangleIndices.Add(v)
+            for i in range(n):
+                j = (i + 1) % n
+                for v in (i, j, j + n, i, j + n, i + n):
+                    mesh.TriangleIndices.Add(v)
+            m = GeometryModel3D(mesh, DiffuseMaterial(SolidColorBrush(color)))
+            m.BackMaterial = DiffuseMaterial(SolidColorBrush(color))
+            group.Children.Add(m)
+        c_run, c_land = Color.FromRgb(190, 196, 204), Color.FromRgb(220, 205, 170)
+        for k, r in enumerate(plan["runs"]):
+            d = r["dir"]
+            nrm = (-d[1], d[0])
+            treads = r["risers"] if r.get("top_tread") else r["risers"] - 1
+            riser = plan["riser"]
+            z0 = r["z0"]
+            top = [(0.0, z0)]
+            for i in range(r["risers"]):
+                top += [(i * tread, z0 + (i + 1) * riser), (min(i + 1, treads) * tread, z0 + (i + 1) * riser)]
+            run_len = treads * tread
+            slope = math.atan2(r["risers"] * riser, max(run_len, tread))
+            off = waist / math.cos(slope)
+            down = r.get("from_landing", thick if k else 0.0)
+            prof = _clean2(top + [(run_len, z0 + r["risers"] * riser - off), (0.0, z0 - off - down)])
+            a = r["start"]
+            o = (a[0] - nrm[0] * s.width / 2.0, a[1] - nrm[1] * s.width / 2.0)
+            add_prism(prof, (o, d, nrm), s.width, c_run)
+        for l in plan["landings"]:
+            add_slab(l["poly"], l["z"], thick, c_land)
+        if not pts_all:
+            return
+        model = ModelVisual3D()
+        model.Content = group
+        self.view_3d.Children.Clear()
+        self.view_3d.Children.Add(model)
+        xs, ys, zs = [p[0] for p in pts_all], [p[1] for p in pts_all], [p[2] for p in pts_all]
+        self._center = ((max(xs) + min(xs)) / 2.0, (max(ys) + min(ys)) / 2.0, (max(zs) + min(zs)) / 2.0)
+        self._radius = 2.2 * max(max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs), 1.0)
+        self._place_camera()
 
     # -- preview -------------------------------------------------------------
     def resized(self, sender, args):
@@ -200,6 +383,10 @@ class EscaleraWindow(forms.WPFWindow):
         if s.sketch:
             self._draw_plan(plan)
             self._draw_cut(plan, info)
+            try:
+                self._draw_3d(plan, info)
+            except Exception:
+                pass
 
     def _status(self, text, error):
         self.txt_status.Text = text
@@ -583,9 +770,10 @@ def step_plan(state, base_z, height):
         z0 = r["z_abs"] - base_z
         runs.append(dict(r, z0=z0, z1=z0 + r["risers"] * riser, top_tread=False))
     landings = [{"poly": poly, "z": z - base_z} for poly, z in sorted(steps, key=lambda s: s[1])]
+    landings = scr.snap_pieces(landings)  # the slits Revit's sketch leaves between them closed
     total = int(round(height / riser)) if riser else 0
     return {"total": total, "riser": riser, "runs": runs, "landings": landings, "remaining": 0,
-            "warnings": [], "steps": True}
+            "warnings": [], "steps": True, "soffit": getattr(state, "soffit", "stepped")}
 
 
 def sketched_runs(stairs, run, tread):
@@ -752,6 +940,9 @@ if __name__ == "__main__":
             window._filling = True
             window.chk_steps.Visibility = _Vis.Visible
             window.chk_steps.IsChecked = bool(state.steps)
+            window.panel_soffit.Visibility = _Vis.Visible if state.steps else _Vis.Collapsed
+            window.rad_sloped.IsChecked = getattr(state, "soffit", "stepped") == "sloped"
+            window.rad_stepped.IsChecked = not window.rad_sloped.IsChecked
             window._filling = False
             window.refresh()
         if state.edit_ids:
