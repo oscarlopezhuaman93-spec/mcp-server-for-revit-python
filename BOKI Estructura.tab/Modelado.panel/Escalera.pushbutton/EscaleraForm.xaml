@@ -86,6 +86,9 @@
                                         FontWeight="Bold" Background="#FF7A3FC4" Foreground="White" BorderThickness="0" Click="revit_sketch_click"/>
                                 <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="11" Margin="0,4,0,0"
                                            Text="Abre la herramienta Escalera de Revit: dibuja con su boceto, pulsa Finalizar, selecciona la escalera y vuelve a abrir Escalera: se convierte en escalera de concreto (ACTUALIZAR)."/>
+                                <CheckBox x:Name="chk_steps" Visibility="Collapsed" Margin="0,8,0,0" FontWeight="Bold"
+                                          Content="Conservar descansos a distinta altura (con losa de conexión)"
+                                          Checked="steps_changed" Unchecked="steps_changed"/>
                                 <Button Content="Borrar boceto" Height="26" Margin="0,6,0,0" Click="clear_click"/>
                                 <TextBlock x:Name="txt_summary" TextWrapping="Wrap" Margin="0,8,0,0"/>
                             </StackPanel>

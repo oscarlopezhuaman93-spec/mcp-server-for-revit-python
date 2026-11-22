@@ -155,7 +155,13 @@ class EscaleraWindow(forms.WPFWindow):
             return None, u"El nivel superior debe estar más alto que el base."
         s = self.state
         height = (top.Elevation - base.Elevation) * FT
+        if getattr(s, "steps", False) and getattr(s, "exact", None):
+            return step_plan(s, base.Elevation * FT, height), None
         return sp.plan_stair(s.sketch, height, s.riser / 100.0, s.tread / 100.0, s.width), None
+
+    def steps_changed(self, sender, args):
+        self.state.steps = bool(self.chk_steps.IsChecked)
+        self.refresh()
 
     # -- preview -------------------------------------------------------------
     def resized(self, sender, args):
@@ -535,6 +541,53 @@ def _top_faces(element):
     return out
 
 
+def _landing_faces(element):
+    """[(polygon [(x, y)] m, z m)] of the upward flat faces of an element,
+    their real outline (a landing drawn with risers across it: its pieces)."""
+    out = []
+
+    def walk(g):
+        for x in g:
+            if isinstance(x, DB.Solid) and x.Volume > 0:
+                for f in x.Faces:
+                    if isinstance(f, DB.PlanarFace) and f.FaceNormal.Z > 0.99:
+                        lp = max(f.EdgeLoops, key=lambda l: l.Size)
+                        pts = []
+                        for ed in lp:
+                            q = ed.AsCurve().GetEndPoint(0)
+                            p = (q.X * FT, q.Y * FT)
+                            if not pts or math.hypot(p[0] - pts[-1][0], p[1] - pts[-1][1]) > 0.005:
+                                pts.append(p)
+                        if len(pts) > 1 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 0.005:
+                            pts.pop()
+                        clean = []
+                        for k, p in enumerate(pts):  # drop the points in a straight side
+                            a, b = pts[k - 1], pts[(k + 1) % len(pts)]
+                            if abs((p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])) > 1e-4:
+                                clean.append(p)
+                        if len(clean) >= 3:
+                            out.append((clean, lp[0].AsCurve().GetEndPoint(0).Z * FT))
+            elif isinstance(x, DB.GeometryInstance):
+                walk(x.GetInstanceGeometry())
+    walk(element.get_Geometry(DB.Options()))
+    return out
+
+
+def step_plan(state, base_z, height):
+    """(2026-11-22) The plan of a sketched stair kept as drawn: its runs
+    with their own risers and heights, every landing piece at its own
+    height (stair_create joins consecutive ones with a connecting slab)."""
+    exact, steps, riser = state.exact
+    runs = []
+    for k, r in enumerate(exact):
+        z0 = r["z_abs"] - base_z
+        runs.append(dict(r, z0=z0, z1=z0 + r["risers"] * riser, top_tread=False))
+    landings = [{"poly": poly, "z": z - base_z} for poly, z in sorted(steps, key=lambda s: s[1])]
+    total = int(round(height / riser)) if riser else 0
+    return {"total": total, "riser": riser, "runs": runs, "landings": landings, "remaining": 0,
+            "warnings": [], "steps": True}
+
+
 def sketched_runs(stairs, run, tread):
     """(2026-11-22) A run drawn with Revit's own sketch (Contorno /
     Contrahuella / Camino) is one run over the whole stair, its landings in
@@ -569,6 +622,38 @@ def sketched_runs(stairs, run, tread):
         found.append(sorted(ts))
     runs = [(leg, ts) for leg, ts in zip(legs, found) if len(ts) >= 1]
     total = stairs.ActualRisersNumber
+    # (2026-11-22) as drawn, too: each run from its first riser with its own
+    # treads and height, and every landing piece at its own height
+    riser = stairs.ActualRiserHeight * FT
+    exact = []
+    for (a, d, L), ts in runs:
+        z_first = None
+        nn = (-d[1], d[0])
+        for z, x0, x1, y0, y1 in faces:
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            t = (cx - a[0]) * d[0] + (cy - a[1]) * d[1]
+            v = (cx - a[0]) * nn[0] + (cy - a[1]) * nn[1]
+            across = abs(nn[0]) * (x1 - x0) + abs(nn[1]) * (y1 - y0)
+            depth = abs(d[0]) * (x1 - x0) + abs(d[1]) * (y1 - y0)
+            if abs(depth - tread) < 0.03 and abs(t - depth / 2.0 - ts[0]) < 0.01 and abs(v) < across / 2.0 + 0.05:
+                z_first = z if z_first is None else min(z_first, z)
+        start = (a[0] + d[0] * ts[0], a[1] + d[1] * ts[0])
+        end = (start[0] + d[0] * len(ts) * tread, start[1] + d[1] * len(ts) * tread)
+        exact.append({"start": start, "end": end, "dir": d, "risers": len(ts) + 1,
+                      "z_abs": (z_first or 0.0) - riser})
+    tread_like = set()
+    for (a, d, L), ts in runs:
+        for f in faces:
+            z, x0, x1, y0, y1 = f
+            depth = abs(d[0]) * (x1 - x0) + abs(d[1]) * (y1 - y0)
+            if abs(depth - tread) < 0.03:
+                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+                t = (cx - a[0]) * d[0] + (cy - a[1]) * d[1]
+                if -0.01 < t < L + 0.01:
+                    tread_like.add(f)
+    steps = [(poly, z) for poly, z in _landing_faces(stairs)
+             if not any(abs(z - f[0]) < 1e-3 for f in tread_like)]
+    sketched_runs.exact = (exact, steps, riser)
     in_runs = sum(len(ts) + 1 for _, ts in runs)
     extra = max(0, total - in_runs)  # risers drawn on the landings
     notes = []
@@ -614,6 +699,8 @@ def read_existing(state):
                     runs.append((z + k * 1e-3, s, r, a, b))
                 state.sketch_width = width
                 state.notes = notes
+                state.exact = getattr(sketched_runs, "exact", None)
+                state.steps = bool(state.exact and len(state.exact[1]) > 1)  # landings at two heights drawn
                 continue
             curves = list(r.GetStairsPath())
             if not curves:
@@ -660,6 +747,13 @@ if __name__ == "__main__":
     xaml = os.path.join(SCRIPT_DIR, "EscaleraForm.xaml")
     while True:
         window = EscaleraWindow(xaml, state)
+        if getattr(state, "exact", None) and len(state.exact[1]) > 1:
+            from System.Windows import Visibility as _Vis
+            window._filling = True
+            window.chk_steps.Visibility = _Vis.Visible
+            window.chk_steps.IsChecked = bool(state.steps)
+            window._filling = False
+            window.refresh()
         if state.edit_ids:
             window.Title = u"Escalera - EDITANDO la escalera seleccionada ({} piezas)".format(len(state.edit_ids))
             window.button_create.Content = u"ACTUALIZAR ESCALERA"

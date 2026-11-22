@@ -216,6 +216,88 @@ def waist_wedge(doc, base_level, run, stairs, landing, thickness, width, riser, 
     return ds
 
 
+def _shared_edge(pa, pb, tol=0.05):
+    """The stretch (p, q) (m) where a side of polygon pa lies on a side of
+    pb (two landing pieces touching), longest one; None when they don't."""
+    import math
+    best = None
+    for i in range(len(pa)):
+        a0, a1 = pa[i], pa[(i + 1) % len(pa)]
+        L = math.hypot(a1[0] - a0[0], a1[1] - a0[1])
+        if L < 1e-6:
+            continue
+        d = ((a1[0] - a0[0]) / L, (a1[1] - a0[1]) / L)
+        for j in range(len(pb)):
+            b0, b1 = pb[j], pb[(j + 1) % len(pb)]
+            off = [abs((p[0] - a0[0]) * d[1] - (p[1] - a0[1]) * d[0]) for p in (b0, b1)]
+            if max(off) > tol:
+                continue
+            ts = sorted([(p[0] - a0[0]) * d[0] + (p[1] - a0[1]) * d[1] for p in (b0, b1)])
+            lo, hi = max(0.0, ts[0]), min(L, ts[1])
+            if hi - lo > 0.05 and (best is None or hi - lo > best[2]):
+                best = ((a0[0] + d[0] * lo, a0[1] + d[1] * lo), (a0[0] + d[0] * hi, a0[1] + d[1] * hi), hi - lo)
+    return best
+
+
+def step_connectors(doc, base_level, landings, thickness):
+    """(2026-11-22) Landing pieces at two heights side by side (a landing
+    drawn with risers across it): under the step between them, the slab
+    that joins them - the lower one's soffit rising at 45 degrees to the
+    upper one's - so they are one piece of concrete, to be reinforced.
+    DirectShapes of Floors (inside an open Transaction)."""
+    import math
+    made = []
+    for i in range(len(landings)):
+        for j in range(len(landings)):
+            lo, hi = landings[i], landings[j]
+            dz = hi["z"] - lo["z"]
+            if dz <= 0.01 or dz > 0.5:
+                continue
+            edge = _shared_edge(lo["poly"], hi["poly"])
+            if edge is None:
+                continue
+            p, q, _ = edge
+            ex, ey = q[0] - p[0], q[1] - p[1]
+            L = math.hypot(ex, ey)
+            n = (-ey / L, ex / L)
+            cx = sum(v[0] for v in hi["poly"]) / len(hi["poly"])
+            cy = sum(v[1] for v in hi["poly"]) / len(hi["poly"])
+            if (cx - p[0]) * n[0] + (cy - p[1]) * n[1] < 0:
+                n = (-n[0], -n[1])  # towards the upper piece
+            z0 = base_level.Elevation + (lo["z"] - thickness) / FT
+            z1 = base_level.Elevation + (hi["z"] - thickness) / FT
+            run = (z1 - z0)  # 45 degrees: as far in as it rises
+
+            def P(u, z):
+                return DB.XYZ(p[0] / FT + n[0] * u, p[1] / FT + n[1] * u, z)
+            pts = [P(0.0, z0), P(run, z1), P(0.0, z1)]
+            loop = DB.CurveLoop()
+            for k in range(3):
+                loop.Append(DB.Line.CreateBound(pts[k], pts[(k + 1) % 3]))
+            solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                List[DB.CurveLoop]([loop]), DB.XYZ(ex / L, ey / L, 0.0), L / FT)
+            # kept under the upper piece's outline (a triangular landing piece:
+            # nothing sticking out past its sides)
+            try:
+                ring = DB.CurveLoop()
+                pp = [DB.XYZ(x / FT, y / FT, z0 - 0.1) for x, y in hi["poly"]]
+                for k in range(len(pp)):
+                    ring.Append(DB.Line.CreateBound(pp[k], pp[(k + 1) % len(pp)]))
+                prism = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                    List[DB.CurveLoop]([ring]), DB.XYZ.BasisZ, (z1 - z0) + 0.2)
+                cut = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
+                    solid, prism, DB.BooleanOperationsType.Intersect)
+                if cut is not None and cut.Volume > 1e-6:
+                    solid = cut
+            except Exception:
+                pass
+            ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
+            ds.SetShape(List[DB.GeometryObject]([solid]))
+            ds.Name = u"BOKI Escalera - losa entre descansos"
+            made.append(ds)
+    return made
+
+
 def create_stair(doc, base_level, top_level, info, plan, tread, width):
     """The whole stair: its runs, then its landings in one transaction.
     Returns ([Stairs], [Floor], messages)."""
@@ -245,9 +327,18 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
         floors = [create_landing(doc, base_level, l, ftype) for l in plan["landings"]]
         # each run's waist carried on to the soffit of the landing it reaches
         doc.Regenerate()
-        for k, l in enumerate(plan["landings"]):
+        if plan.get("steps"):  # landings at their own heights: joined by their connecting slabs
             try:
-                w = waist_wedge(doc, base_level, plan["runs"][k], runs[k], l, info.landing, width,
+                floors += step_connectors(doc, base_level, plan["landings"], info.landing)
+            except Exception as e:
+                messages.append(u"Losa entre descansos: {}".format(e))
+        for k, r in enumerate(plan["runs"][:-1]):
+            # the landing this run reaches: at its top
+            l = min(plan["landings"], key=lambda x: abs(x["z"] - r["z1"])) if plan["landings"] else None
+            if l is None or abs(l["z"] - r["z1"]) > 0.01:
+                continue
+            try:
+                w = waist_wedge(doc, base_level, r, runs[k], l, info.landing, width,
                                 plan["riser"], tread)
                 if w is not None:
                     floors.append(w)
