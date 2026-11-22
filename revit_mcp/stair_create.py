@@ -490,8 +490,7 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
                 reached = [l] if (l is not None and abs(l["z"] - r["z1"]) <= 0.01) else []
             for l in reached:
                 try:
-                    avoid = [g for f in floors if isinstance(f, DB.DirectShape)
-                             for g in f.get_Geometry(DB.Options()) if isinstance(g, DB.Solid) and g.Volume > 0]
+                    avoid = []  # under the piece it reaches only: nothing else there
                     w = waist_wedge(doc, base_level, r, runs[k], l, info.landing, width,
                                     plan["riser"], tread, avoid)
                     if w is not None:
