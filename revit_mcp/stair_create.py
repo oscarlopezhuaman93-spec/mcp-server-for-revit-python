@@ -267,6 +267,29 @@ def _shared_edge(pa, pb, tol=0.05):
     return best
 
 
+def _clip_half(poly, p, n, d, side):
+    """The polygon cut by the line at distance d from p along n: the part
+    where side * ((x - p) . n - d) >= 0 (Sutherland-Hodgman, one edge)."""
+    def f(q):
+        return side * ((q[0] - p[0]) * n[0] + (q[1] - p[1]) * n[1] - d)
+    out = []
+    for k in range(len(poly)):
+        a, b = poly[k], poly[(k + 1) % len(poly)]
+        fa, fb = f(a), f(b)
+        if fa >= -1e-9:
+            out.append(a)
+        if (fa >= -1e-9) != (fb >= -1e-9) and abs(fa - fb) > 1e-12:
+            t = fa / (fa - fb)
+            out.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+    clean = []
+    for q in out:
+        if not clean or abs(q[0] - clean[-1][0]) > 1e-6 or abs(q[1] - clean[-1][1]) > 1e-6:
+            clean.append(q)
+    if len(clean) > 1 and abs(clean[0][0] - clean[-1][0]) <= 1e-6 and abs(clean[0][1] - clean[-1][1]) <= 1e-6:
+        clean.pop()
+    return clean
+
+
 def step_blocks(doc, base_level, landings, thickness):
     """(2026-11-22, the user) Under each step between two landing pieces:
     the lower piece's soffit carried on flat `thickness` in under the upper
@@ -293,19 +316,19 @@ def step_blocks(doc, base_level, landings, thickness):
                 n = (-n[0], -n[1])  # into the upper piece
             z0 = base_level.Elevation + (lo["z"] - thickness) / FT
             z1 = base_level.Elevation + (hi["z"] - thickness) / FT
-            w = thickness / FT
-
-            def P(u, z):
-                return DB.XYZ(p[0] / FT + n[0] * u, p[1] / FT + n[1] * u, z)
-            pts = [P(0.0, z0), P(w, z0), P(w, z1), P(0.0, z1)]
-            loop = DB.CurveLoop()
-            for k in range(4):
-                loop.Append(DB.Line.CreateBound(pts[k], pts[(k + 1) % 4]))
-            solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-                List[DB.CurveLoop]([loop]), DB.XYZ(ex / L, ey / L, 0.0), L / FT)
-            solid = clip_to_outline(solid, hi["poly"], z0 - 0.1, z1 + 0.1)
-            if solid is None:
+            # the strip `thickness` wide inside the upper piece along the step
+            # (its outline cut by the two lines), raised straight up: it can't
+            # leave the landing's outline
+            strip = _clip_half(hi["poly"], p, n, 0.0, 1)
+            strip = _clip_half(strip, p, n, thickness, -1)
+            if len(strip) < 3:
                 continue
+            ring = DB.CurveLoop()
+            pp = [DB.XYZ(x / FT, y / FT, z0) for x, y in strip]
+            for k in range(len(pp)):
+                ring.Append(DB.Line.CreateBound(pp[k], pp[(k + 1) % len(pp)]))
+            solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                List[DB.CurveLoop]([ring]), DB.XYZ.BasisZ, z1 - z0)
             ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
             ds.SetShape(List[DB.GeometryObject]([solid]))
             ds.Name = u"BOKI Escalera - escalón del descanso (espesor completo)"
