@@ -182,7 +182,24 @@ def _end_bottom(doc, stairs, end_xy, d):
     return min(zs) if zs else None
 
 
-def waist_wedge(doc, base_level, run, stairs, landing, thickness, width, riser, tread):
+def clip_to_outline(solid, poly, z_lo, z_hi):
+    """(2026-11-22) The solid kept within a plan outline (m): the wedge under
+    a landing stays under that landing - a triangular landing piece, nothing
+    sticking out past its sides. The solid itself when the cut fails."""
+    try:
+        ring = DB.CurveLoop()
+        pp = [DB.XYZ(x / FT, y / FT, z_lo) for x, y in poly]
+        for k in range(len(pp)):
+            ring.Append(DB.Line.CreateBound(pp[k], pp[(k + 1) % len(pp)]))
+        prism = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+            List[DB.CurveLoop]([ring]), DB.XYZ.BasisZ, z_hi - z_lo)
+        cut = DB.BooleanOperationsUtils.ExecuteBooleanOperation(solid, prism, DB.BooleanOperationsType.Intersect)
+        return cut if cut is not None and cut.Volume > 1e-6 else None  # nothing under it
+    except Exception:
+        return solid
+
+
+def waist_wedge(doc, base_level, run, stairs, landing, thickness, width, riser, tread, avoid=None):
     """(2026-11-21) A run reaching a landing ends square at its edge, its
     waist a few cm under the landing's soffit (Revit can't carry a run's
     waist on past its top): the wedge of concrete between them - the waist
@@ -210,7 +227,18 @@ def waist_wedge(doc, base_level, run, stairs, landing, thickness, width, riser, 
         loop.Append(DB.Line.CreateBound(tri[k], tri[(k + 1) % 3]))
     solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
         List[DB.CurveLoop]([loop]), DB.XYZ(n[0], n[1], 0.0), 2 * h)
-    ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
+    solid = clip_to_outline(solid, landing["poly"], zb - 0.1, soffit + 0.1)
+    if solid is None:
+        return None
+    for other in (avoid or []):  # no concrete counted twice (a connecting slab there)
+        try:
+            rest = DB.BooleanOperationsUtils.ExecuteBooleanOperation(solid, other, DB.BooleanOperationsType.Difference)
+            if rest is None or rest.Volume < 1e-6:
+                return None
+            solid = rest
+        except Exception:
+            pass
+    ds =DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
     ds.SetShape(List[DB.GeometryObject]([solid]))
     ds.Name = u"BOKI Escalera - garganta al descanso"
     return ds
@@ -334,15 +362,22 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
                 messages.append(u"Losa entre descansos: {}".format(e))
         for k, r in enumerate(plan["runs"][:-1]):
             # the landing this run reaches: at its top
-            l = min(plan["landings"], key=lambda x: abs(x["z"] - r["z1"])) if plan["landings"] else None
-            if l is None or abs(l["z"] - r["z1"]) > 0.01:
-                continue
-            try:
-                w = waist_wedge(doc, base_level, r, runs[k], l, info.landing, width,
-                                plan["riser"], tread)
-                if w is not None:
-                    floors.append(w)
-            except Exception as e:
-                messages.append(u"Cuña de garganta {}: {}".format(k + 1, e))
+            if plan.get("steps"):
+                # (2026-11-22) landing pieces at several heights: the waist
+                # carried on up to each piece's own soffit, under that piece only
+                reached = [x for x in plan["landings"] if x["z"] >= r["z1"] - 0.01]
+            else:
+                l = min(plan["landings"], key=lambda x: abs(x["z"] - r["z1"])) if plan["landings"] else None
+                reached = [l] if (l is not None and abs(l["z"] - r["z1"]) <= 0.01) else []
+            for l in reached:
+                try:
+                    avoid = [g for f in floors if isinstance(f, DB.DirectShape)
+                             for g in f.get_Geometry(DB.Options()) if isinstance(g, DB.Solid) and g.Volume > 0]
+                    w = waist_wedge(doc, base_level, r, runs[k], l, info.landing, width,
+                                    plan["riser"], tread, avoid)
+                    if w is not None:
+                        floors.append(w)
+                except Exception as e:
+                    messages.append(u"Cuña de garganta {}: {}".format(k + 1, e))
         t.Commit()
     return runs, floors, messages
