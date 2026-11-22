@@ -335,6 +335,36 @@ class EscaleraWindow(forms.WPFWindow):
             add_prism(prof, (o, d, nrm), s.width, c_run)
         for l in plan["landings"]:
             add_slab(l["poly"], l["z"], thick, c_land)
+        # (2026-11-22) a stepped landing's soffit as it will be built: under
+        # each step the full-thickness block (Escalonado) or the sloped piece
+        # (Inclinado) - the 3D changes with the option
+        if plan.get("steps"):
+            c_join = Color.FromRgb(225, 150, 80)
+            lands = plan["landings"]
+            for lo in lands:
+                for hi in lands:
+                    dz = hi["z"] - lo["z"]
+                    if dz <= 0.01 or dz > 0.5:
+                        continue
+                    edge = scr._shared_edge(lo["poly"], hi["poly"])
+                    if edge is None:
+                        continue
+                    p, q, L = edge
+                    ex, ey = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+                    nn = (-ey, ex)
+                    cx = sum(v[0] for v in hi["poly"]) / len(hi["poly"])
+                    cy = sum(v[1] for v in hi["poly"]) / len(hi["poly"])
+                    if (cx - p[0]) * nn[0] + (cy - p[1]) * nn[1] < 0:
+                        nn = (-nn[0], -nn[1])
+                    z0, z1 = lo["z"] - thick, hi["z"] - thick
+                    if plan.get("soffit") == "sloped":
+                        run = (z1 - z0) / max(plan["riser"] / tread, 0.05)
+                        add_prism([(0.0, z0), (run, z1), (0.0, z1)], (p, nn, (ex, ey)), L, c_join)
+                    else:
+                        strip = scr._clip_half(hi["poly"], p, nn, 0.0, 1)
+                        strip = scr._clip_half(strip, p, nn, thick, -1)
+                        if len(strip) >= 3:
+                            add_slab(strip, z1, z1 - z0, c_join)
         if not pts_all:
             return
         model = ModelVisual3D()
