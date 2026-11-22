@@ -807,14 +807,34 @@ def step_plan(state, base_z, height):
     """(2026-11-22) The plan of a sketched stair kept as drawn: its runs
     with their own risers and heights, every landing piece at its own
     height (stair_create joins consecutive ones with a connecting slab)."""
-    exact, steps, riser = state.exact
+    exact, steps, drawn_riser = state.exact
+    steps = sorted(steps, key=lambda s: s[1])
+    # (2026-11-22) the riser and tread typed in the window, as everywhere:
+    # the whole height shared in equal risers no higher than the one typed;
+    # the drawing keeps its runs and its landing pieces (one riser between
+    # each), the riser count of the runs fitted to that total
+    total = sp.riser_count(height, (state.riser or 17.5) / 100.0)
+    riser = height / total if total else drawn_riser
+    tread = (state.tread or 25.0) / 100.0
+    on_landing = max(0, len(steps) - 1)
+    counts = [r["risers"] for r in exact]
+    extra = total - on_landing - sum(counts)
+    if counts:
+        counts[-1] = max(1, counts[-1] + extra)  # the last run takes what is left / over
     runs = []
+    z = 0.0
     for k, r in enumerate(exact):
-        z0 = r["z_abs"] - base_z
-        runs.append(dict(r, z0=z0, z1=z0 + r["risers"] * riser, top_tread=False))
-    landings = [{"poly": poly, "z": z - base_z} for poly, z in sorted(steps, key=lambda s: s[1])]
+        n = counts[k]
+        d = r["dir"]
+        start = r["start"]
+        end = (start[0] + d[0] * (n - 1) * tread, start[1] + d[1] * (n - 1) * tread)
+        runs.append(dict(r, risers=n, z0=z, z1=z + n * riser, end=end, top_tread=False))
+        z += n * riser
+        if k == 0:
+            z += on_landing * riser  # the landing's own steps
+    z_land = runs[0]["z1"] if runs else 0.0
+    landings = [{"poly": poly, "z": z_land + j * riser} for j, (poly, _) in enumerate(steps)]
     landings = scr.snap_pieces(landings)  # the slits Revit's sketch leaves between them closed
-    total = int(round(height / riser)) if riser else 0
     return {"total": total, "riser": riser, "runs": runs, "landings": landings, "remaining": 0,
             "warnings": [], "steps": True, "soffit": getattr(state, "soffit", "stepped")}
 
