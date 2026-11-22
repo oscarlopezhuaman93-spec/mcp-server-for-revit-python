@@ -515,6 +515,83 @@ def stair_pieces(selected):
     return stairs, floors
 
 
+def _top_faces(element):
+    """[(z, xmin, xmax, ymin, ymax)] (m) of the upward flat faces of an
+    element's solids: its treads and landings."""
+    out = []
+
+    def walk(g):
+        for x in g:
+            if isinstance(x, DB.Solid) and x.Volume > 0:
+                for f in x.Faces:
+                    if isinstance(f, DB.PlanarFace) and f.FaceNormal.Z > 0.99:
+                        pts = [ed.AsCurve().GetEndPoint(0) for lp in f.EdgeLoops for ed in lp]
+                        xs = [p.X * FT for p in pts]
+                        ys = [p.Y * FT for p in pts]
+                        out.append((pts[0].Z * FT, min(xs), max(xs), min(ys), max(ys)))
+            elif isinstance(x, DB.GeometryInstance):
+                walk(x.GetInstanceGeometry())
+    walk(element.get_Geometry(DB.Options()))
+    return out
+
+
+def sketched_runs(stairs, run, tread):
+    """(2026-11-22) A run drawn with Revit's own sketch (Contorno /
+    Contrahuella / Camino) is one run over the whole stair, its landings in
+    it - often stepped (risers drawn across the landing: two landings at two
+    heights, no slab to reinforce). Read back as straight runs: the path's
+    legs that hold treads, each from its first riser; the risers left on
+    the landings shared out to the runs on each side of it (one flat
+    landing between them, as built). Returns ([(start, end)], width, notes)."""
+    path = list(run.GetStairsPath())
+    legs = []
+    for c in path:
+        a, b = c.GetEndPoint(0), c.GetEndPoint(1)
+        a, b = (a.X * FT, a.Y * FT), (b.X * FT, b.Y * FT)
+        L = math.hypot(b[0] - a[0], b[1] - a[1])
+        if L > 1e-6:
+            legs.append((a, ((b[0] - a[0]) / L, (b[1] - a[1]) / L), L))
+    faces = _top_faces(stairs)
+    found = []  # per leg: [t of each tread's start along the leg]
+    widths = []
+    for a, d, L in legs:
+        n = (-d[1], d[0])
+        ts = []
+        for z, x0, x1, y0, y1 in faces:
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            depth = abs(d[0]) * (x1 - x0) + abs(d[1]) * (y1 - y0)
+            across = abs(n[0]) * (x1 - x0) + abs(n[1]) * (y1 - y0)
+            t = (cx - a[0]) * d[0] + (cy - a[1]) * d[1]
+            v = (cx - a[0]) * n[0] + (cy - a[1]) * n[1]
+            if abs(depth - tread) < 0.03 and -0.01 < t < L + 0.01 and abs(v) < across / 2.0 + 0.05:
+                ts.append(t - depth / 2.0)
+                widths.append(across)
+        found.append(sorted(ts))
+    runs = [(leg, ts) for leg, ts in zip(legs, found) if len(ts) >= 1]
+    total = stairs.ActualRisersNumber
+    in_runs = sum(len(ts) + 1 for _, ts in runs)
+    extra = max(0, total - in_runs)  # risers drawn on the landings
+    notes = []
+    if extra and len(runs) > 1:
+        notes.append(u"{} contrahuellas dibujadas sobre el descanso pasan a los tramos: "
+                     u"un solo descanso plano.".format(extra))
+    out = []
+    gaps = len(runs) - 1
+    for k, ((a, d, L), ts) in enumerate(runs):
+        # the extra risers of the landing before / after this run
+        before = (extra // gaps) // 2 if (k > 0 and gaps) else 0
+        after = (extra // gaps) - (extra // gaps) // 2 if (k < gaps and gaps) else 0
+        if gaps and k == gaps - 1 and extra % gaps:
+            after += extra % gaps
+        t0 = ts[0] - before * tread
+        count = len(ts) + 1 + before + after
+        start = (a[0] + d[0] * t0, a[1] + d[1] * t0)
+        end = (start[0] + d[0] * count * tread, start[1] + d[1] * count * tread)
+        out.append((start, end))
+    width = round(min(widths), 2) if widths else None
+    return out, width, notes
+
+
 def read_existing(state):
     """A stair picked before opening: its runs back as the sketch, its
     type, levels, riser, tread and width in the window; its pieces noted
@@ -530,6 +607,14 @@ def read_existing(state):
         off = s.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_OFFSET).AsDouble()
         for rid in s.GetStairsRuns():
             r = doc.GetElement(rid)
+            if str(r.StairsRunStyle) == "Sketched":
+                legs, width, notes = sketched_runs(s, r, s.ActualTreadDepth * FT)
+                z = base.Elevation + off + getattr(r, "BaseElevation", 0.0)
+                for k, (a, b) in enumerate(legs):
+                    runs.append((z + k * 1e-3, s, r, a, b))
+                state.sketch_width = width
+                state.notes = notes
+                continue
             curves = list(r.GetStairsPath())
             if not curves:
                 continue
@@ -552,7 +637,7 @@ def read_existing(state):
     state.top_id = top.Id.IntegerValue
     state.riser = math.ceil(first.ActualRiserHeight * FT * 1000 - 1e-6) / 10.0  # the max: its own riser
     state.tread = round(first.ActualTreadDepth * FT * 100, 1)
-    state.width = round(runs[0][2].ActualRunWidth * FT, 2)
+    state.width = round(runs[0][2].ActualRunWidth * FT, 2) or getattr(state, "sketch_width", None) or 1.20
     state.sketch = [(a, b) for _, _, _, a, b in runs]
     rt = doc.GetElement(runs[0][2].GetTypeId())
     if rt is not None and getattr(rt, "IsMonolithic", False):

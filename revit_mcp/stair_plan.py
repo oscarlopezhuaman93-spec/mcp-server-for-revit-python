@@ -116,8 +116,18 @@ def landing_between(r0, r1, width):
     along = reach if straight_on else max(width, reach)
     lat = [v for _, v in loc] + [-half, half]
     lo, hi = min(lat), max(lat)
-    return [(top[0] + d[0] * u + n[0] * v, top[1] + d[1] * u + n[1] * v)
-            for u, v in ((0.0, lo), (along, lo), (along, hi), (0.0, hi))]
+    rect = [(0.0, lo), (along, lo), (along, hi), (0.0, hi)]
+    # (2026-11-22) the next run's foot short of r0's top (a U stair whose
+    # runs have different lengths): the landing reaches back to it on that
+    # run's side - one slab, L-shaped, no gap at its foot
+    u1 = min(u for u, _ in loc)
+    if u1 < -1e-3 and not straight_on:
+        b_lo, b_hi = min(v for _, v in loc), max(v for _, v in loc)
+        if abs(b_hi - hi) < 0.02:
+            rect = [(0.0, lo), (along, lo), (along, hi), (u1, hi), (u1, b_lo), (0.0, b_lo)]
+        elif abs(b_lo - lo) < 0.02:
+            rect = [(0.0, b_hi), (u1, b_hi), (u1, lo), (along, lo), (along, hi), (0.0, hi)]
+    return [(top[0] + d[0] * u + n[0] * v, top[1] + d[1] * u + n[1] * v) for u, v in rect]
 
 def comfort(riser, tread):
     """2 risers + 1 tread (m): 0.60 to 0.64 is the usual rule."""
