@@ -510,6 +510,60 @@ def step_fills(doc, base_level, landings, thickness):
     return made
 
 
+VOLUME_PARAM = u"EA_Volumen_Concreto_m3"
+
+
+def _solids_of(element):
+    out = []
+
+    def walk(g):
+        for x in g:
+            if isinstance(x, DB.Solid) and x.Volume > 1e-9:
+                out.append(x)
+            elif isinstance(x, DB.GeometryInstance):
+                walk(x.GetInstanceGeometry())
+    walk(element.get_Geometry(DB.Options()))
+    return out
+
+
+def ensure_volume_param(doc):
+    """The concrete volume (m3) of a stair's elements, for the take-off
+    (inside an open Transaction)."""
+    import formwork_params as fwp
+    return fwp.ensure_parameters(doc, u"Escalera", [(VOLUME_PARAM, False, [DB.BuiltInCategory.OST_Stairs], True)])
+
+
+def write_volume(element, solids=None):
+    p = element.LookupParameter(VOLUME_PARAM)
+    if p is None or p.IsReadOnly:
+        return
+    vol = sum(s.Volume for s in (solids if solids is not None else _solids_of(element))) * FT ** 3
+    p.Set(round(vol, 4))
+
+
+def merge_landing_pieces(doc, pieces, name=u"BOKI Escalera - descansos"):
+    """(2026-11-22, the user) The landings and the pieces under them (the
+    waist wedges, the step blocks) joined into ONE element of the Stairs
+    category - the stair is its runs and this one piece, all Stairs, to be
+    taken off together. Inside an open Transaction; the pieces deleted.
+    Returns the DirectShape (None when there is nothing to join)."""
+    solids = [s for e in pieces for s in _solids_of(e)]
+    if not solids:
+        return None
+    u = solids[0]
+    for s in solids[1:]:
+        try:
+            u = DB.BooleanOperationsUtils.ExecuteBooleanOperation(u, s, DB.BooleanOperationsType.Union)
+        except Exception:
+            pass
+    ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Stairs))
+    ds.SetShape(List[DB.GeometryObject]([u]))
+    ds.Name = name
+    for e in pieces:
+        doc.Delete(e.Id)
+    return ds
+
+
 def create_stair(doc, base_level, top_level, info, plan, tread, width):
     """The whole stair: its runs, then its landings in one transaction.
     Returns ([Stairs], [Floor], messages)."""
@@ -571,5 +625,17 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
                         floors.append(w)
                 except Exception as e:
                     messages.append(u"Cuña de garganta {}: {}".format(k + 1, e))
+        # (2026-11-22) one element, Stairs category, for the landings and all
+        # under them; every element of the stair with its concrete volume
+        try:
+            ensure_volume_param(doc)
+            doc.Regenerate()
+            merged = merge_landing_pieces(doc, floors)
+            floors = [merged] if merged is not None else floors
+            doc.Regenerate()
+            for e in runs + floors:
+                write_volume(e)
+        except Exception as e:
+            messages.append(u"Unir descansos: {}".format(e))
         t.Commit()
     return runs, floors, messages
