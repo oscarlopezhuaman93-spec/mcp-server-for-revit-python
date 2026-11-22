@@ -306,6 +306,11 @@ class EscaleraWindow(forms.WPFWindow):
         self.action = "draw"
         self.Close()
 
+    def revit_sketch_click(self, sender, args):
+        self._read()
+        self.action = "revit"
+        self.Close()
+
     def clear_click(self, sender, args):
         self.state.sketch = []
         self.refresh()
@@ -529,13 +534,18 @@ def read_existing(state):
             if not curves:
                 continue
             a, b = curves[0].GetEndPoint(0), curves[-1].GetEndPoint(1)
-            runs.append((base.Elevation + off, s, r, (a.X * FT, a.Y * FT), (b.X * FT, b.Y * FT)))
+            # (2026-11-21) one Revit stair of several runs (drawn with Revit's
+            # own sketch: boundary, risers, path): each run by its own height
+            z = base.Elevation + off + getattr(r, "BaseElevation", 0.0)
+            runs.append((z, s, r, (a.X * FT, a.Y * FT), (b.X * FT, b.Y * FT)))
     if not runs:
         return False
     runs.sort(key=lambda x: x[0])
     first = runs[0][1]
     base = doc.GetElement(first.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_LEVEL_PARAM).AsElementId())
-    top_z = max(z + s.get_Parameter(DB.BuiltInParameter.STAIRS_STAIRS_HEIGHT).AsDouble() for z, s, _, _, _ in runs)
+    top_z = max(doc.GetElement(s.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_LEVEL_PARAM).AsElementId()).Elevation
+                + s.get_Parameter(DB.BuiltInParameter.STAIRS_BASE_OFFSET).AsDouble()
+                + s.get_Parameter(DB.BuiltInParameter.STAIRS_STAIRS_HEIGHT).AsDouble() for s in stairs)
     top = min(levels(), key=lambda l: abs(l.Elevation - top_z))
     state.type_name = _name(doc.GetElement(first.GetTypeId()))
     state.base_id = base.Id.IntegerValue
@@ -573,6 +583,24 @@ if __name__ == "__main__":
             draw_in_plan(state)
             continue
         break
+    if window.action == "revit":
+        # (2026-11-21) Revit's own stair tool, its sketch (Contorno,
+        # Contrahuella, Camino de escalera); the stair drawn is then picked
+        # and opened here to be made a concrete one
+        try:
+            base = doc.GetElement(DB.ElementId(state.base_id))
+            uidoc.ActiveView = plan_view_of(base)
+        except Exception:
+            pass
+        forms.alert(u"Se abre la herramienta Escalera de Revit.\n\n"
+                    u"1. En la cinta, pulsa 'Crear boceto' (lápiz) y dibuja con Contorno, "
+                    u"Contrahuella y Camino de escalera.\n"
+                    u"2. Pulsa Finalizar (✔) dos veces.\n"
+                    u"3. Selecciona la escalera dibujada y abre BOKI Escalera: "
+                    u"pulsa ACTUALIZAR ESCALERA y se hace de concreto (garganta, descansos).",
+                    title="Escalera")
+        from Autodesk.Revit.UI import RevitCommandId, PostableCommand
+        revit.uidoc.Application.PostCommand(RevitCommandId.LookupPostableCommandId(PostableCommand.Stair))
     if window.action == "create":
         plan, _ = window.plan()
         info = window.info_used()  # the type with the waist / landing typed
