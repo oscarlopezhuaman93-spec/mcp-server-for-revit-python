@@ -161,6 +161,61 @@ def create_landing(doc, base_level, landing, ftype):
     return floor
 
 
+def _end_bottom(doc, stairs, end_xy, d):
+    """The lowest z (ft) of the run's solid at its end face (plan point
+    `end_xy` m, direction d): where its waist ends."""
+    opt = DB.Options()
+    zs = []
+
+    def walk(g):
+        for x in g:
+            if isinstance(x, DB.Solid) and x.Volume > 0:
+                for e in x.Edges:
+                    for k in (0, 1):
+                        q = e.AsCurve().GetEndPoint(k)
+                        s = (q.X * FT - end_xy[0]) * d[0] + (q.Y * FT - end_xy[1]) * d[1]
+                        if abs(s) < 0.005:
+                            zs.append(q.Z)
+            elif isinstance(x, DB.GeometryInstance):
+                walk(x.GetInstanceGeometry())
+    walk(stairs.get_Geometry(opt))
+    return min(zs) if zs else None
+
+
+def waist_wedge(doc, base_level, run, stairs, landing, thickness, width, riser, tread):
+    """(2026-11-21) A run reaching a landing ends square at its edge, its
+    waist a few cm under the landing's soffit (Revit can't carry a run's
+    waist on past its top): the wedge of concrete between them - the waist
+    carried on to the soffit, as built - as a DirectShape of Floors,
+    `width` across. None when the waist meets the soffit already."""
+    d = run["dir"]
+    n = (-d[1], d[0])
+    end = run["end"]
+    zb = _end_bottom(doc, stairs, end, d)
+    if zb is None:
+        return None
+    soffit = base_level.Elevation + (landing["z"] - thickness) / FT
+    drop = soffit - zb  # ft
+    if drop < 0.002 / FT:
+        return None
+    reach = drop * (tread / riser)  # along the waist's slope up to the soffit
+    h = width / 2.0 / FT
+    ex, ey = end[0] / FT, end[1] / FT
+
+    def P(t, v, z):
+        return DB.XYZ(ex + d[0] * t + n[0] * v, ey + d[1] * t + n[1] * v, z)
+    loop = DB.CurveLoop()
+    tri = [P(0, -h, zb), P(reach, -h, soffit), P(0, -h, soffit)]
+    for k in range(3):
+        loop.Append(DB.Line.CreateBound(tri[k], tri[(k + 1) % 3]))
+    solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+        List[DB.CurveLoop]([loop]), DB.XYZ(n[0], n[1], 0.0), 2 * h)
+    ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
+    ds.SetShape(List[DB.GeometryObject]([solid]))
+    ds.Name = u"BOKI Escalera - garganta al descanso"
+    return ds
+
+
 def create_stair(doc, base_level, top_level, info, plan, tread, width):
     """The whole stair: its runs, then its landings in one transaction.
     Returns ([Stairs], [Floor], messages)."""
@@ -188,5 +243,15 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
         t.Start()
         ftype = landing_floor_type(doc, info.landing)
         floors = [create_landing(doc, base_level, l, ftype) for l in plan["landings"]]
+        # each run's waist carried on to the soffit of the landing it reaches
+        doc.Regenerate()
+        for k, l in enumerate(plan["landings"]):
+            try:
+                w = waist_wedge(doc, base_level, plan["runs"][k], runs[k], l, info.landing, width,
+                                plan["riser"], tread)
+                if w is not None:
+                    floors.append(w)
+            except Exception as e:
+                messages.append(u"Cuña de garganta {}: {}".format(k + 1, e))
         t.Commit()
     return runs, floors, messages

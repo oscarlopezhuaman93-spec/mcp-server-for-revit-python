@@ -506,7 +506,7 @@ def stair_pieces(selected):
                 if _comment(e) in tags and all(e.Id != x.Id for x in pieces):
                     pieces.append(e)
     stairs = [e for e in pieces if isinstance(e, Stairs)]
-    floors = [e for e in pieces if isinstance(e, DB.Floor)]
+    floors = [e for e in pieces if isinstance(e, (DB.Floor, DB.DirectShape))]  # landings and waist wedges
     return stairs, floors
 
 
@@ -547,8 +547,9 @@ def read_existing(state):
     rt = doc.GetElement(runs[0][2].GetTypeId())
     if rt is not None and getattr(rt, "IsMonolithic", False):
         state.waist = round(rt.StructuralDepth * FT * 100, 1)
-    if floors:
-        p = floors[0].get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_THICKNESS_PARAM)
+    slabs = [f for f in floors if isinstance(f, DB.Floor)]
+    if slabs:
+        p = slabs[0].get_Parameter(DB.BuiltInParameter.FLOOR_ATTR_THICKNESS_PARAM)
         if p is not None:
             state.landing = round(p.AsDouble() * FT * 100, 1)
     state.edit_ids = [e.Id.IntegerValue for e in stairs + floors]
