@@ -359,7 +359,20 @@ class EscaleraWindow(forms.WPFWindow):
                     z0, z1 = lo["z"] - thick, hi["z"] - thick
                     if plan.get("soffit") == "sloped":
                         run = (z1 - z0) / max(plan["riser"] / tread, 0.05)
-                        add_prism([(0.0, z0), (run, z1), (0.0, z1)], (p, nn, (ex, ey)), L, c_join)
+                        faces = scr.sloped_piece_faces(hi["poly"], p, nn, run, z0, z1)  # inside its outline
+                        if faces:
+                            mesh = MeshGeometry3D()
+                            for f in faces:
+                                i0 = mesh.Positions.Count
+                                for q in f:
+                                    mesh.Positions.Add(Point3D(*q))
+                                    pts_all.append(q)
+                                for k in range(1, len(f) - 1):
+                                    for v in (i0, i0 + k, i0 + k + 1):
+                                        mesh.TriangleIndices.Add(v)
+                            m = GeometryModel3D(mesh, DiffuseMaterial(SolidColorBrush(c_join)))
+                            m.BackMaterial = DiffuseMaterial(SolidColorBrush(c_join))
+                            group.Children.Add(m)
                     else:
                         strip = scr._clip_half(hi["poly"], p, nn, 0.0, 1)
                         strip = scr._clip_half(strip, p, nn, thick, -1)

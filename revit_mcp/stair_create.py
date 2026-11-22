@@ -290,6 +290,55 @@ def _clip_half(poly, p, n, d, side):
     return clean
 
 
+def sloped_piece_faces(poly, p, n, run, z0, z1):
+    """(2026-11-22) The sloped piece under a landing step as closed faces
+    [[(x, y, z)]] (m): the upper piece's outline cut to the strip `run`
+    deep from the step (it can't leave the outline), its top flat at z1,
+    its bottom rising from z0 at the step to z1 `run` in. None if empty."""
+    strip = _clip_half(poly, p, n, 0.0, 1)
+    strip = _clip_half(strip, p, n, run, -1)
+    if len(strip) < 3:
+        return None
+    area = sum(strip[i][0] * strip[(i + 1) % len(strip)][1] - strip[(i + 1) % len(strip)][0] * strip[i][1]
+               for i in range(len(strip)))
+    if area < 0:
+        strip = list(reversed(strip))  # counterclockwise: the faces turned outward
+
+    def zb(q):
+        u = (q[0] - p[0]) * n[0] + (q[1] - p[1]) * n[1]
+        return z0 + (z1 - z0) * max(0.0, min(1.0, u / run))
+    top = [(x, y, z1) for x, y in strip]
+    bottom = [(x, y, zb((x, y))) for x, y in reversed(strip)]
+    faces = [top, bottom]
+    for k in range(len(strip)):
+        a, b = strip[k], strip[(k + 1) % len(strip)]
+        side = [(a[0], a[1], zb(a)), (b[0], b[1], zb(b)), (b[0], b[1], z1), (a[0], a[1], z1)]
+        if abs(zb(a) - z1) > 1e-6 or abs(zb(b) - z1) > 1e-6:  # not a sliver of no height
+            faces.append(side)
+    return faces
+
+
+def _solid_from_faces(faces):
+    """A closed solid (Revit geometry) from planar faces given in metres."""
+    b = DB.TessellatedShapeBuilder()
+    b.OpenConnectedFaceSet(True)
+    for f in faces:
+        pts = []
+        for x, y, z in f:
+            q = DB.XYZ(x / FT, y / FT, z / FT)
+            if not pts or q.DistanceTo(pts[-1]) > 1e-6:
+                pts.append(q)
+        if len(pts) >= 3 and pts[0].DistanceTo(pts[-1]) < 1e-6:
+            pts.pop()
+        if len(pts) >= 3:
+            b.AddFace(DB.TessellatedFace(List[DB.XYZ](pts), DB.ElementId.InvalidElementId))
+    b.CloseConnectedFaceSet()
+    b.Target = DB.TessellatedShapeBuilderTarget.Solid
+    b.Fallback = DB.TessellatedShapeBuilderFallback.Abort
+    b.Build()
+    return list(b.GetBuildResult().GetGeometricalObjects())
+
+
 def step_blocks(doc, base_level, landings, thickness):
     """(2026-11-22, the user) Under each step between two landing pieces:
     the lower piece's soffit carried on flat `thickness` in under the upper
@@ -361,35 +410,19 @@ def step_connectors(doc, base_level, landings, thickness, slope=1.0):
             cy = sum(v[1] for v in hi["poly"]) / len(hi["poly"])
             if (cx - p[0]) * n[0] + (cy - p[1]) * n[1] < 0:
                 n = (-n[0], -n[1])  # towards the upper piece
-            z0 = base_level.Elevation + (lo["z"] - thickness) / FT
-            z1 = base_level.Elevation + (hi["z"] - thickness) / FT
+            z0 = base_level.Elevation * FT + lo["z"] - thickness  # m
+            z1 = base_level.Elevation * FT + hi["z"] - thickness
             run = (z1 - z0) / max(slope, 0.05)  # as steep as the runs (1.0: 45 degrees)
-
-            def P(u, z):
-                return DB.XYZ(p[0] / FT + n[0] * u, p[1] / FT + n[1] * u, z)
-            pts = [P(0.0, z0), P(run, z1), P(0.0, z1)]
-            loop = DB.CurveLoop()
-            for k in range(3):
-                loop.Append(DB.Line.CreateBound(pts[k], pts[(k + 1) % 3]))
-            solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-                List[DB.CurveLoop]([loop]), DB.XYZ(ex / L, ey / L, 0.0), L / FT)
-            # kept under the upper piece's outline (a triangular landing piece:
-            # nothing sticking out past its sides)
-            try:
-                ring = DB.CurveLoop()
-                pp = [DB.XYZ(x / FT, y / FT, z0 - 0.1) for x, y in hi["poly"]]
-                for k in range(len(pp)):
-                    ring.Append(DB.Line.CreateBound(pp[k], pp[(k + 1) % len(pp)]))
-                prism = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-                    List[DB.CurveLoop]([ring]), DB.XYZ.BasisZ, (z1 - z0) + 0.2)
-                cut = DB.BooleanOperationsUtils.ExecuteBooleanOperation(
-                    solid, prism, DB.BooleanOperationsType.Intersect)
-                if cut is not None and cut.Volume > 1e-6:
-                    solid = cut
-            except Exception:
-                pass
+            # (2026-11-22) built from the upper piece's outline cut to the
+            # strip: it can't stick out past the landing's sides
+            faces = sloped_piece_faces(hi["poly"], p, n, run, z0, z1)
+            if faces is None:
+                continue
+            geo = _solid_from_faces(faces)
+            if not geo:
+                continue
             ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
-            ds.SetShape(List[DB.GeometryObject]([solid]))
+            ds.SetShape(List[DB.GeometryObject](geo))
             ds.Name = u"BOKI Escalera - losa entre descansos"
             made.append(ds)
     return made
