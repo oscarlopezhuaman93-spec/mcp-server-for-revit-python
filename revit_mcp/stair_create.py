@@ -267,6 +267,52 @@ def _shared_edge(pa, pb, tol=0.05):
     return best
 
 
+def step_blocks(doc, base_level, landings, thickness):
+    """(2026-11-22, the user) Under each step between two landing pieces:
+    the lower piece's soffit carried on flat `thickness` in under the upper
+    piece, then straight up to its soffit - the step keeps the slab's full
+    thickness. A block `thickness` wide along the step, from one soffit to
+    the other, within the upper piece's outline (DirectShapes of Floors)."""
+    import math
+    made = []
+    for lo in landings:
+        for hi in landings:
+            dz = hi["z"] - lo["z"]
+            if dz <= 0.01 or dz > 0.5:
+                continue
+            edge = _shared_edge(lo["poly"], hi["poly"])
+            if edge is None:
+                continue
+            p, q, _ = edge
+            ex, ey = q[0] - p[0], q[1] - p[1]
+            L = math.hypot(ex, ey)
+            n = (-ey / L, ex / L)
+            cx = sum(v[0] for v in hi["poly"]) / len(hi["poly"])
+            cy = sum(v[1] for v in hi["poly"]) / len(hi["poly"])
+            if (cx - p[0]) * n[0] + (cy - p[1]) * n[1] < 0:
+                n = (-n[0], -n[1])  # into the upper piece
+            z0 = base_level.Elevation + (lo["z"] - thickness) / FT
+            z1 = base_level.Elevation + (hi["z"] - thickness) / FT
+            w = thickness / FT
+
+            def P(u, z):
+                return DB.XYZ(p[0] / FT + n[0] * u, p[1] / FT + n[1] * u, z)
+            pts = [P(0.0, z0), P(w, z0), P(w, z1), P(0.0, z1)]
+            loop = DB.CurveLoop()
+            for k in range(4):
+                loop.Append(DB.Line.CreateBound(pts[k], pts[(k + 1) % 4]))
+            solid = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                List[DB.CurveLoop]([loop]), DB.XYZ(ex / L, ey / L, 0.0), L / FT)
+            solid = clip_to_outline(solid, hi["poly"], z0 - 0.1, z1 + 0.1)
+            if solid is None:
+                continue
+            ds = DB.DirectShape.CreateElement(doc, DB.ElementId(DB.BuiltInCategory.OST_Floors))
+            ds.SetShape(List[DB.GeometryObject]([solid]))
+            ds.Name = u"BOKI Escalera - escalón del descanso (espesor completo)"
+            made.append(ds)
+    return made
+
+
 def step_connectors(doc, base_level, landings, thickness, slope=1.0):
     """(2026-11-22) Landing pieces at two heights side by side (a landing
     drawn with risers across it): under the step between them, the slab
@@ -473,6 +519,11 @@ def create_stair(doc, base_level, top_level, info, plan, tread, width):
         # soffit between them, as steep as the runs
         floors = [create_landing(doc, base_level, l, ftype) for l in plan["landings"]]
         doc.Regenerate()
+        if plan.get("steps") and plan.get("soffit", "stepped") == "stepped":
+            try:
+                floors += step_blocks(doc, base_level, plan["landings"], info.landing)
+            except Exception as e:
+                messages.append(u"Escalón del descanso: {}".format(e))
         if plan.get("steps") and plan.get("soffit") == "sloped":
             try:
                 floors += step_connectors(doc, base_level, plan["landings"], info.landing,
