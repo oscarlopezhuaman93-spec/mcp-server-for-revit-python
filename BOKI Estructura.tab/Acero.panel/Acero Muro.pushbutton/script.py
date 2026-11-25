@@ -22,10 +22,10 @@ if REVIT_MCP_DIR not in sys.path:
 import formwork_spatial as fw_spatial
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
-import rebar_columns as rc
+import muro_spec as rs  # Acero Muro: its own rules (2026-11-25)
+import muro_rc as rc  # Acero Muro: its own rules (2026-11-25)
 import rebar_views as rv
-import rebar_foundation as rf
+import muro_rf as rf  # Acero Muro: its own rules (2026-11-25)
 import utils as fw_utils
 
 # pyRevit keeps one interpreter across clicks: reload so edits on disk
