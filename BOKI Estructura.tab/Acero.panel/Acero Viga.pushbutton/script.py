@@ -25,9 +25,9 @@ if REVIT_MCP_DIR not in sys.path:
 import formwork_spatial as fw_spatial
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
+import viga_spec as rs  # Acero Viga: its own rules (2026-11-25)
 import beam_extras as bx
-import rebar_columns as rc
+import viga_rc as rc  # Acero Viga: its own rules (2026-11-25)
 import rebar_beams as rb
 import rebar_views as rv
 import sloped_plan as sp

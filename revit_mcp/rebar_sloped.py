@@ -13,8 +13,8 @@ from pyrevit import DB
 from Autodesk.Revit.DB.Structure import Rebar, RebarHookOrientation, RebarStyle
 from System.Collections.Generic import List
 
-import rebar_columns as rc
-import rebar_spec as spec
+import viga_rc as rc  # Acero Viga: its own rules (2026-11-25)
+import viga_spec as spec  # Acero Viga: its own rules (2026-11-25)
 import rebar_beams as rb
 import beam_extras as bx
 import sloped_plan as sp

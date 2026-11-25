@@ -28,8 +28,8 @@ from Autodesk.Revit.DB.Structure import Rebar, RebarHookOrientation, RebarStyle
 from System.Collections.Generic import List
 
 import formwork_params as fw_params
-import rebar_columns as rc
-import rebar_spec as spec
+import viga_rc as rc  # Acero Viga: its own rules (2026-11-25)
+import viga_spec as spec  # Acero Viga: its own rules (2026-11-25)
 import beam_extras as bx
 from utils import element_id_value
 
