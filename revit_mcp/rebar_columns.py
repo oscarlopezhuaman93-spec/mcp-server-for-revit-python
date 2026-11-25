@@ -294,6 +294,9 @@ class ColumnSpec(object):
                                        u"Estribo de izaje", izaje.get("type"))
             self.izaje_dist = izaje["dist"]
             self.izaje_h = float(izaje["h"])
+        # (2026-11-10) also the confinement stirrups/ties at the izaje spacing
+        self.izaje_conf = bool(self.izaje and izaje.get("conf"))
+        self.izaje_conf_dist = izaje.get("conf_dist") or u""
         ends = spec.read_json_setting(config.get("EA_Barra_Extremos"))
         anchor = u"{}".format(ends.get("anchor") or u"").strip()
         self.anchor_m = float(anchor) if anchor else None  # None: to the footing's bottom
@@ -488,6 +491,11 @@ def tie_bar_type(doc, bar_type, a, b, bars, shape_name):
     of `bar_type` ("... GRAPA 1/2"") whose stirrup/tie bend diameter is the
     larger bar's diameter, so each hook hugs its bar; made inside the running
     Transaction when missing. Any other tie keeps `bar_type`."""
+    # (2026-11-13, the user) the type chosen in the window, as it is: no copy
+    # "<type> GRAPA <bar>" any more - it ignored the choice, its name read as
+    # the tie's diameter, and a bend the wrapped bar's size is under the
+    # E.060 minimum for the tie (4 db); the type's own bend is kept
+    return bar_type
     if shape_name not in spec.TIE_STYLES:
         return bar_type
     def key_at(p):
@@ -978,6 +986,72 @@ def clear_top(doc, column, section):
     return section.z_top
 
 
+REHOSTED = {}  # column id (str) -> beam ids hosting some of its joint stirrups
+
+
+def _beams_over_ids(doc, column):
+    """The beams joined to the column (those cutting its head)."""
+    out = []
+    try:
+        for i in DB.JoinGeometryUtils.GetJoinedElements(doc, column):
+            e = doc.GetElement(i)
+            if e is not None and e.Category is not None and \
+                    e.Category.Id.IntegerValue == int(DB.BuiltInCategory.OST_StructuralFraming):
+                out.append(element_id_value(i))
+    except Exception:
+        pass
+    return out
+
+
+def _rehost_in_beams(doc, column, created):
+    """(2026-11-13, the user) A column cut by the beams over it (a gable's
+    head, Ajustar Elementos): a joint stirrup or tie lying wholly outside
+    what is left of the column - in the beam's concrete, the joint - gets
+    that beam as its host, so Revit doesn't warn "totalmente fuera de su
+    anfitrion"; it keeps its tag (ORIGIN_PARAM) and goes with the column
+    when regenerated (delete_generated)."""
+    beam_ids = _beams_over_ids(doc, column)
+    if not beam_ids:
+        return
+    opts = DB.Options()
+    col_solids = [s for s in _solids(column.get_Geometry(opts)) if s.Volume > 1e-9]
+    beams = [(doc.GetElement(DB.ElementId(i)), [s for s in _solids(doc.GetElement(DB.ElementId(i)).get_Geometry(opts))
+                                                if s.Volume > 1e-9]) for i in beam_ids]
+
+    def inside_any(solids, p):
+        for s in solids:
+            try:
+                if _inside(s, p):
+                    return True
+            except Exception:
+                continue
+        return False
+    doc.Regenerate()
+    for item in created:
+        rebar = item[0]
+        if item[2] == LONGITUDINAL or not rebar.IsValidObject:
+            continue
+        pts = []
+        for k in range(rebar.NumberOfBarPositions):
+            try:
+                curves = list(rebar.GetCenterlineCurves(False, False, True, MultiplanarOption.IncludeOnlyPlanarCurves, k))
+            except Exception:
+                continue
+            t = (rebar.GetShapeDrivenAccessor().GetBarPositionTransform(k)
+                 if rebar.IsRebarShapeDriven() and rebar.NumberOfBarPositions > 1 else DB.Transform.Identity)
+            pts += [t.OfPoint(c.Evaluate(u, True)) for c in curves for u in (0.0, 0.5, 1.0)]
+        if not pts or any(inside_any(col_solids, p) for p in pts):
+            continue
+        for beam, solids in beams:
+            if sum(1 for p in pts if inside_any(solids, p)) >= 0.5 * len(pts):
+                try:
+                    rebar.SetHostId(doc, beam.Id)
+                    REHOSTED.setdefault(str(element_id_value(column.Id)), set()).add(element_id_value(beam.Id))
+                except Exception:
+                    pass
+                break
+
+
 def delete_generated(doc, column):
     """Delete the bars an earlier run generated for this column."""
     column_id = str(element_id_value(column.Id))
@@ -989,6 +1063,18 @@ def delete_generated(doc, column):
         p = rebar.LookupParameter(ORIGIN_PARAM)
         if p is not None and p.AsString() == column_id:
             old.append(rebar.Id)
+    # its joint stirrups hosted in the beam over it (_rehost_in_beams)
+    have = set(element_id_value(i) for i in old)
+    for beam_id in REHOSTED.get(column_id, set()) | set(_beams_over_ids(doc, column)):
+        beam = doc.GetElement(DB.ElementId(beam_id)) if isinstance(beam_id, int) else doc.GetElement(beam_id)
+        data = RebarHostData.GetRebarHostData(beam) if beam is not None else None
+        if data is None:
+            continue
+        for rebar in data.GetRebarsInHost():
+            p = rebar.LookupParameter(ORIGIN_PARAM)
+            if p is not None and p.AsString() == column_id and element_id_value(rebar.Id) not in have:
+                old.append(rebar.Id)
+                have.add(element_id_value(rebar.Id))
     if old:
         doc.Delete(List[DB.ElementId](old))
     return len(old)
@@ -1085,6 +1171,21 @@ def foundation_below(doc, column, section):
 ANCHOR_HOST_MAX_M = 1.0  # a beam or wall this deep at most under a column is its foundation
 
 
+def column_below(doc, column, section):
+    """True when the column stands on another element of its category (a
+    column, its joint): it doesn't start on the footing."""
+    base = section.point_m(0.0, 0.0, section.z_bottom - 0.05 / FT)
+    outline = DB.Outline(DB.XYZ(base.X - 0.05, base.Y - 0.05, base.Z - 0.02),
+                         DB.XYZ(base.X + 0.05, base.Y + 0.05, base.Z + 0.02))
+    for element in (DB.FilteredElementCollector(doc)
+                    .OfCategoryId(column.Category.Id)
+                    .WhereElementIsNotElementType()
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        if element.Id != column.Id:
+            return True
+    return False
+
+
 def column_above(doc, column, section):
     """True when another element of its category (column on column, wall on
     wall) stands on this one (its bars go on up)."""
@@ -1107,6 +1208,9 @@ FOUNDATION_COVER_M = 0.075  # on the ground: the bar stops over the bottom mesh
 SLOPE_MIN = 0.02  # a beam rising less than this (per unit length) is level
 
 
+PASSING_ACROSS_M = 0.15  # a beam passing over the column: its axis this close to the column's centre
+
+
 def sloped_beams_over(doc, column, section, reach_m=0.6):
     """The sloped beams over the column's top (a roof's): each
     {"dir": unit plan vector away from the column (world), "rise": its rise
@@ -1127,8 +1231,24 @@ def sloped_beams_over(doc, column, section, reach_m=0.6):
             continue  # vertical or level
         near, far = (p0, p1) if math.hypot(p0.X - top.X, p0.Y - top.Y) <= math.hypot(p1.X - top.X, p1.Y - top.Y) \
             else (p1, p0)
-        if math.hypot(near.X - top.X, near.Y - top.Y) * FT > reach_m:
-            continue  # its end isn't at this column
+        ux, uy = (p1.X - p0.X) / plan, (p1.Y - p0.Y) / plan
+        along = (top.X - p0.X) * ux + (top.Y - p0.Y) * uy
+        across = abs((top.X - p0.X) * uy - (top.Y - p0.Y) * ux)
+        # the beam's axis over the column itself (within its half width across
+        # the beam, + 5 cm): a beam beside it - the next block's ridge ending
+        # 30 cm away - is not its roof (2026-11-11 with the user: bars taken
+        # up the next block's ridge to 7.5 m)
+        box = column.get_BoundingBox(None)
+        half = (0.5 * (abs(uy) * (box.Max.X - box.Min.X) + abs(ux) * (box.Max.Y - box.Min.Y))
+                if box is not None else PASSING_ACROSS_M / FT)
+        if across > half + 0.05 / FT:
+            continue
+        # a beam running over the column (not ending at it - a roof beam
+        # passing over a column mid-span, 2026-11-11 with the user): both ways
+        passing = (math.hypot(near.X - top.X, near.Y - top.Y) * FT > reach_m
+                   and 0.0 < along < plan)  # its axis over the column (checked above)
+        if math.hypot(near.X - top.X, near.Y - top.Y) * FT > reach_m and not passing:
+            continue  # its end isn't at this column, nor does it run over it
         direction = ((far.X - near.X) / plan, (far.Y - near.Y) / plan)
         best = None
         for solid in _solids(e.get_Geometry(DB.Options())):
@@ -1137,7 +1257,11 @@ def sloped_beams_over(doc, column, section, reach_m=0.6):
                     best = face
         if best is None:
             continue
-        found.append({"dir": direction, "rise": (far.Z - near.Z) / plan, "plane": (best.FaceNormal, best.Origin)})
+        rise = (far.Z - near.Z) / plan
+        found.append({"dir": direction, "rise": rise, "plane": (best.FaceNormal, best.Origin)})
+        if passing:  # it goes on the other way too: downhill there
+            found.append({"dir": (-direction[0], -direction[1]), "rise": -rise,
+                          "plane": (best.FaceNormal, best.Origin)})
     return found
 
 
@@ -1182,7 +1306,10 @@ def bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
             return ends
     try:
         top_section = Section(top_column)
-        run_top = _concrete_top(doc, section, x, y, section.z_bottom + 0.1 / FT)
+        # (2026-11-25) searched up the whole stack and a bit over: a stack
+        # taller than 12 m (a 5-story placa) had its bars cut 3.5 m short
+        reach = (top_section.z_top - section.z_bottom) * FT + 3.0
+        run_top = _concrete_top(doc, section, x, y, section.z_bottom + 0.1 / FT, max(12.0, reach))
     except Exception:
         return ends
     if run_top is None:
@@ -1443,6 +1570,16 @@ def leg_pair(doc, x, y, half_b, half_h, bot, top):
     if bot and top:
         # the bottom leg its own best way, as it always bent (out by the nearest
         # face when there is room); the top one in its plane (user, 2026-11-03)
+        # (2026-11-11, with the user) when the top leg has no concrete in the
+        # bottom leg's plane, the first bottom way (by its preference) whose
+        # plane holds both legs: never a top leg bent out of the concrete
+        # (a columneta's bars left facing each other)
+        b_fits = leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3], all_fits=True)
+        t_fits = leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], all_fits=True)
+        for b in b_fits:
+            same = [t for t in t_fits if _parallel(t, b)]
+            if same:
+                return b, same[0]
         b = leg_toward_concrete(doc, bot[0], bot[1], x, y, half_b, half_h, bot[2], bot[3])
         return b, leg_toward_concrete(doc, top[0], top[1], x, y, half_b, half_h, top[2], top[3], axis=b)
     if bot:
@@ -1694,11 +1831,15 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     columneta = is_columneta(column)
     # Izaje: over a footing, from the column base up to izaje_h; the column's
     # own distribution starts there.
-    izaje_h = column_spec.izaje_h if (column_spec.izaje and foundation_below(doc, column, section)) else 0.0
+    # (2026-11-12) never on a column standing on another one / its joint: the
+    # floor beam under its base is no footing (a 1.45 m gap without stirrups)
+    izaje_h = column_spec.izaje_h if (column_spec.izaje and foundation_below(doc, column, section)
+                                      and not column_below(doc, column, section)) else 0.0
     z_start = section.z_bottom + izaje_h / FT
     circ = design.get("circ") if getattr(section, "is_circle", False) else None
     if circ:
-        created += _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start)
+        created += _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start,
+                                   izaje_h)
     # (kind, family, [loop centerlines], [tie centerlines]) per family
     groups = {}
     stirrup_shapes = spec.design_shapes(design, "stirrups")
@@ -1717,7 +1858,10 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
     flat = [(kind, i, is_tie) for kind, (family, loops, ties) in groups.items()
             for is_tie, items in ((False, loops), (True, ties)) for i in range(len(items))]
     lifts = spec.stack_lifts([
-        (kind, spec.BAR_DIAMETERS_MM[groups[kind][0].key] / 1000.0, is_tie) for kind, i, is_tie in flat])
+        (kind, spec.BAR_DIAMETERS_MM[groups[kind][0].key] / 1000.0, is_tie) for kind, i, is_tie in flat],
+        # (2026-11-10) raised only over the stirrups they touch in plan
+        [None if is_tie else (list(groups[kind][1][i][0]), not groups[kind][1][i][1])
+         for kind, i, is_tie in flat])
     lift_ft = dict(((kind, i, is_tie), lift / FT) for (kind, i, is_tie), lift in zip(flat, lifts))
 
     for kind, (family, loops, ties) in groups.items():
@@ -1787,10 +1931,13 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
         izaje_type = named_bar_type(doc, izaje.type_name, izaje.key) or bar_type_for(izaje.key)
         positions = spec.izaje_positions(izaje_h, column_spec.izaje_dist)
         for start, n, spacing in spec.group_runs(positions):
-            for line, is_open, shape_name in groups[EDGE][1]:
+            for index, (line, is_open, shape_name) in enumerate(groups[EDGE][1]):
                 if is_open:
                     continue
-                pts = _counterclockwise([section.point_m(x, y, section.z_bottom + start / FT) for x, y in line])
+                # (2026-11-11) stacked like the edge stirrups: the ones that
+                # cross in plan one over another, the others aligned
+                z = section.z_bottom + start / FT + lift_ft[(EDGE, index, False)]
+                pts = _counterclockwise([section.point_m(x, y, z) for x, y in line])
                 loop = List[DB.Curve](
                     [DB.Line.CreateBound(pts[k], pts[(k + 1) % len(pts)]) for k in range(len(pts))])
                 rebar = _create_stirrup(
@@ -1800,6 +1947,51 @@ def generate_column(doc, column, column_spec, bar_types, hooks, mark, shapes=Non
                 _set(rebar, n, spacing / FT)
                 _tag(rebar, column)
                 created.append((rebar, izaje.key, EDGE))
+    if izaje_h and getattr(column_spec, "izaje_conf", False) and CONFINEMENT in groups:
+        # (2026-11-10) the confinement stirrups and ties also in the izaje
+        # zone, down from the izaje height at their own rest spacing ("rto"),
+        # with their own diameter and type.
+        family, loops, ties = groups[CONFINEMENT]
+        conf_type = named_bar_type(doc, family.type_name, family.key) or bar_type_for(family.key)
+        hook = hooks.get(family.key)
+        positions = spec.izaje_conf_positions(izaje_h, family.rest,
+                                              text=getattr(column_spec, "izaje_conf_dist", u""))
+        # the lowest one exactly at its first position (5 cm), the others stacked over it
+        # (2026-11-11) top-down like the izaje: stacked over the izaje stirrups they cross
+        base_lift = 0.0
+        for start, n, spacing in spec.group_runs(positions):
+            z_set = section.z_bottom + start / FT - base_lift
+            for index, (line, is_open, shape_name) in enumerate(loops):
+                z = z_set + lift_ft[(CONFINEMENT, index, False)]
+                if is_open:
+                    pts = [section.point_m(x, y, z) for x, y in line]
+                    curves = List[DB.Curve](
+                        [DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)])
+                    rebar = _create_stirrup(
+                        doc, shapes, shape_name, column, conf_type, None, hooks, family.key,
+                        curves, RebarHookOrientation.Left, RebarHookOrientation.Left)
+                else:
+                    pts = _counterclockwise([section.point_m(x, y, z) for x, y in line])
+                    loop = List[DB.Curve](
+                        [DB.Line.CreateBound(pts[k], pts[(k + 1) % len(pts)]) for k in range(len(pts))])
+                    rebar = _create_stirrup(
+                        doc, shapes, shape_name, column, conf_type, hook, hooks, family.key,
+                        loop, RebarHookOrientation.Left, RebarHookOrientation.Left)
+                _set(rebar, n, spacing / FT)
+                _tag(rebar, column)
+                created.append((rebar, family.key, CONFINEMENT))
+            for index, (ta, tb, shape_name) in enumerate(ties):
+                z = z_set + lift_ft[(CONFINEMENT, index, True)]
+                tie_type = tie_bar_type(doc, conf_type, ta, tb, design["bars"], shape_name)
+                a, b = tie_ends(ta, tb, design["bars"], family.key, shape_name, tie_type)
+                line = DB.Line.CreateBound(section.point_m(a[0], a[1], z), section.point_m(b[0], b[1], z))
+                angle = 180.0 if shape_name in spec.TIE_STYLES else 135.0
+                rebar = _create_tie(doc, shapes, shape_name, column, tie_type, hook, hooks,
+                                    family.key, line, leg=tie_leg_m(design, family.key, angle))
+                _set(rebar, n, spacing / FT)
+                _tag(rebar, column)
+                created.append((rebar, family.key, CONFINEMENT))
+    _rehost_in_beams(doc, column, created)
     return created
 
 
@@ -1819,7 +2011,33 @@ def _free_form(doc, bar_type, host, points):
     return rebar
 
 
-def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start):
+def _hoops(doc, column, section, radius_m, ds, plan, bar_type, key, start, runs):
+    """Circular stirrups at `runs` [(z_ft, n, spacing_ft)] - one run per
+    zone of the distribution -, each run ONE free-form rebar holding its n
+    hoops (Revit's set of free-form bars): grouped like every column's
+    stirrups, each hoop the shape it always had (spec.hoop_path: closed on
+    the top bar, both legs into the core; the user, 2026-11-12)."""
+    made = []
+    for z_set, n, spacing in runs:
+        loops = List[DB.CurveLoop]()
+        for i in range(n):
+            z = z_set + i * spacing
+            pts = [section.point_m(x, y, z) for x, y in plan]
+            loop = DB.CurveLoop()
+            for a, b in zip(pts, pts[1:]):
+                if a.DistanceTo(b) > 1e-4:
+                    loop.Append(DB.Line.CreateBound(a, b))
+            loops.Add(loop)
+        result = clr.Reference[RebarFreeFormValidationResult]()
+        rebar = Rebar.CreateFreeForm(doc, bar_type, column, loops, result)
+        if rebar is None:
+            raise spec.SpecError(u"Revit no acepto los estribos circulares ({})".format(result.Value))
+        _tag(rebar, column)
+        made.append(rebar)
+    return made
+
+
+def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_clear_top, z_start, izaje_h=0.0):
     """A circular column's edge steel at the cover: hoops (spec.hoop_path,
     closed with two 135-degree hooks) at the edge distribution, joint
     included, or one spiral (spec.spiral_path) over the clear height with
@@ -1830,22 +2048,43 @@ def _circular_steel(doc, column, column_spec, section, circ, bar_type_for, z_cle
     radius = section.radius_m - column_spec.cover_m - ds / 2.0
     bar_type = named_bar_type(doc, family.type_name, key) or bar_type_for(key)
     created = []
+    if izaje_h and column_spec.izaje is not None:
+        # (2026-11-12) the izaje zone as on every column: circular stirrups at
+        # the izaje distribution, its diameter and type, from the base up
+        iz = column_spec.izaje
+        ids = spec.BAR_DIAMETERS_MM[iz.key] / 1000.0
+        ir = section.radius_m - column_spec.cover_m - ids / 2.0
+        iplan = spec.hoop_path(ir, ids, max(6 * ids, 0.075), **spec.hoop_closing(column_spec.design["bars"], ids))
+        itype = named_bar_type(doc, iz.type_name, iz.key) or bar_type_for(iz.key)
+        istart = spec.hoop_closing(column_spec.design["bars"], ids).get("start", math.pi / 2)
+        iruns = [(section.z_bottom + s / FT, n, sp / FT)
+                 for s, n, sp in spec.group_runs(spec.izaje_positions(izaje_h, column_spec.izaje_dist))]
+        created += [(rebar, iz.key, EDGE) for rebar in
+                    _hoops(doc, column, section, ir, ids, iplan, itype, iz.key, istart, iruns)]
     if circ.get("t") == spec.CIRC_SPIRAL:
         z0 = (z_start - section.z_bottom) * FT + column_spec.cover_m
         z1 = (section.z_top - section.z_bottom) * FT - column_spec.cover_m
-        pts = spec.spiral_path(radius, z0, z1, circ.get("p") or spec.SPIRAL_PITCH_M, ds)
+        # its pitch: the 'rto @' of the edge (Borde) distribution, as the window
+        # shows it (the user, 2026-11-12: no pitch field of its own)
+        pts = spec.spiral_path(radius, z0, z1, family.rest or circ.get("p") or spec.SPIRAL_PITCH_M, ds)
         world = [section.point_m(x, y, section.z_bottom + z / FT) for x, y, z in pts]
         rebar = _free_form(doc, bar_type, column, world)
         _tag(rebar, column)
-        return [(rebar, key, EDGE)]
+        return created + [(rebar, key, EDGE)]
     plan = spec.hoop_path(radius, ds, max(6 * ds, 0.075), **spec.hoop_closing(column_spec.design["bars"], ds))
     joint_m = column_spec.joint_spacing_m or family.rest
-    for z_set, n, spacing, side in _runs(family, joint_m, section, z_clear_top, z_start, column_spec.joint_count):
-        for i in range(n):
-            z = z_set + i * spacing
-            rebar = _free_form(doc, bar_type, column, [section.point_m(x, y, z) for x, y in plan])
-            _tag(rebar, column)
-            created.append((rebar, key, EDGE))
+    start = spec.hoop_closing(column_spec.design["bars"], ds).get("start", math.pi / 2)
+    # exactly the distribution typed (1@.05, 7@.10, rto @.20 ... and the
+    # joint), one group per zone - no extra stirrups along the laps mixed in
+    # (the user, 2026-11-12)
+    laps, section.lap_zones = getattr(section, "lap_zones", None), None
+    try:
+        runs = [(z_set, n, spacing) for z_set, n, spacing, side
+                in _runs(family, joint_m, section, z_clear_top, z_start, column_spec.joint_count)]
+    finally:
+        section.lap_zones = laps
+    created += [(rebar, key, EDGE) for rebar in
+                _hoops(doc, column, section, radius, ds, plan, bar_type, key, start, runs)]
     return created
 
 
@@ -2004,8 +2243,15 @@ def generate_stack(doc, stack, column_spec, bar_types, hooks, mark, shapes=None,
         leg_dir = ends.get("dir_bottom") or ends.get("dir_top")
         inward = None
         if leg_dir:
-            out = spec.leg_vector(x, y, *(_half_sizes(base) + (spec.LEG_OUT,)))
-            inward = (-out[0], -out[1])
+            # along the legs' own axis (the leg may turn sideways, not out by
+            # the nearest face, when only that way stays in the concrete), to
+            # the column's centre side: one plane per bar, or Revit makes no
+            # bar ("An internal error", 2026-11-11 with the user)
+            side = leg_dir[0] * x + leg_dir[1] * y
+            if abs(side) < 1e-6:
+                out = spec.leg_vector(x, y, *(_half_sizes(base) + (spec.LEG_OUT,)))
+                side = out[0] * leg_dir[0] + out[1] * leg_dir[1] or 1.0
+            inward = (-leg_dir[0], -leg_dir[1]) if side > 0 else (leg_dir[0], leg_dir[1])
         plans.append((x, y, key, d, ends, lap, pieces, inward))
     # the stirrups, closer along the laps (_lap_extra): each lap is the top
     # `lap` of a piece that goes on
