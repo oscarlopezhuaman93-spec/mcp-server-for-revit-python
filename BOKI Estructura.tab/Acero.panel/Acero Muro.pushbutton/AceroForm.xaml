@@ -229,6 +229,7 @@
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="30"/>
+                            <RowDefinition Height="30"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
@@ -268,17 +269,23 @@
                         <TextBox Grid.Row="6" Grid.Column="1" x:Name="txt_izaje_h" TextChanged="config_changed" VerticalAlignment="Center"
                                  IsEnabled="{Binding IsChecked, ElementName=chk_izaje}"
                                  ToolTip="Desde la cara superior de la zapata. Sobre esta cota empieza la distribuci&#243;n normal de la columna. Tambi&#233;n se edita con un clic en la cota del alzado."/>
-                        <TextBlock Grid.Row="7" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
-                        <TextBox Grid.Row="7" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
-                        <CheckBox Grid.Row="8" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
+                        <CheckBox Grid.Row="7" x:Name="chk_izaje_conf" Content="     + Confinam. izaje:" VerticalAlignment="Center" Click="config_changed"
+                                  IsEnabled="{Binding IsChecked, ElementName=chk_izaje}"
+                                  ToolTip="Tambi&#233;n coloca los estribos y grapas de confinamiento en la zona de izaje (su propio di&#225;metro y tipo)."/>
+                        <TextBox Grid.Row="7" Grid.Column="1" x:Name="txt_izaje_conf_dist" TextChanged="config_changed" VerticalAlignment="Center"
+                                 IsEnabled="{Binding IsChecked, ElementName=chk_izaje_conf}"
+                                 ToolTip="Desde la altura de izaje hacia abajo, hasta la cara de la zapata (como el izaje). Ej. 10@0.15. Vac&#237;o: cada Rto del confinamiento."/>
+                        <TextBlock Grid.Row="8" Text="Recubrimiento (cm):" VerticalAlignment="Center"/>
+                        <TextBox Grid.Row="8" Grid.Column="1" x:Name="txt_cover" TextChanged="config_changed" VerticalAlignment="Center"/>
+                        <CheckBox Grid.Row="9" x:Name="chk_nucleo" Click="config_changed" Content="Estribo en n&#250;cleo" VerticalAlignment="Center"
                                   ToolTip="Estribos tambien dentro del nudo viga-columna (desde el fondo de la viga hasta el tope)."/>
-                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                        <StackPanel Grid.Row="9" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
                                     IsEnabled="{Binding IsChecked, ElementName=chk_nucleo}">
                             <TextBlock Text="@ " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_nucleo" TextChanged="config_changed" Width="50"/>
                             <TextBlock Text=" cm" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <Button Grid.Row="9" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
+                        <Button Grid.Row="10" Grid.ColumnSpan="2" x:Name="button_save" Visibility="Collapsed" Margin="0,8,0,0" Height="30"
                                 Content="Guardar configuraci&#243;n en los tipos marcados" Click="save_click"
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus columnas, en todos los niveles."/>
                     </Grid>

@@ -60,7 +60,24 @@ FT = 0.3048
 PLAN = u"planta"
 COLORS = {(sr.INF, sr.X): (29, 158, 117), (sr.INF, sr.Y): (42, 111, 214),
           (sr.SUP, sr.X): (210, 60, 60), (sr.SUP, sr.Y): (240, 140, 20),
-          (u"temp", sr.X): (42, 111, 214), (u"temp", sr.Y): (42, 111, 214)}
+          (u"temp", sr.X): (150, 70, 200), (u"temp", sr.Y): (150, 70, 200)}  # temperatura: violeta, aparte
+AUTO_TYPE = u"(automático)"
+# each steel's "Tipo" combo and the diameter combo it follows (sr.group_of names)
+TYPE_COMBOS = [(u"ix", "cbo_ix_t", "cbo_ix_d"), (u"iy", "cbo_iy_t", "cbo_iy_d"), (u"sx", "cbo_sx_t", "cbo_sx_d"),
+               (u"sy", "cbo_sy_t", "cbo_sy_d"), (sr.INF, "cbo_vi_t", "cbo_vi_d"), (sr.SUP, "cbo_vs_t", "cbo_vs_d"),
+               (u"temp", "cbo_t_t", "cbo_t_d")]
+GROUP_NAMES = {u"ix": u"inferior X", u"iy": u"inferior Y", u"sx": u"superior X", u"sy": u"superior Y",
+               sr.INF: u"inferior de vigueta", sr.SUP: u"bastones", u"temp": u"temperatura"}
+
+
+def type_picker(settings, bar_types):
+    """bar_type_for(key, face, axis) of the generation: the type chosen for
+    that steel in the window when it has the diameter, else by diameter."""
+    def pick(key, face=None, axis=None):
+        name = (settings.get("types") or {}).get(sr.group_of(settings, face, axis)) if face else None
+        bt = rc.named_bar_type(doc, name, key) if name else None
+        return bt or bar_types.pick(key, u"LOSA")
+    return pick
 KINDS = [(sr.MACIZA, u"Maciza"), (sr.ALIGERADA, u"Aligerada")]
 DIRS = [(None, u"Autom\u00e1tico (luz corta)"), (sr.X, u"X"), (sr.Y, u"Y")]
 ENS = [(sr.ENS_NONE, u"Ninguno"), (sr.ENS_FULL, u"Corrido"), (sr.ENS_ALT, u"Alternado")]
@@ -269,8 +286,31 @@ class LosaWindow(forms.WPFWindow):
         self.chk_roof.IsChecked = bool(st.get("roof_on", True))
         self.cbo_roof_inf.SelectedItem = dict(ROOF_MODES).get(roof["inf"]["mode"])
         self.cbo_roof_sup.SelectedItem = dict(ROOF_MODES).get(roof["sup"]["mode"])
+        self._fill_types()
         self._show_kind(kind)
         self._filling = False
+
+    def _fill_types(self):
+        """Each steel's "Tipo" list: the project's bar types of its diameter,
+        first "(automático)"; keeps the choice while the diameter fits."""
+        st = self._settings()
+        types = st.setdefault("types", {})
+        cache = self.__dict__.setdefault("_type_names", {})
+        was = self._filling
+        self._filling = True
+        for group, combo_name, d_name in TYPE_COMBOS:
+            key = getattr(self, d_name).SelectedItem
+            if key not in cache:
+                cache[key] = rc.bar_type_names(doc, key) if key else []
+            names = [AUTO_TYPE] + cache[key]
+            combo = getattr(self, combo_name)
+            combo.ItemsSource = names
+            chosen = types.get(group)
+            if chosen not in names:
+                types.pop(group, None)
+                chosen = AUTO_TYPE
+            combo.SelectedItem = chosen
+        self._filling = was
 
     def _partner(self):
         return self._partners.get(self.state.active)
@@ -324,12 +364,12 @@ class LosaWindow(forms.WPFWindow):
                 corners = [(bk["s0"], bk["t0"]), (bk["s1"], bk["t0"]), (bk["s1"], bk["t1"]), (bk["s0"], bk["t1"])]
                 if rib["axis"] == sr.Y:
                     corners = [(t, s_) for s_, t in corners]
-                out.append([to_here(model, sr.unrotate(x, y, model.angle)) for x, y in corners])
+                out.append([to_here(model, model.from_frame(x, y)) for x, y in corners])
             return out
 
         def direction(model, rib):
-            u = sr.unrotate(1.0, 0.0, model.angle) if rib["axis"] == sr.X else sr.unrotate(0.0, 1.0, model.angle)
-            a, b = to_here(model, (0.0, 0.0)), to_here(model, u)
+            u = model.from_frame(1.0, 0.0) if rib["axis"] == sr.X else model.from_frame(0.0, 1.0)
+            a, b = to_here(model, model.from_frame(0.0, 0.0)), to_here(model, u)
             return (b[0] - a[0], b[1] - a[1])
 
         def ridge_of(a, b):  # (a, b, ridge beam?) of the roof of slabs a and b, in this plan
@@ -367,7 +407,7 @@ class LosaWindow(forms.WPFWindow):
                 corners = [(bk["s0"], bk["t0"]), (bk["s1"], bk["t0"]), (bk["s1"], bk["t1"]), (bk["s0"], bk["t1"])]
                 if rib["axis"] == sr.Y:
                     corners = [(t, s_) for s_, t in corners]
-                pts = [roof.to_frame(*rm.RoofModel._local_to_world(model, sr.unrotate(x, y, model.angle)))
+                pts = [roof.to_frame(*rm.RoofModel._local_to_world(model, model.from_frame(x, y)))
                        for x, y in corners]
                 out.append((min(p[0] for p in pts), max(p[0] for p in pts),
                             min(p[1] for p in pts), max(p[1] for p in pts)))
@@ -464,6 +504,14 @@ class LosaWindow(forms.WPFWindow):
                 roof.setdefault(group, {})["mode"] = mode[0]
         roof.setdefault("inf", {})["d"] = a["inf"]["d"]
         roof.setdefault("sup", {})["d"] = a["sup"]["d"]
+        types = st.setdefault("types", {})
+        for group, combo_name, _ in TYPE_COMBOS:
+            chosen = getattr(self, combo_name).SelectedItem
+            if chosen and chosen != AUTO_TYPE:
+                types[group] = chosen
+            else:
+                types.pop(group, None)
+        self._fill_types()  # a diameter changed: its list (a type of another diameter dropped)
         self._show_kind(st["kind"])
         self.redraw()
 
@@ -559,7 +607,7 @@ class LosaWindow(forms.WPFWindow):
         ang = m.angle
 
         def T(x, y):  # the plan's frame (turned with the bricks) back to the slab's
-            return sr.unrotate(x, y, ang)
+            return m.from_frame(x, y)
         # the grids, behind
         gray = brush((150, 150, 160))
         for name, a, b in self._grids():
@@ -677,27 +725,54 @@ class LosaWindow(forms.WPFWindow):
             return
         h = m.thickness
         s_lo, s_hi = min(a for a, _ in chords), max(b for _, b in chords)
-        k = max(1.0, (s_hi - s_lo) / (h * 14.0))  # heights drawn k times
+        # the slab as it is (2026-11-13, the user: the cuts didn't show its
+        # slope): a sloped slab at its real heights, true scale; a level one
+        # with its depth drawn k times (a thin slab over a long span)
+        k = 1.0 if m.sloped else max(1.0, (s_hi - s_lo) / (h * 14.0))
+
+        def Z(s, z):  # a height up from the slab's bottom there -> the drawing
+            if not m.sloped:
+                return z * k
+            x, y = m.point_xy(axis, s, pos)
+            return m.local_z(x, y, z)
+
+        def along(a, b, z, n=24):  # the line at height z from a to b (on a slope: its profile)
+            if not m.sloped:
+                return [(a, Z(a, z)), (b, Z(b, z))]
+            return [(a + (b - a) * i / float(n), Z(a + (b - a) * i / float(n), z)) for i in range(n + 1)]
+        zs = [Z(s_, z_) for a, b in chords for s_ in (a, (a + b) / 2.0, b) for z_ in (0.0, h)]
+        z_lo, z_hi = min(zs), max(zs)
         u = (s_hi - s_lo) / 40.0
-        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, s_lo - 2 * u, -12 * u, s_hi + 2 * u, h * k + 6 * u)
+        # the supports at the ends too (the bars get into them), up to 1 m past the slab
+        v_lo = min([s_lo] + [max(a, s_lo - 1.0) for a, b in supports if b > s_lo - 1.0])
+        v_hi = max([s_hi] + [min(b, s_hi + 1.0) for a, b in supports if a < s_hi + 1.0])
+        fitted = rv.fit_frame(canvas.ActualWidth, canvas.ActualHeight, v_lo - 4.5 * u, z_lo - 12 * u,
+                              v_hi + 7.0 * u, z_hi + 6 * u)  # room for the hooks' cotas at the ends
         self._fitted[axis] = fitted
         frame = self.navs[axis].resolve(fitted)
         self._frames[axis] = frame
-        for a, b in supports:
-            rv._rect(canvas, frame, a, -4.0 * u, b, 0.0, brush((215, 218, 223)), brush((150, 155, 165)))
+        for a, b in supports:  # the beam / wall: from the slab's top down under it (the bars get into it)
+            top_s, bot = along(a, b, h, 4), along(a, b, 0.0, 4)
+            rv._polygon(canvas, frame, top_s + [(b, bot[-1][1] - 4.0 * u), (a, bot[0][1] - 4.0 * u)],
+                        brush((215, 218, 223)), brush((150, 155, 165)))
         for a, b in chords:
-            rv._rect(canvas, frame, a, 0.0, b, h * k, brush((238, 240, 243)), brush((60, 60, 60)))
-        # the bricks cut (a ribbed slab): hanging from the top, 5 cm under it
+            rv._polygon(canvas, frame, along(a, b, 0.0) + list(reversed(along(a, b, h))),
+                        brush((238, 240, 243)), brush((60, 60, 60)))
+        # the bricks cut (a ribbed slab): from the bottom up to 5 cm under the top
         rib = getattr(self, "_rib", None)
         if rib is not None:
             top = h - sr.ribbed(st)["top"]
             fill, edge = brush(BRICK, 90), brush(BRICK, 200)
             for bk in rib["bricks"]:
                 if rib["axis"] == axis and bk["t0"] <= pos <= bk["t1"]:
-                    rv._rect(canvas, frame, bk["s0"], 0.0, bk["s1"], top * k, fill, edge)
+                    a, b = bk["s0"], bk["s1"]
                 elif rib["axis"] != axis and bk["s0"] <= pos <= bk["s1"]:
-                    rv._rect(canvas, frame, bk["t0"], 0.0, bk["t1"], top * k, fill, edge)
+                    a, b = bk["t0"], bk["t1"]
+                else:
+                    continue
+                rv._polygon(canvas, frame, along(a, b, 0.0, 4) + list(reversed(along(a, b, top, 4))), fill, edge)
         # the bars along the cut (the line nearest it), the others as dots
+        cota = brush((150, 150, 30))
         for (face, ax), layer in sorted(self._plan.items()):
             if not layer:
                 continue
@@ -705,34 +780,74 @@ class LosaWindow(forms.WPFWindow):
                 color = brush(COLORS[(face, ax)])
                 for line in sr.nearest_line(layer, pos):
                     for bar in line["bars"]:
-                        pts = [(s_, zz * k) for s_, zz in bar["path"]]
+                        if not any(min(bar["s1"], b) - max(bar["s0"], a) > 0.02 for a, b in chords):
+                            continue  # another stretch of the slab (not in this cut)
+                        pts = []
+                        for (s0, z0), (s1, z1) in zip(bar["path"], bar["path"][1:]):
+                            seg = along(s0, s1, z0, 12) if abs(z1 - z0) < 1e-9 else [(s0, Z(s0, z0)), (s1, Z(s1, z1))]
+                            pts += seg if not pts else seg[1:]
                         for p, q in zip(pts, pts[1:]):
                             rv._line(canvas, frame, p, q, color, 2.5)
+                        zb = self._bar_z(bar)
                         if bar.get("lap_at"):
                             l0, l1 = bar["lap_at"]
-                            zz = self._bar_z(bar) * k
-                            rv._rect(canvas, frame, l0, zz - 0.3 * u, l1, zz + 0.3 * u, brush((176, 74, 74), 90))
-                            rv._text(canvas, frame, (l0 + l1) / 2.0, zz + (1.0 if face != sr.SUP else -1.0) * u,
+                            rv._polygon(canvas, frame, along(l0, l1, zb - 0.3 * u / k, 4)
+                                        + list(reversed(along(l0, l1, zb + 0.3 * u / k, 4))), brush((176, 74, 74), 90))
+                            rv._text(canvas, frame, (l0 + l1) / 2.0, Z((l0 + l1) / 2.0, zb) + (1.0 if face != sr.SUP else -1.0) * u,
                                      u"Emp. {:.2f}".format(l1 - l0), brush=brush((176, 74, 74)), size=9)
                         if face == sr.SUP and bar.get("support"):
-                            self._bast_cotas(canvas, frame, line, bar, h * k + 1.4 * u, u)
+                            self._bast_cotas(canvas, frame, line, bar, lambda s_: Z(s_, h) + 1.4 * u, u)
+                        self._end_cotas(canvas, frame, line, bar, face, Z, h, u, cota)
             else:
                 dots = brush(COLORS[(face, ax)])
                 bar0 = [b_ for l_ in layer for b_ in l_["bars"]]
                 if not bar0:
                     continue
-                zz = self._bar_z(bar0[0]) * k
+                zz = self._bar_z(bar0[0])
                 r = MM[bar0[0]["key"]] / 2000.0
                 for p in sr.crossing(layer, pos):
-                    self._dot(canvas, frame, p, zz, r, dots)
+                    self._dot(canvas, frame, p, Z(p, zz), r, dots)
         # clear spans under it
+        y = z_lo - 5.5 * u
         for a, b in sr.clear_and_gaps(chords[0], supports)[0] if len(chords) == 1 else []:
-            y = -5.5 * u
             rv._line(canvas, frame, (a, y), (b, y), brush((42, 111, 214)), 1)
             rv._text(canvas, frame, (a + b) / 2.0, y - 0.9 * u, u"Ln {:.2f}".format(b - a), brush=brush((42, 111, 214)), size=9)
         for i, (text, key) in enumerate(self._legend(st)):
-            rv._text(canvas, frame, s_lo + (i % 2) * 20 * u, -7.8 * u - (i // 2) * 1.4 * u, text,
+            rv._text(canvas, frame, s_lo + (i % 2) * 20 * u, z_lo - 7.8 * u - (i // 2) * 1.4 * u, text,
                      brush=brush(COLORS[key]), size=10, anchor="left")
+        rv._text(canvas, frame, s_lo, z_lo - 7.8 * u - 3 * 1.4 * u,
+                 u"Clic en una cota amarilla para editarla." + (u"  Alturas reales (losa inclinada)." if m.sloped else u""),
+                 brush=brush((110, 110, 110)), size=9, anchor="left")
+
+    def _end_cotas(self, canvas, frame, line, bar, face, Z, h, u, dim):
+        """A bar's editable ends in the cut: how far it gets into the support
+        past its face ("Entra") and its hook ("Gancho"), for all of its steel
+        (sr.group_of: the inferior, the bastones, the temperature...)."""
+        group = bar.get("group")
+        if not group:
+            return
+        spans = line.get("spans") or []
+        top = face == sr.SUP or face == u"temp"
+        hooks = bar.get("hooks") or (False, False)
+        path = bar["path"]
+        for side in (0, 1):
+            s_end = bar["s0"] if side == 0 else bar["s1"]
+            if spans and not bar.get("support"):  # a bastón has its own length cotas
+                face_s = spans[0][0] if side == 0 else spans[-1][1]
+                inside = (face_s - s_end) if side == 0 else (s_end - face_s)
+                if inside > 0.005:
+                    # the top steel's over the slab (past the bastones' cotas), the bottom's under it
+                    y = Z(s_end, h) + 2.9 * u if top else Z(s_end, 0.0) - 1.7 * u
+                    rv._edit_text(canvas, frame, s_end - (0.0 if side == 0 else 2.6 * u), y,
+                                  u"Entra {:.2f}".format(inside), u"end|{}|{}|{:.4f}".format(group, side, inside))
+            if hooks[side]:
+                p = path[0] if side == 0 else path[-1]
+                q = path[1] if side == 0 else path[-2]
+                leg = abs(p[1] - q[1])
+                # outside the slab's end: the top steel's over it, the bottom's under it
+                y = Z(s_end, h) + 0.9 * u if top else Z(s_end, 0.0) - 0.4 * u
+                rv._edit_text(canvas, frame, s_end + (-3.6 * u if side == 0 else 0.4 * u), y,
+                              u"Gancho {:.2f}".format(leg), u"leg|{}|{:.4f}".format(group, leg))
 
     def _legend(self, st):
         """[(text, color key)] of the steel shown."""
@@ -862,8 +977,9 @@ class LosaWindow(forms.WPFWindow):
         Canvas.SetTop(e, py - 7)
         canvas.Children.Add(e)
 
-    def _bast_cotas(self, canvas, frame, line, bar, y, u):
-        """A baston's dimensions, from the support faces out to its ends."""
+    def _bast_cotas(self, canvas, frame, line, bar, y_of, u):
+        """A baston's dimensions, from the support faces out to its ends
+        (y_of(s): the cota's height there - over a sloped slab, along it)."""
         gap = [g for g in line["gaps"] if sr.support_key(u"x" if bar["support"].startswith(u"x") else u"y", g) == bar["support"]]
         if not gap:
             return
@@ -872,10 +988,11 @@ class LosaWindow(forms.WPFWindow):
         for side, lo, hi in ((0, bar["s0"], g0), (1, g1, bar["s1"])):
             if hi - lo < 0.05:
                 continue
-            rv._line(canvas, frame, (lo, y), (hi, y), dim, 1)
+            rv._line(canvas, frame, (lo, y_of(lo)), (hi, y_of(hi)), dim, 1)
             for s in (lo, hi):
-                rv._line(canvas, frame, (s, y + 0.4 * u), (s, y - 0.4 * u), dim, 1)
-            rv._edit_text(canvas, frame, (lo + hi) / 2.0 - 1.2 * u, y + 0.7 * u, u"{:.2f}".format(hi - lo),
+                rv._line(canvas, frame, (s, y_of(s) + 0.4 * u), (s, y_of(s) - 0.4 * u), dim, 1)
+            mid = (lo + hi) / 2.0
+            rv._edit_text(canvas, frame, mid - 1.2 * u, y_of(mid) + 0.7 * u, u"{:.2f}".format(hi - lo),
                           u"bast|{}|{}|{:.4f}|{:.4f}".format(bar["support"], side, g0 - bar["s0"], bar["s1"] - g1))
 
     @staticmethod
@@ -927,7 +1044,7 @@ class LosaWindow(forms.WPFWindow):
             return
         if args.ChangedButton == MouseButton.Left and PLAN in self._frames:
             x, y, scale = self._plan_xy(args)
-            x, y = sr.unrotate(x, y, -self.model.angle)  # into the plan's frame
+            x, y = self.model.into_frame(x, y)  # into the plan's frame
             cuts = self._settings().get("cuts") or {}
             best = None
             for axis, c in cuts.items():
@@ -945,7 +1062,7 @@ class LosaWindow(forms.WPFWindow):
     def plan_move(self, sender, args):
         if self._drag_cut is not None:
             x, y, _ = self._plan_xy(args)
-            x, y = sr.unrotate(x, y, -self.model.angle)
+            x, y = self.model.into_frame(x, y)
             x0, x1, y0, y1 = sr.extent(self.model.frame_slab())
             v = (max(y0, min(y1, y)) if self._drag_cut == sr.X else max(x0, min(x1, x)))
             self._settings()["cuts"][self._drag_cut] = round(v, 3)
@@ -1048,6 +1165,42 @@ class LosaWindow(forms.WPFWindow):
             if value is None:
                 return
             rr.set_value(self._settings(), tag, max(0.0, self._num(value, 0.0)) if value.strip() else None)
+            args.Handled = True
+            self.redraw()
+            return
+        if isinstance(tag, basestring) and (tag.startswith(u"leg|") or tag.startswith(u"end|")):
+            parts = tag.split(u"|")
+            group = parts[1]
+            st = self._settings()
+            if parts[0] == u"leg":
+                now = float(parts[2])
+                value = forms.ask_for_string(
+                    default=u"{:.2f}".format(now), title=u"Acero Losa",
+                    prompt=u"Pata del gancho del acero {} (m; vale para todos sus ganchos; vacío: la general):".format(
+                        GROUP_NAMES.get(group, group)))
+                if value is None:
+                    return
+                legs = st.setdefault("legs", {})
+                if value.strip():
+                    legs[group] = round(max(0.0, self._num(value, now)), 3)
+                else:
+                    legs.pop(group, None)
+            else:
+                side, now = int(parts[2]), float(parts[3])
+                value = forms.ask_for_string(
+                    default=u"{:.2f}".format(now), title=u"Acero Losa",
+                    prompt=u"Cuánto entra el acero {} en el apoyo {} desde su cara (m; nunca pasa el "
+                           u"recubrimiento; vacío: hasta la cara opuesta menos el recubrimiento):".format(
+                               GROUP_NAMES.get(group, group), u"inicial" if side == 0 else u"final"))
+                if value is None:
+                    return
+                ends = st.setdefault("ends", {})
+                pair = list(ends.get(group) or [None, None])
+                pair[side] = round(max(0.0, self._num(value, now)), 3) if value.strip() else None
+                if pair == [None, None]:
+                    ends.pop(group, None)
+                else:
+                    ends[group] = pair
             args.Handled = True
             self.redraw()
             return
@@ -1162,14 +1315,14 @@ def generate_all(state, models, splice):
                 if roof_on:
                     ax_ = sr.X
                     skip = set([(sr.INF, ax_), (sr.SUP, ax_)])
-                made, found = rsl.generate(model, settings, MM, lambda key: bar_types.pick(key, u"LOSA"), splice,
+                made, found = rsl.generate(model, settings, MM, type_picker(settings, bar_types), splice,
                                            tag=lambda r: rc._tag(r, floor), skip=skip)
                 if roof_on and tuple(sorted((element_id, j))) not in roofs_done:
                     roofs_done.add(tuple(sorted((element_id, j))))
                     other = doc.GetElement(DB.ElementId(j))
                     rc.delete_generated(doc, other)
                     roof = rm.RoofModel(floor, other, {element_id: model, j: models.get(j) or rsl.SlabModel(other)})
-                    roof_bars = roof.generate(settings, MM, lambda key: bar_types.pick(key, u"LOSA"),
+                    roof_bars = roof.generate(settings, MM, type_picker(settings, bar_types),
                                               tag=lambda r, host: rc._tag(r, host))
                     count += sum(r.Quantity for r in roof_bars)
                 count += sum(r.Quantity for r, _, _ in made)

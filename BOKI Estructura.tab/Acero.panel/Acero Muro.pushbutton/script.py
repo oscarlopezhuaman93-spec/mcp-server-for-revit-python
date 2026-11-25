@@ -578,6 +578,8 @@ class AceroWindow(forms.WPFWindow):
         self._filling_types = False
         self.txt_izaje_dist.Text = izaje.get("dist") or u""
         self.chk_izaje.IsChecked = bool(izaje) and izaje.get("on", True)
+        self.chk_izaje_conf.IsChecked = bool(izaje.get("conf"))
+        self.txt_izaje_conf_dist.Text = izaje.get("conf_dist") or u""
         self.txt_izaje_h.Text = u"{:g}".format(float(izaje["h"])) if izaje.get("h") else u""
         ends = rs.read_json_setting(f.get("ends"))
         self.legs_bot = dict(ends.get("bot") or {})
@@ -973,6 +975,8 @@ class AceroWindow(forms.WPFWindow):
             return u""
         return json.dumps({"on": bool(self.chk_izaje.IsChecked),
                            "d": self.cbo_izaje.SelectedItem or u'3/8"', "dist": dist, "h": h,
+                           "conf": bool(self.chk_izaje_conf.IsChecked),
+                           "conf_dist": (self.txt_izaje_conf_dist.Text or u"").strip(),
                            "type": self._chosen_type(self.cbo_izaje_type)}, ensure_ascii=False)
 
     def _ends_text(self):
@@ -2125,7 +2129,9 @@ class AceroWindow(forms.WPFWindow):
             drawn = [item for item in drawn if families.get(item[0]) is not None]
             # stacked like they are generated (see rc.generate_column)
             lifts = rs.stack_lifts([(kind, rs.BAR_DIAMETERS_MM[families[kind]["key"]] / 1000.0, is_open is None)
-                                    for kind, _, _, is_open in drawn])
+                                    for kind, _, _, is_open in drawn],
+                                   [rs.plan_path(poly, wrap, is_open, bars, families[kind]["key"])
+                                    for kind, poly, wrap, is_open in drawn])
             for (kind, poly, wrap, is_open), lift in zip(drawn, lifts):
                 family = families[kind]
                 try:
@@ -2142,10 +2148,15 @@ class AceroWindow(forms.WPFWindow):
                       + [dz + lift + clear + j for j in (joint_conf if kind == rs.KIND_CONFINEMENT else joint)])
                 loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
                               rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
+                if extra.get("izaje") and kind == rs.KIND_CONFINEMENT and izaje.get("conf"):
+                    loops.append((kind, [(x + dx, y + dy) for x, y in line], closed,
+                                  [dz + z + lift for z in rs.izaje_conf_positions(
+                                      extra["izaje_h"], family["rest"], text=izaje.get("conf_dist"))],
+                                  rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
                 if extra.get("izaje") and kind == rs.KIND_EDGE and closed:
                     izaje_key = izaje.get("d") or u'3/8"'
                     loops.append(("izaje", [(x + dx, y + dy) for x, y in line], True,
-                                  [dz + z for z in extra["izaje"]],
+                                  [dz + z + lift for z in extra["izaje"]],
                                   rs.BAR_DIAMETERS_MM.get(izaje_key, 9.525) / 2000.0))
         top = max(s["z"] + s["height"] for s in segments)
         # Stacked columns with continuous bars: the pieces and laps the
@@ -2986,6 +2997,59 @@ else:
     targets = [c for t in state.checked for c in by_id[t].columns]
     scope_label = "tipos marcados, todo el modelo"
 
+def _wall_height(wall):
+    box = wall.get_BoundingBox(None)
+    return round((box.Max.Z - box.Min.Z) * rc.FT, 2) if box else None
+
+
+def _activo(wall):
+    p = wall.LookupParameter("ACTIVO")
+    return (p.AsString() or u"") if p is not None else u""
+
+
+def inherit_configs(targets):
+    """A wall picked without its own settings (each wall keeps its own) takes
+    those of a configured wall of its type and height - one picked with it
+    first, else the most used in its block (ACTIVO) - instead of being left
+    out with no bars (2026-11-11: sobrecimientos left empty unnoticed)."""
+    def key(w):
+        return (id_of(w.GetTypeId()), _wall_height(w))
+
+    def own(w):
+        p = w.LookupParameter(rc.WALL_PARAM)
+        return (p.AsString() or u"") if p is not None else u""
+    missing = [w for w in targets if not own(w)]
+    if not missing:
+        return []
+    missing_ids = set(id_of(w.Id) for w in missing)
+    picked = {}
+    for w in targets:
+        if id_of(w.Id) not in missing_ids and own(w):
+            picked.setdefault(key(w), {}).setdefault(own(w), 0)
+            picked[key(w)][own(w)] += 1
+    model = {}
+    for w in DB.FilteredElementCollector(doc).OfCategory(COLUMNS_BIC).WhereElementIsNotElementType():
+        s = own(w)
+        if s:
+            bucket = model.setdefault(key(w) + (_activo(w),), {})
+            bucket[s] = bucket.get(s, 0) + 1
+    plan = []
+    for w in missing:
+        found = picked.get(key(w)) or model.get(key(w) + (_activo(w),))
+        if found:
+            plan.append((w, max(found.items(), key=lambda kv: kv[1])[0]))
+    if plan:
+        tx = DB.Transaction(doc, "Acero Muro: configuracion heredada")
+        tx.Start()
+        rc.ensure_parameters(doc)
+        for w, s in plan:
+            w.LookupParameter(rc.WALL_PARAM).Set(s)
+        tx.Commit()
+    return [w for w, _ in plan]
+
+
+inherited = inherit_configs(targets)
+
 specs = {}
 spec_errors = {}
 for t in set(group_of(c) for c in targets):
@@ -3080,5 +3144,20 @@ except Exception:
 
 # No report window: only what failed, in one message.
 failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Columna(s)")]
+# every wall of the scope is checked: one left with no bar at all is listed
+# (all of them counted) and selected in the model, never passed over
+_with_bars = set(id_of(c.Id) for c, _, made in done if made)
+empty = [c for c in targets if id_of(c.Id) not in _with_bars]
+if inherited:
+    failed.insert(0, u"{} muro(s) sin configuracion propia tomaron la de un muro igual (tipo y altura): {}".format(
+        len(inherited), u", ".join(str(id_of(w.Id)) for w in inherited[:15])))
+if empty:
+    failed.insert(0, u"{} MURO(S) QUEDARON SIN ACERO (seleccionados en el modelo): {}{}".format(
+        len(empty), u", ".join(str(id_of(c.Id)) for c in empty[:15]), u"..." if len(empty) > 15 else u""))
+    try:
+        revit.uidoc.Selection.SetElementIds(List[DB.ElementId]([c.Id for c in empty]))
+    except Exception:
+        pass
 if failed:
-    forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")
+    more = u"\n(y {} avisos mas)".format(len(failed) - 12) if len(failed) > 12 else u""
+    forms.alert(u"Revisar:\n- " + u"\n- ".join(failed[:12]) + more, title="Acero")

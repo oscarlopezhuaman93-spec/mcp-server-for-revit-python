@@ -194,15 +194,22 @@ class RoofModel(object):
         return out
 
     def generate(self, settings, mm, bar_type_for, tag=None):
+        def _type_of(f, key, face):  # bar_type_for(key, face, axis) or the old bar_type_for(key)
+            try:
+                return f(key, face, None)
+            except TypeError:
+                return f(key)
         """Create the roof's vigueta bars (inside an open Transaction): equal
         bars side by side as one set along the ridge. Returns [rebar]."""
         from Autodesk.Revit.DB.Structure import Rebar, RebarStyle, RebarHookOrientation
         doc = self.a.Document
         groups = {}
+        faces = {}  # each bar's face (inf / sup): its own bar type (the window's "Tipo")
         order = []
         for t, (p, bars) in sorted(self.plan(settings, mm).items()):
             for bar in bars:
                 sig = (bar["name"], bar["key"], tuple((round(s, 3), round(z, 3)) for s, z in bar["path"]))
+                faces[sig] = bar.get("face")
                 if sig not in groups:
                     groups[sig] = []
                     order.append(sig)
@@ -229,7 +236,7 @@ class RoofModel(object):
                     pts.append(DB.XYZ(x / FT, y / FT, z / FT))
                 curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
                                          if pts[k].DistanceTo(pts[k + 1]) > 1e-4])
-                rebar = Rebar.CreateFromCurves(doc, RebarStyle.Standard, bar_type_for(key), None, None, host, normal, curves,
+                rebar = Rebar.CreateFromCurves(doc, RebarStyle.Standard, _type_of(bar_type_for, key, faces.get(sig)), None, None, host, normal, curves,
                                                RebarHookOrientation.Right, RebarHookOrientation.Right, True, True)
                 if len(run) > 1:
                     rebar.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(len(run), (run[1] - run[0]) / FT, True, True, True)

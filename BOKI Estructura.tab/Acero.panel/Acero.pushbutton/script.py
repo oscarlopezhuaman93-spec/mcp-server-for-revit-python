@@ -581,16 +581,22 @@ class AceroWindow(forms.WPFWindow):
         self._circ_check()
 
     def _circ_check(self):
+        """The spiral's pitch: the 'rto @' of the Borde distribution (no field
+        of its own - the user, 2026-11-12: one distribution as in every column)."""
         try:
-            pitch = float((self.txt_circ_pitch.Text or u"").replace(u",", u".")) / 100.0
+            pitch = rs.parse_distribution((self.txt_edge_dist.Text or u"").strip())[1]
             ok, clear = rs.spiral_clear_ok(pitch, rs.BAR_DIAMETERS_MM[self._family_key(rs.KIND_EDGE)] / 1000.0)
-        except (ValueError, KeyError):
+        except Exception:
             pitch, ok, clear = None, False, 0.0
         if not self.rb_circ_spiral.IsChecked:
             self.txt_circ_check.Text = u""
+        elif pitch is None:
+            self.txt_circ_check.Text = u"Escribe la distribución de Borde (el 'rto @' es la separación de la espiral)"
+            self.txt_circ_check.Foreground = C_REFUSED
         else:
-            self.txt_circ_check.Text = (u"✔ Paso libre {:.1f} cm (E.060: 2.5 a 7.5)" if ok
-                                        else u"✖ Paso libre {:.1f} cm fuera de 2.5 a 7.5 (E.060)").format(clear * 100)
+            self.txt_circ_check.Text = (u"✔ Espiral @{:.1f} cm (rto de Borde), libre {:.1f} cm" if ok
+                                        else u"✖ Espiral @{:.1f} cm (rto de Borde): libre {:.1f} cm, E.060 pide 2.5 a 7.5"
+                                        ).format(pitch * 100, clear * 100)
             self.txt_circ_check.Foreground = C_DRAFT if ok else C_REFUSED
         return pitch
 
@@ -651,6 +657,8 @@ class AceroWindow(forms.WPFWindow):
         self._filling_types = False
         self.txt_izaje_dist.Text = izaje.get("dist") or u""
         self.chk_izaje.IsChecked = bool(izaje) and izaje.get("on", True)
+        self.chk_izaje_conf.IsChecked = bool(izaje.get("conf"))
+        self.txt_izaje_conf_dist.Text = izaje.get("conf_dist") or u""
         self.txt_izaje_h.Text = u"{:g}".format(float(izaje["h"])) if izaje.get("h") else u""
         ends = rs.read_json_setting(f.get("ends"))
         self.legs_bot = dict(ends.get("bot") or {})
@@ -1068,6 +1076,8 @@ class AceroWindow(forms.WPFWindow):
             return u""
         return json.dumps({"on": bool(self.chk_izaje.IsChecked),
                            "d": self.cbo_izaje.SelectedItem or u'3/8"', "dist": dist, "h": h,
+                           "conf": bool(self.chk_izaje_conf.IsChecked),
+                           "conf_dist": (self.txt_izaje_conf_dist.Text or u"").strip(),
                            "type": self._chosen_type(self.cbo_izaje_type)}, ensure_ascii=False)
 
     def _ends_text(self):
@@ -1921,7 +1931,9 @@ class AceroWindow(forms.WPFWindow):
             drawn = [item for item in drawn if families.get(item[0]) is not None]
             # stacked like they are generated (see rc.generate_column)
             lifts = rs.stack_lifts([(kind, rs.BAR_DIAMETERS_MM[families[kind]["key"]] / 1000.0, is_open is None)
-                                    for kind, _, _, is_open in drawn])
+                                    for kind, _, _, is_open in drawn],
+                                   [rs.plan_path(poly, wrap, is_open, bars, families[kind]["key"])
+                                    for kind, poly, wrap, is_open in drawn])
             circ = self.design.get("circ")
             if circ and getattr(section, "is_circle", False) and edge is not None:
                 # circular column (rc._circular_steel): hoops at the edge
@@ -1934,7 +1946,8 @@ class AceroWindow(forms.WPFWindow):
                 radius = section.radius_m - cover - ds / 2.0
                 ring = [(x + dx, y + dy) for x, y in rs.circle_points(radius, 36)]
                 if circ.get("t") == rs.CIRC_SPIRAL:
-                    pts = rs.spiral_path(radius, cover, height - cover, circ.get("p") or rs.SPIRAL_PITCH_M, ds)
+                    pts = rs.spiral_path(radius, cover, height - cover,
+                                         edge.get("rest") or circ.get("p") or rs.SPIRAL_PITCH_M, ds)
                     zs = [dz + z for _, _, z in pts[::24]]
                 else:
                     zs = [dz + z for z, _ in edge["tagged"]] + [dz + clear + j for j in joint]
@@ -1955,10 +1968,15 @@ class AceroWindow(forms.WPFWindow):
                       + [dz + lift + clear + j for j in (joint_conf if kind == rs.KIND_CONFINEMENT else joint)])
                 loops.append((kind, [(x + dx, y + dy) for x, y in line], closed, zs,
                               rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
+                if extra.get("izaje") and kind == rs.KIND_CONFINEMENT and izaje.get("conf"):
+                    loops.append((kind, [(x + dx, y + dy) for x, y in line], closed,
+                                  [dz + z + lift for z in rs.izaje_conf_positions(
+                                      extra["izaje_h"], family["rest"], text=izaje.get("conf_dist"))],
+                                  rs.BAR_DIAMETERS_MM[family["key"]] / 2000.0))
                 if extra.get("izaje") and kind == rs.KIND_EDGE and closed:
                     izaje_key = izaje.get("d") or u'3/8"'
                     loops.append(("izaje", [(x + dx, y + dy) for x, y in line], True,
-                                  [dz + z for z in extra["izaje"]],
+                                  [dz + z + lift for z in extra["izaje"]],
                                   rs.BAR_DIAMETERS_MM.get(izaje_key, 9.525) / 2000.0))
         top = max(s["z"] + s["height"] for s in segments)
         # Stacked columns with continuous bars: the pieces and laps the
@@ -2749,5 +2767,17 @@ except Exception:
 
 # No report window: only what failed, in one message.
 failed = [w for w in warnings if u"sin generar" in w or w.startswith(u"Columna(s)")]
+# every element of the scope is checked: one left with no bar at all is listed
+# (all of them counted) and selected in the model, never passed over (2026-11-11)
+_with_bars = set(id_of(c.Id) for c, _, made in done if made)
+empty = [c for c in targets if id_of(c.Id) not in _with_bars]
+if empty and not dry_run:
+    failed.insert(0, u"{} ELEMENTO(S) QUEDARON SIN ACERO (seleccionados en el modelo): {}{}".format(
+        len(empty), u", ".join(str(id_of(c.Id)) for c in empty[:15]), u"..." if len(empty) > 15 else u""))
+    try:
+        revit.uidoc.Selection.SetElementIds(List[DB.ElementId]([c.Id for c in empty]))
+    except Exception:
+        pass
 if failed:
-    forms.alert(u"No se pudo generar:\n- " + u"\n- ".join(failed[:10]), title="Acero")
+    more = u"\n(y {} avisos mas)".format(len(failed) - 12) if len(failed) > 12 else u""
+    forms.alert(u"Revisar:\n- " + u"\n- ".join(failed[:12]) + more, title="Acero")

@@ -114,19 +114,49 @@ class SlabModel(object):
                 settings["alig"] = dict(settings.get("alig") or {}, dir=sr.X)
                 angle = self.climb_angle() + float(slope_turn(settings))
             self.angle = float(sr.dominant_angle(self.slab_tris) if angle is None else angle)
-            plan, warnings = sr.plan_ribbed(sr.rotate_tris(self.slab_tris, self.angle),
-                                            sr.rotate_tris(self.support_tris, self.angle),
+            # a sloped slab: planned at true length along its slope (2026-11-13,
+            # the user: 0.40 m in plan was 0.435 m on a 23 deg slab - the 0.30 m
+            # bricks with 13.5 cm viguetas instead of 10 cm)
+            self.dev = develop_of(self, self.angle) if self.sloped else None
+            plan, warnings = sr.plan_ribbed(self.to_frame(self.slab_tris), self.to_frame(self.support_tris),
                                             self.thickness, settings, mm, splice, lib)
             return plan["lines"], plan, warnings
         self.angle = 0.0
+        self.dev = None
         lines, warnings = sr.plan_slab(self.slab_tris, self.support_tris, self.thickness, settings, mm, splice)
         return lines, None, warnings
 
     def point(self, axis, s, pos, z):
         """World point of a bar point: s along its axis, pos across."""
-        x, y = (s, pos) if axis == sr.X else (pos, s)
-        x, y = sr.unrotate(x, y, self.angle)
+        x, y = self.point_xy(axis, s, pos)
         return self.f.world(x, y, self.local_z(x, y, z))
+
+    def to_frame(self, tris):
+        """Plan triangles (or points) into the frame of the last plan: turned,
+        and on a sloped slab stretched to true length along its slope."""
+        return [tuple(self.to_frame_xy(p[0], p[1]) for p in t) for t in sr.rotate_tris(tris, self.angle)]
+
+    def to_frame_xy(self, x, y):  # a point already turned: stretched along the slope
+        d = getattr(self, "dev", None)
+        if not d:
+            return x, y
+        (cx, cy), k = d
+        a = x * cx + y * cy
+        return x + (k - 1.0) * a * cx, y + (k - 1.0) * a * cy
+
+    def from_frame(self, x, y):
+        """A point of the plan's frame back to the slab's plan."""
+        d = getattr(self, "dev", None)
+        if d:
+            (cx, cy), k = d
+            a = x * cx + y * cy
+            x, y = x + (1.0 / k - 1.0) * a * cx, y + (1.0 / k - 1.0) * a * cy
+        return sr.unrotate(x, y, self.angle)
+
+    def into_frame(self, x, y):
+        """A point of the slab's plan into the plan's frame."""
+        p = sr.rotate_tris([((x, y),)], self.angle)[0][0]
+        return self.to_frame_xy(p[0], p[1])
 
     def climb_angle(self):
         """Direction (deg, model axes) the slab climbs: its largest top face's."""
@@ -164,19 +194,32 @@ class SlabModel(object):
 
     def point_xy(self, axis, s, pos):
         x, y = (s, pos) if axis == sr.X else (pos, s)
-        return sr.unrotate(x, y, self.angle)
+        return self.from_frame(x, y)
 
     def frame_slab(self):
         """The slab's triangles in the frame of the last plan."""
-        return sr.rotate_tris(self.slab_tris, self.angle)
+        return self.to_frame(self.slab_tris)
 
     def frame_supports(self):
-        return sr.rotate_tris(self.support_tris, self.angle)
+        return self.to_frame(self.support_tris)
 
     def direction(self, axis):
-        """World unit vector of a plan axis (in the turned frame)."""
-        x, y = sr.unrotate(1.0, 0.0, self.angle) if axis == sr.X else sr.unrotate(0.0, 1.0, self.angle)
-        return (self.f.ux * x + self.f.uy * y).Normalize()
+        """World unit vector (in plan) of a plan axis (in the turned frame)."""
+        o = self.from_frame(0.0, 0.0)
+        x, y = self.from_frame(1.0, 0.0) if axis == sr.X else self.from_frame(0.0, 1.0)
+        return (self.f.ux * (x - o[0]) + self.f.uy * (y - o[1])).Normalize()
+
+
+def develop_of(model, angle):
+    """((cx, cy), k) of a sloped slab in a plan frame turned by `angle`: its
+    climb direction there and 1 / cos(slope) - the stretch to true length."""
+    tops = [f for f in model.f.faces if f.normal[2] > 0.3]
+    f = max(tops, key=lambda q: q.area)
+    nz = abs(f.normal[2])
+    if nz > 0.9999:
+        return None
+    a = math.radians(model.climb_angle() - angle)
+    return (math.cos(a), math.sin(a)), 1.0 / nz
 
 
 def slope_turn(settings):
@@ -205,11 +248,11 @@ def aligned_start(model_a, rib_a, model_b, settings_b, mm, lib=None, mirror=None
     # A's first vigueta (a point of its line) in B's frame: its cross position there
     c = rib_a["viguetas"][0]
     x, y = (0.0, c) if rib_a["axis"] == sr.X else (c, 0.0)
-    w = model_a.f.world(*(sr.unrotate(x, y, model_a.angle) + (0.0,)))
+    w = model_a.f.world(*(model_a.from_frame(x, y) + (0.0,)))
     if mirror is not None:
         w = mirror(w)
     bx, by, _ = model_b.f.local(w)
-    rx, ry = sr.rotate_tris([((bx, by),)], model_b.angle)[0][0]
+    rx, ry = model_b.into_frame(bx, by)
     target = ry if rib_b["axis"] == sr.X else rx
     return round((target - rib_b["viguetas"][0]) % s, 4)
 
@@ -224,12 +267,17 @@ def aligned_phase(model_a, rib_a, model_b, settings_b, mirror=None):
         return None
     c = rib_a["viguetas"][0]
     x, y = (0.0, c) if rib_a["axis"] == sr.X else (c, 0.0)
-    w = model_a.f.world(*(sr.unrotate(x, y, model_a.angle) + (0.0,)))
+    w = model_a.f.world(*(model_a.from_frame(x, y) + (0.0,)))
     if mirror is not None:
         w = mirror(w)
     bx, by, _ = model_b.f.local(w)
     angle_b = model_b.climb_angle() + slope_turn(settings_b)
     rx, ry = sr.rotate_tris([((bx, by),)], angle_b)[0][0]
+    dev = develop_of(model_b, angle_b) if model_b.sloped else None  # at true length, as it is planned
+    if dev:
+        (cx, cy), k = dev
+        a = rx * cx + ry * cy
+        rx, ry = rx + (k - 1.0) * a * cx, ry + (k - 1.0) * a * cy
     return round(ry, 4)  # the viguetas run along the frame's x: their positions are its y
 
 
@@ -285,7 +333,11 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None, skip=None
                 pts = [model.point(axis, s, pos, z) for s, z in path]
             curves = List[DB.Curve]([DB.Line.CreateBound(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
                                      if pts[k].DistanceTo(pts[k + 1]) > 1e-4])
-            rebar = Rebar.CreateFromCurves(doc, RebarStyle.Standard, bar_type_for(key), None, None, model.element,
+            try:  # the type chosen for this layer (the window's "Tipo"), else by diameter
+                bar_type = bar_type_for(key, face, axis)
+            except TypeError:
+                bar_type = bar_type_for(key)
+            rebar = Rebar.CreateFromCurves(doc, RebarStyle.Standard, bar_type, None, None, model.element,
                                            normal, curves, RebarHookOrientation.Right, RebarHookOrientation.Right,
                                            True, True)
             if count > 1:
@@ -506,9 +558,11 @@ def cut_bricks(slab, bricks):
     if bb is None:
         return n_slab, 0
     pad = DB.XYZ(1.0, 1.0, 1.0)
-    beams = list(DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
-                 .WhereElementIsNotElementType()
-                 .WherePasses(DB.BoundingBoxIntersectsFilter(DB.Outline(bb.Min - pad, bb.Max + pad))))
+    # the beams and the columns (a corner brick by a column: notched by it,
+    # 2026-11-13 - it stood into the column) cut the bricks they meet
+    around = DB.BoundingBoxIntersectsFilter(DB.Outline(bb.Min - pad, bb.Max + pad))
+    beams = [e for bic in (DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_StructuralColumns)
+             for e in DB.FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType().WherePasses(around)]
     for b in bricks:
         hit = DB.ElementIntersectsElementFilter(b)
         for beam in beams:

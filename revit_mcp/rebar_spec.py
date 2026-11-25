@@ -593,7 +593,48 @@ def bar_piece_points(x, y, diameter, z_start, z_end, lap, cranked, inward=None):
     return [(x, y, z_start), (x, y, crank_from), (ix, iy, z_end - lap), (ix, iy, z_end)]
 
 
-def stack_lifts(items):
+def _seg_dist(a, b, c, d):
+    """Plan distance (m) between segments ab and cd."""
+    def pt_seg(p, q, r):
+        qx, qy = r[0] - q[0], r[1] - q[1]
+        L = qx * qx + qy * qy
+        t = 0.0 if L <= 1e-12 else max(0.0, min(1.0, ((p[0] - q[0]) * qx + (p[1] - q[1]) * qy) / L))
+        return ((p[0] - q[0] - t * qx) ** 2 + (p[1] - q[1] - t * qy) ** 2) ** 0.5
+
+    def cross(o, p, q):
+        return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+    d1, d2, d3, d4 = cross(c, d, a), cross(c, d, b), cross(a, b, c), cross(a, b, d)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and d1 and d2 and d3 and d4:
+        return 0.0
+    return min(pt_seg(a, c, d), pt_seg(b, c, d), pt_seg(c, a, b), pt_seg(d, a, b))
+
+
+def paths_clash(p, q, gap):
+    """True when two plan polylines (closed: last point back to the
+    first) come closer than `gap` (m): set at one height they would run
+    through each other."""
+    def segs(path):
+        pts, closed = path
+        n = len(pts)
+        return [(pts[k], pts[(k + 1) % n]) for k in range(n if closed and n > 2 else n - 1)]
+    for a, b in segs(p):
+        for c, d in segs(q):
+            if _seg_dist(a, b, c, d) < gap:
+                return True
+    return False
+
+
+def plan_path(poly, wrap, is_open, bars, key):
+    """(centerline, closed) of a drawn stirrup for stack_lifts; None for a tie."""
+    if is_open is None:
+        return None
+    try:
+        return (list(stirrup_centerline(poly, bars, key, wrap, is_open)), not is_open)
+    except Exception:
+        return None
+
+
+def stack_lifts(items, paths=None):
     """How far (m) each stirrup/tie is raised over its set height so the
     ones set at the same height lie stacked, touching, like on site, not
     through each other. `items`: [(kind, diameter_m, is_tie)] in drawing
@@ -603,18 +644,34 @@ def stack_lifts(items):
     diameter BELOW the first stirrup (negative lift), touching it: above,
     it would run into the stirrup's 135-degree hooks, which Revit lifts
     over the stirrup; the ties sit side by side in plan, never stacked on
-    each other."""
+    each other.
+    (2026-11-10, with the user) `paths`: optional [(plan points, closed)]
+    per item. Then a stirrup is raised only over the ones it would touch
+    in plan; stirrups apart (e.g. the two U's of an L wall) stay aligned
+    at the same height."""
     order = sorted(range(len(items)), key=lambda i: (
         0 if items[i][0] == KIND_EDGE else 1, 1 if items[i][2] else 0, i))
     lifts = [0.0] * len(items)
     height = 0.0
+    placed = []
     for i in order:
         kind, diameter, is_tie = items[i]
         if is_tie:
             lifts[i] = -diameter
             continue
-        lifts[i] = height
-        height += diameter
+        if paths is not None and paths[i]:
+            top = 0.0
+            for j in placed:
+                # closer than their radii: through each other (facing U's,
+                # one diameter apart, stay at one height)
+                gap = (diameter + items[j][1]) / 2.0 - 0.001
+                if not paths[j] or paths_clash(paths[i], paths[j], gap):
+                    top = max(top, lifts[j] + items[j][1])
+            lifts[i] = top
+        else:
+            lifts[i] = height
+        height = max(height, lifts[i] + diameter)
+        placed.append(i)
     return lifts
 
 
@@ -773,6 +830,22 @@ def izaje_positions(height, text, min_offset=0.0):
     return sorted(positions)
 
 
+def izaje_conf_positions(height, rest, first=0.05, text=None):
+    """(2026-11-10, with the user) Confinement stirrups in the izaje zone,
+    from the footing face up to below the izaje height (where their own
+    distribution starts). `text`: their own distribution ('1@0.05,
+    rto@0.15'), counted up from the footing face; blank: the first 5 cm
+    over the face, then every 'rest' (their rto)."""
+    # (2026-11-11, with the user) read like the izaje: the first ON the izaje
+    # height, then down towards the footing (izaje_positions); blank: every
+    # 'rest' (their rto) from the izaje height down.
+    if text and text.strip():
+        return izaje_positions(height, text)
+    if not rest or rest <= 0:
+        return []
+    return izaje_positions(height, u"{}@{:.4f}".format(int(height / rest) + 2, rest))
+
+
 def leg_vector(x, y, half_b, half_h, direction):
     """Unit (x, y) of a bar end leg at plan position (x, y) of a b x h
     section: square to its nearest face, outwards (LEG_OUT) or inwards."""
@@ -793,10 +866,14 @@ def leg_candidates(x, y, half_b, half_h):
     return [out, other, (-other[0], -other[1]), (-out[0], -out[1])]
 
 
-def leg_samples(leg, tip_cover=0.025):
-    """Distances along a leg checked to be in concrete: its middle, its
-    tip, and the tip plus the cover."""
-    return [leg * 0.5, leg, leg + tip_cover]
+def leg_samples(leg, tip_cover=0.025, step=0.02):
+    """Distances along a leg checked to be in concrete: the whole leg, every
+    `step` m from its bend to its tip, and the tip plus the cover - not only
+    its middle and tip: a leg crossing the joint between two blocks' footings
+    (a few cm of nothing between them) went out of its own footing into the
+    next block's (2026-11-11, with the user)."""
+    n = max(1, int(math.ceil(leg / step - 1e-9)))
+    return [leg * k / float(n) for k in range(1, n + 1)] + [leg + tip_cover]
 
 
 def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=0.0,

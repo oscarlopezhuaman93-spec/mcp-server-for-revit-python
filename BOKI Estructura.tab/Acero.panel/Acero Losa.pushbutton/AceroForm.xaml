@@ -51,12 +51,20 @@
                             <TextBox x:Name="txt_ix_s" Width="40" TextChanged="form_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_ix_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_inf}">
                             <TextBlock Text="Y  &#216; " VerticalAlignment="Center" Foreground="#FF2A6FD6" FontWeight="Bold"/>
                             <ComboBox x:Name="cbo_iy_d" Width="58" SelectionChanged="form_changed"/>
                             <TextBlock Text=" @ " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_iy_s" Width="40" TextChanged="form_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_iy_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
                         </StackPanel>
 
                         <CheckBox x:Name="chk_sup" Content="Acero superior" FontWeight="Bold" Margin="0,8,0,2" Click="form_changed"/>
@@ -73,12 +81,20 @@
                             <TextBox x:Name="txt_sx_s" Width="40" TextChanged="form_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
                         </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_sx_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_sup}">
                             <TextBlock Text="Y  &#216; " VerticalAlignment="Center" Foreground="#FFF08C14" FontWeight="Bold"/>
                             <ComboBox x:Name="cbo_sy_d" Width="58" SelectionChanged="form_changed"/>
                             <TextBlock Text=" @ " VerticalAlignment="Center"/>
                             <TextBox x:Name="txt_sy_s" Width="40" TextChanged="form_changed"/>
                             <TextBlock Text=" m" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                            <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                            <ComboBox x:Name="cbo_sy_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
                         </StackPanel>
                         </StackPanel>
 
@@ -108,9 +124,17 @@
                                 <ComboBox x:Name="cbo_vi_d" Width="58" SelectionChanged="form_changed"/>
                                 <TextBlock Text="  corrido" VerticalAlignment="Center" Foreground="Gray"/>
                             </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                                <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                                <ComboBox x:Name="cbo_vi_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
+                            </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Bastones 1 &#216; " VerticalAlignment="Center" Foreground="#FFD23C3C" FontWeight="Bold"/>
                                 <ComboBox x:Name="cbo_vs_d" Width="58" SelectionChanged="form_changed"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                                <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                                <ComboBox x:Name="cbo_vs_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="extremo Ln / " VerticalAlignment="Center"/>
@@ -120,11 +144,15 @@
                             </StackPanel>
                             <CheckBox x:Name="chk_temp" Content="Temperatura (perpendicular, en la losa de 5 cm)" FontWeight="Bold" Margin="0,8,0,2" Click="form_changed"/>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1" IsEnabled="{Binding IsChecked, ElementName=chk_temp}">
-                                <TextBlock Text="&#216; " VerticalAlignment="Center" Foreground="#FF2A6FD6" FontWeight="Bold"/>
+                                <TextBlock Text="&#216; " VerticalAlignment="Center" Foreground="#FF9646C8" FontWeight="Bold"/>
                                 <ComboBox x:Name="cbo_t_d" Width="58" SelectionChanged="form_changed"/>
                                 <TextBlock Text=" @ " VerticalAlignment="Center"/>
                                 <TextBox x:Name="txt_t_s" Width="40" TextChanged="form_changed"/>
                                 <TextBlock Text=" m" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="32,0,0,3">
+                                <TextBlock Text="Tipo " VerticalAlignment="Center" Foreground="Gray"/>
+                                <ComboBox x:Name="cbo_t_t" Width="250" SelectionChanged="form_changed" ToolTip="Tipo de barra de Revit (autom&#225;tico: el del di&#225;metro)"/>
                             </StackPanel>
                         </StackPanel>
 

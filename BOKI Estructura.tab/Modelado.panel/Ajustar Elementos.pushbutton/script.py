@@ -35,10 +35,74 @@ class _Model(ISelectionFilter):
         return False
 
 
+def _solids(e):
+    out = []
+    for g in e.get_Geometry(DB.Options()):
+        items = [g] if isinstance(g, DB.Solid) else (
+            list(g.GetInstanceGeometry()) if isinstance(g, DB.GeometryInstance) else [])
+        out += [s for s in items if isinstance(s, DB.Solid) and s.Volume > 1e-6]
+    return out
+
+
+def _sloped(b):
+    curve = getattr(getattr(b, "Location", None), "Curve", None)
+    if not isinstance(curve, DB.Line):
+        return False
+    p0, p1 = curve.GetEndPoint(0), curve.GetEndPoint(1)
+    plan = ((p1.X - p0.X) ** 2 + (p1.Y - p0.Y) ** 2) ** 0.5
+    return plan > 1e-6 and abs(p1.Z - p0.Z) / plan > 0.02
+
+
+def _fit_under_roof(e, targets):
+    """A column under sloped beams (a gable: one or both waters): its top up
+    to the lowest top of the concrete over it, and every sloped beam over it
+    joined and cutting it - the column takes both slopes, peak under the
+    ridge (2026-11-13, the user: one sloped beam picked cut it along that
+    water only, or not at all). False when the beams don't cover its whole
+    head (then the usual attachment)."""
+    if not any(_sloped(t) for t in targets if _cat(t) == int(DB.BuiltInCategory.OST_StructuralFraming)):
+        return False
+    b = e.get_BoundingBox(None)
+    out = DB.Outline(DB.XYZ(b.Min.X, b.Min.Y, b.Max.Z - 2.0 / 0.3048), DB.XYZ(b.Max.X, b.Max.Y, b.Max.Z + 4.0 / 0.3048))
+    beams = [x for x in DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_StructuralFraming)
+             .WhereElementIsNotElementType().WherePasses(DB.BoundingBoxIntersectsFilter(out)) if _sloped(x)]
+    ids = set(x.Id for x in beams)
+    beams += [t for t in targets if t.Id not in ids and _sloped(t)]
+    solids = [s for x in beams for s in _solids(x)]
+    tops = []
+    # at the very edges of its head (1 mm in): a sloped top is lowest there -
+    # measured 2 cm in, a sliver of the column stood out of the roof
+    edge = 0.001 / 0.3048
+    for i in range(9):
+        for j in range(5):
+            x = b.Min.X + edge + (b.Max.X - b.Min.X - 2 * edge) * i / 8.0
+            y = b.Min.Y + edge + (b.Max.Y - b.Min.Y - 2 * edge) * j / 4.0
+            ray = DB.Line.CreateBound(DB.XYZ(x, y, b.Max.Z + 6.0 / 0.3048), DB.XYZ(x, y, b.Min.Z))
+            zt = None
+            for s in solids:
+                r = s.IntersectWithCurve(ray, DB.SolidCurveIntersectionOptions())
+                for k in range(r.SegmentCount):
+                    seg = r.GetCurveSegment(k)
+                    z = max(seg.GetEndPoint(0).Z, seg.GetEndPoint(1).Z)
+                    zt = z if zt is None else max(zt, z)
+            if zt is None:
+                return False  # a part of its head under no beam
+            tops.append(zt)
+    while ColumnAttachment.GetColumnAttachment(e, 1) is not None:
+        ColumnAttachment.RemoveColumnAttachment(e, 1)
+    level = doc.GetElement(e.get_Parameter(DB.BuiltInParameter.FAMILY_TOP_LEVEL_PARAM).AsElementId())
+    # 2 mm under the lowest top: never a hair of it out of the concrete
+    e.get_Parameter(DB.BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM).Set(min(tops) - 0.002 / 0.3048 - level.Elevation)
+    _join_cut(e, beams)
+    return True
+
+
 def _fit(e, targets, top):
     """`targets`: one or several (a column under a ridge: both sloped
     beams, each cutting it with its own face)."""
     end = 1 if top else 0
+    if top and _cat(e) in COLUMNS and isinstance(e, DB.FamilyInstance) and _fit_under_roof(e, targets):
+        return
     if _cat(e) in COLUMNS and isinstance(e, DB.FamilyInstance):
         while ColumnAttachment.GetColumnAttachment(e, end) is not None:
             ColumnAttachment.RemoveColumnAttachment(e, end)

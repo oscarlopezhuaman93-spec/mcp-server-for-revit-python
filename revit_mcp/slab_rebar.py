@@ -140,6 +140,19 @@ def support_key(axis, gap):
     return u"{}@{:.2f}".format(axis, (gap[0] + gap[1]) / 2.0)
 
 
+def group_of(settings, face, axis):
+    """The name of a layer's steel for its own type, hook and ends: a ribbed
+    slab's "inf" / "sup" / "temp", a solid slab's "ix" / "iy" / "sx" / "sy"."""
+    named = (settings.get("_groups") or {}).get((face, axis))
+    if named:
+        return named
+    if face == u"temp":
+        return u"temp"
+    if settings.get("kind") == ALIGERADA:
+        return face
+    return (u"i" if face == INF else u"s") + axis
+
+
 def leg_length(settings, key, mm, room):
     """The hook leg (m): the one typed, else 12 db up to 5 cm, never more
     than the room in the slab."""
@@ -202,11 +215,23 @@ def plan_line(chord, supports, face, axis, settings, h, mm, splice=None):
     d = mm[key] / 1000.0
     z = (settings.get("_z") or {}).get((face, axis)) or layer_z(settings, h, mm)[(face, axis)]
     room = h - 2 * c - 2 * d
+    group = group_of(settings, face, axis)
     hooked = settings.get("anchor", ANCHOR_HOOK) == ANCHOR_HOOK
     leg = leg_length(settings, key, mm, room) if hooked else 0.0
+    own_leg = (settings.get("legs") or {}).get(group)
+    if hooked and own_leg is not None:  # this layer's hook typed in a cut
+        leg = max(0.0, min(float(own_leg), room))
     spans, gaps = clear_and_gaps(chord, supports)
     a, b = chord
     bar_start, bar_end = bar_reach(chord, gaps, c)
+    # how far this layer's bars go past the first / last span into the
+    # support, typed in a cut: shorter only - never past the concrete less
+    # the cover (bar_reach)
+    ends = (settings.get("ends") or {}).get(group) or [None, None]
+    if spans and ends[0] is not None:
+        bar_start = min(max(bar_start, spans[0][0] - float(ends[0])), spans[0][0])
+    if spans and ends[1] is not None:
+        bar_end = max(min(bar_end, spans[-1][1] + float(ends[1])), spans[-1][1])
     bars, warnings = [], []
     if bar_end - bar_start < 0.15:  # a corner sliver of the slab: no bar there
         return bars, spans, gaps, warnings
@@ -230,13 +255,15 @@ def plan_line(chord, supports, face, axis, settings, h, mm, splice=None):
             l0 = leg if i == 0 else 0.0
             l1 = leg if last else 0.0
             bars.append({"s0": s0, "s1": s1, "path": _path(s0, s1, z, h, d, lap, not last, l0, l1),
-                         "lap_at": None if last else (round(s1 - lap, 3), round(s1, 3)), "key": key})
+                         "lap_at": None if last else (round(s1 - lap, 3), round(s1, 3)), "key": key,
+                         "group": group, "hooks": (l0 > 0, l1 > 0)})
     elif mode == TOP_BASTONES:
         frac = float(settings[SUP].get("frac") or 1.0 / 3.0)
         for s0, s1, e0, e1, sk in bastones(chord, spans, gaps, frac, settings.get("bast") or {}, axis,
                                             end_frac=settings[SUP].get("end_frac")):
             s0, s1 = max(s0, bar_start), min(s1, bar_end)
-            bars.append({"s0": s0, "s1": s1, "support": sk, "lap_at": None, "key": key,
+            bars.append({"s0": s0, "s1": s1, "support": sk, "lap_at": None, "key": key, "group": group,
+                         "hooks": (bool(e0 and leg), bool(e1 and leg)),
                          "path": _path(s0, s1, z, h, d, 0.0, False, leg if e0 else 0.0, leg if e1 else 0.0)})
     return bars, spans, gaps, warnings
 
@@ -523,7 +550,9 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
           INF: {"on": True, axis: {"d": rb["inf"]["d"], "s": rb["s"]}},
           SUP: {"on": True, "mode": TOP_BASTONES, "frac": rb["sup"]["frac"], "end_frac": rb["sup"]["end_frac"],
                 axis: {"d": rb["sup"]["d"], "s": rb["s"]}},
-          "_z": {(INF, axis): c + di / 2.0, (SUP, axis): h - c - dt - ds / 2.0}}
+          "_z": {(INF, axis): c + di / 2.0, (SUP, axis): h - c - dt - ds / 2.0},
+          "_groups": {(INF, axis): INF, (SUP, axis): SUP},
+          "legs": settings.get("legs") or {}, "ends": settings.get("ends") or {}}
     plan = {(INF, axis): [], (SUP, axis): [], (u"temp", other): []}
     warnings, centers, bricks = [], [], []
     cutting = bool(rb.get("cut", True))
@@ -553,7 +582,8 @@ def plan_ribbed(slab_tris, support_tris, h, settings, mm, splice=None, lib=None)
     if rb["temp"].get("on", True):
         tst = {"cover": settings.get("cover") or 2.0, "anchor": ANCHOR_STRAIGHT, "leg": None, "bast": {},
                INF: {"on": True, other: {"d": rb["temp"]["d"], "s": rb["temp"]["s"]}},
-               SUP: {"on": False, "mode": TOP_NONE}, "_z": {(INF, other): z_temp}}
+               SUP: {"on": False, "mode": TOP_NONE}, "_z": {(INF, other): z_temp},
+               "_groups": {(INF, other): u"temp"}, "ends": settings.get("ends") or {}}
         x0, x1, y0, y1 = extent(slab_tris)
         lo, hi = (y0, y1) if other == X else (x0, x1)
         for pos in positions(lo + c + dt / 2.0, hi - c - dt / 2.0, float(rb["temp"]["s"])):
