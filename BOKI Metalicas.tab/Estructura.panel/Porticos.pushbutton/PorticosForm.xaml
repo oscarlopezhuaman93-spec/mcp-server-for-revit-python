@@ -1,0 +1,90 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="P&#243;rticos met&#225;licos"
+        Height="860" Width="1400" MinWidth="1100" MinHeight="640"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Width" Value="80"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold"/>
+                <StackPanel>
+                    <TextBlock Text="P&#211;RTICOS MET&#193;LICOS" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock Foreground="#FFB9C9DA" FontSize="11"
+                               Text="Nave industrial de alma llena: columnas y vigas W, cartelas en alero y cumbrera, base articulada. E.090 / AISC 360 (LRFD)."/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <DockPanel Margin="12">
+            <StackPanel DockPanel.Dock="Left" Width="400" Margin="0,0,12,0">
+                <TextBlock Text="1. Elige los ejes: los transversales (p&#243;rticos) y los dos de columnas." TextWrapping="Wrap"/>
+                <Button x:Name="btn_pick" Content="SELECCIONAR EJES" Height="32" Margin="0,6,0,2" FontWeight="Bold" Click="pick_click"/>
+                <TextBlock x:Name="txt_axes" Foreground="#FF6B7B8C" TextWrapping="Wrap" Text="No hay ejes seleccionados." Margin="0,0,0,8"/>
+
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="2. Geometr&#237;a" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Luz (eje a eje de columnas)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_span" TextChanged="changed"/><TextBlock Text=" m"/></StackPanel>
+                    <TextBlock Grid.Row="1" Text="Altura de alero"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_eave" TextChanged="changed"/><TextBlock Text=" m"/></StackPanel>
+                    <TextBlock Grid.Row="2" Text="Pendiente del techo"/><StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_slope" TextChanged="changed"/><TextBlock Text=" %"/></StackPanel>
+                    <TextBlock Grid.Row="3" Text="Nivel de base"/><ComboBox Grid.Row="3" Grid.Column="1" x:Name="cbo_level" Height="24" SelectionChanged="changed"/>
+                </Grid>
+
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="3. Perfiles (acero A572 Gr.50)" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Columna"/><ComboBox Grid.Column="1" x:Name="cbo_column" Height="24" Width="150" HorizontalAlignment="Left" SelectionChanged="changed"/>
+                    <TextBlock Grid.Row="1" Text="Viga (rafter)"/><ComboBox Grid.Row="1" Grid.Column="1" x:Name="cbo_rafter" Height="24" Width="150" HorizontalAlignment="Left" SelectionChanged="changed"/>
+                    <TextBlock Grid.Row="2" Text="Cartela alero / cumbrera"/><StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_haunch" TextChanged="changed"/><TextBlock Text=" m"/></StackPanel>
+                    <TextBlock Grid.Row="3" Text="Viga de amarre en alero"/><ComboBox Grid.Row="3" Grid.Column="1" x:Name="cbo_tie" Height="24" Width="150" HorizontalAlignment="Left" SelectionChanged="changed"/>
+                </Grid>
+
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="4. Placa base (base articulada)" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Placa (largo x ancho x espesor)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_plate" Width="110" TextChanged="changed"/><TextBlock Text=" mm"/></StackPanel>
+                    <TextBlock Grid.Row="1" Text="Pernos de anclaje"/><TextBlock Grid.Row="1" Grid.Column="1" Text="4 de 3/4 pulg. F1554 Gr.36"/>
+                    <TextBlock Grid.Row="2" Text="Grout"/><StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_grout" TextChanged="changed"/><TextBlock Text=" mm"/></StackPanel>
+                </Grid>
+                <TextBlock x:Name="txt_error" Foreground="#FFC0392B" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <TextBlock Foreground="#FF6B7B8C" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0"
+                           Text="Correas, arriostres, conexiones y verificaci&#243;n E.090 son los botones siguientes: aqu&#237; solo el p&#243;rtico."/>
+            </StackPanel>
+
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <Button Content="Cancelar" Width="120" Height="40" Margin="0,0,12,0" Click="cancel_click" BorderBrush="#FFC9D3DE" Foreground="#FF16324F"/>
+                <Button x:Name="btn_run" Content="Generar p&#243;rticos..." Width="200" Height="40" FontWeight="Bold" Click="run_click"/>
+            </StackPanel>
+            <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="10" Margin="0,10,0,0">
+                <StackPanel>
+                    <TextBlock Text="RESUMEN ANTES DE GENERAR" FontWeight="Bold"/>
+                    <TextBlock x:Name="txt_summary" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                </StackPanel>
+            </Border>
+            <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1">
+                <Grid>
+                    <TextBlock Text="P&#211;RTICO T&#205;PICO (ELEVACI&#211;N)" FontWeight="Bold" Margin="10,8" VerticalAlignment="Top"/>
+                    <Canvas x:Name="cnv" ClipToBounds="True" SizeChanged="changed"/>
+                </Grid>
+            </Border>
+        </DockPanel>
+    </DockPanel>
+</Window>
