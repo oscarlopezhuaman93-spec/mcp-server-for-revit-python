@@ -33,6 +33,8 @@ ol li, ul li { margin: 2px 0; }
 <tr><td><b>Cerchas</b></td><td>Cerchas de tubo rectangular: <b>en arco</b>, <b>a dos aguas</b> o <b>rectas</b>; sección <b>plana</b> o <b>espacial rectangular</b>.</td><td>Ejes y columnas</td></tr>
 <tr><td><b>Correas y arriostres</b></td><td>Correas de techo (C con labios o <b>tubo rectangular</b>), templadores, largueros, cruces de arriostre.</td><td>Pórticos o Cerchas</td></tr>
 <tr><td><b>Conexiones</b></td><td>Plancha de extremo en alero y cumbrera (A325), anclajes F1554, apoyo articulado con pasador de cerchas.</td><td>Pórticos y Cerchas</td></tr>
+<tr><td><b>Verificar</b></td><td>Verificación preliminar E.090 / AISC 360 LRFD: análisis matricial 2D, combinaciones, D/C de columnas, vigas, cordones, celosía y correas, deflexiones.</td><td>Pórticos, Cerchas y Correas</td></tr>
+<tr><td><b>Metrado metálico</b></td><td>kg, longitudes y m² de pintura por grupo y perfil; exporta a CSV (Excel).</td><td>Todo lo generado</td></tr>
 </table>
 <div class="note"><b>Reglas independientes:</b> cada botón tiene su propio archivo de reglas (metal_porticos, metal_cerchas, metal_correas, metal_conexiones). Se comunican solo por la marca que dejan en los elementos (Comentarios: "BOKI Portico…", "BOKI Cercha…"), así un cambio en un botón no altera otro. Todo se edita volviendo a abrir el botón: borra lo que generó y lo crea de nuevo.</div>
 <div class="note"><b>Familias de BOKI:</b> los tubos, barras, cobertura TR5, pernos y templadores se guardaron de la cancha de Chumbivilcas en <i>familias\metalicas</i>; el plugin los carga solo en cualquier proyecto.</div>
@@ -43,6 +45,8 @@ ol li, ul li { margin: 2px 0; }
 <li><b>Pórticos</b> (nave de alma llena) <b>o Cerchas</b> (arco, dos aguas o recta). Con cerchas, el apoyo se toma de la cara superior de la columna (concreto o acero) que esté en el cruce de ejes.</li>
 <li><b>Correas y arriostres</b>: elige C con labios o tubo rectangular, separación y qué colocar.</li>
 <li><b>Conexiones</b>: planchas, pernos, anclajes y apoyos.</li>
+<li><b>Verificar</b>: revisa los D/C; si algo sale en rojo, cambia el perfil en su botón y vuelve a generar.</li>
+<li><b>Metrado metálico</b>: pesos y pintura, y expórtalo a Excel.</li>
 </ol>
 <p>En cada ventana: <b>SELECCIONAR EJES</b> (cuando aplica) → revisa la <b>vista previa</b> y el <b>resumen</b> (cantidades y pesos) → <b>Generar</b>. Nada se crea antes de pulsar Generar.</p>
 
@@ -96,7 +100,26 @@ ol li, ul li { margin: 2px 0; }
 </div>
 <img class="shot" src="41_correas_dos_aguas.png"><p class="cap">Correas de tubo 100x50x4 y arriostres sobre cerchas a dos aguas.</p>
 
-<h2>6. Cómo se revisó (como se construye)</h2>
+<h2 class="pb">6. Verificar (E.090 / AISC 360 LRFD, preliminar)</h2>
+<table>
+<tr><th>Tema</th><th>Criterio</th></tr>
+<tr><td>Cargas (E.020)</td><td>Muerta de cobertura 0.15 kN/m² + correas + peso propio; viva de techo 0.30 kN/m²; viento 75 km/h (q = 0.005 V²), muros +0.8 / −0.6, techo −0.7 / −0.6. Editables en la ventana.</td></tr>
+<tr><td>Combinaciones (E.090)</td><td>1.4D; 1.2D+1.6Lr; 1.2D+1.6Lr+0.8W; 1.2D+1.3W+0.5Lr; 0.9D+1.3W.</td></tr>
+<tr><td>Pórticos</td><td>Análisis matricial 2D del pórtico típico interior (base articulada). AISC E3 (compresión, KLx = 2.0 h en columnas), F2 (flexión con pandeo lateral-torsional, Lb = largueros / correas), H1-1 (interacción). Deflexión cumbrera L/240 (Lr), alero h/60 (W).</td></tr>
+<tr><td>Cerchas</td><td>Armadura de nudos articulados (un plano; la espacial reparte la mitad por plano). Arco: dos apoyos fijos; recta y dos aguas: fijo + deslizante. Tracción 0.9FyAg, compresión E3 (K = 1). Deflexión L/240.</td></tr>
+<tr><td>Correas</td><td>Viga simple entre pórticos/cerchas: flexión (sección bruta), deflexión L/180 con Lr y L/120 con D+Lr (techo sin cielo raso, IBC 1604.3).</td></tr>
+</table>
+<p>Resultado en colores: <b style="color:#1F9D55">verde</b> D/C ≤ 0.90, <b style="color:#C88A00">ámbar</b> 0.90–1.00, <b style="color:#C0392B">rojo</b> &gt; 1.00 (no cumple). Botón <i>Exportar CSV</i> para la memoria.</p>
+<img class="shot" src="92_v15_verificar.png"><p class="cap">Ejemplo A: columnas D/C 0.35, vigas 0.49, deflexiones y correas dentro de los límites.</p>
+<img class="shot" src="70_verificar_arco.png"><p class="cap">Ejemplo B: cordones D/C 0.36–0.50, celosía ≤ 0.05, correas de tubo 100x50x4 D/C 0.75.</p>
+<div class="note"><b>Preliminar:</b> sirve para predimensionar y detectar perfiles insuficientes. No incluye sismo (E.030), diseño de conexiones, pandeo local ni estabilidad global; no reemplaza la memoria de cálculo del ingeniero responsable.</div>
+
+<h2 class="pb">7. Metrado metálico</h2>
+<p>Suma todo lo generado por Pórticos, Cerchas, Correas y Conexiones, agrupado por elemento y perfil: <b>cantidad, longitud, peso</b> (volumen real del sólido × 7850 kg/m³) y <b>m² de pintura</b> (superficie expuesta; los pernos se consideran galvanizados). <i>Exportar CSV (Excel)</i> genera la hoja para el presupuesto.</p>
+<img class="shot" src="93_v15_metrado.png"><p class="cap">Ejemplo A: 21.8 t de acero y 954 m² de pintura.</p>
+<img class="shot" src="71_metrado_arco.png"><p class="cap">Ejemplo B (3 cerchas de prueba): 11.5 t y 836 m² de pintura.</p>
+
+<h2>8. Cómo se revisó (como se construye)</h2>
 <div class="ok"><ul style="margin:0">
 <li>Correas (C y tubo): alma perpendicular a la cubierta (1.000) y apoyadas sobre la viga o el cordón (0 mm de hueco), en pórticos, arcos, dos aguas y rectas.</li>
 <li>Largueros: alma horizontal, por fuera y apoyados en la cara de las columnas.</li>
@@ -105,5 +128,7 @@ ol li, ul li { margin: 2px 0; }
 <li>Cerchas: cumbre del arco 8.20 m sobre el apoyo (7.50 + 0.70), igual que la cancha.</li>
 <li>Todas las pruebas en Revit en zonas vacías del modelo y deshechas al terminar.</li>
 </ul></div>
-<div class="note"><b>Pendiente:</b> verificación E.090 / AISC 360 de perfiles y conexiones, y el metrado (kg por perfil, planchas, pernos y pintura) en un cuadro.</div>
+<ul style="margin:6px 0 0 18px"><li>Pernos modelados como se instalan: A325 con cabeza hexagonal, arandela y tuerca; anclajes F1554 en L con arandela y tuerca; arriostre de pared llega a la cartela 0.30 m sobre la placa base.</li>
+<li>Motor de cálculo validado con casos de libro (viga simple PL/4 y PL³/48EI, cercha triangular).</li></ul>
+<p style="font-size:9pt;color:#6B7B8C;margin-top:10px">BOKI Metálicas v1.5.1 · BOKI ESTRUCTURAS</p>
 </body></html>
