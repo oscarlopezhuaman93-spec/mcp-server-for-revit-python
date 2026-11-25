@@ -188,9 +188,18 @@ class PorticosWindow(forms.WPFWindow):
             cnv.Children.Add(pg)
         d_col = max(4.0, ms.depth_m(cfg["column"]) * sc)
         d_raf = max(4.0, ms.depth_m(cfg["rafter"]) * sc)
-        for key, w in (("col_left", d_col), ("col_right", d_col), ("rafter_left", d_raf), ("rafter_right", d_raf)):
+        for key in ("col_left", "col_right"):
             (u0, z0), (u1, z1) = ms.frame_points(cfg)[key]
-            line(P(u0, z0), P(u1, z1), C_STEEL, min(w, 10))
+            line(P(u0, z0), P(u1, z1), C_STEEL, min(d_col, 10))
+        dz = ms.depth_m(cfg["rafter"]) * (1.0 + (cfg["slope"] / 100.0) ** 2) ** 0.5
+        for key in ("rafter_left", "rafter_right"):  # cara superior en la linea, peralte hacia abajo
+            (u0, z0), (u1, z1) = ms.frame_points(cfg)[key]
+            pg = Polygon()
+            pc = PointCollection()
+            for u, z in ((u0, z0), (u1, z1), (u1, z1 - dz), (u0, z0 - dz)):
+                pc.Add(P(u, z))
+            pg.Points, pg.Fill = pc, C_STEEL
+            cnv.Children.Add(pg)
         for u in (0.0, span):
             r = Rectangle()
             r.Width, r.Height, r.Fill = 30, 6, C_PLATE

@@ -91,7 +91,7 @@ class Layout(object):
 
     def text(self):
         sp = sorted(set(round(s, 2) for s in self.spacings))
-        return u"{} porticos (ejes {} a {}), columnas en {} y {}, luz {:.2f} m, separacion {}".format(
+        return u"{} pórticos (ejes {} a {}), columnas en {} y {}, luz {:.2f} m, separación {}".format(
             len(self.frames), self.frames[0][0], self.frames[-1][0], self.lines[0], self.lines[1],
             self.span, u" / ".join(u"{:.2f} m".format(s) for s in sp) if sp else u"-")
 
@@ -284,20 +284,21 @@ def generate(doc, layout, level, cfg):
             _tag(beam, cfg, u"viga " + name)
             made["rafters"].append(beam)
         # cartelas: alma (triangulo, espesor tw) + ala inferior (bf x tf) en la hipotenusa
-        for tri in ms.haunch_triangles(cfg):
+        for tri, edges in zip(ms.haunch_triangles(cfg), ms.haunch_flanges(cfg)):
             xyz = [_frame_xyz(pa, pb, base_z, u, z) for u, z in tri]
-            web = _extrude(xyz, normal, _ft(r_tw))
-            a, b = xyz[1], xyz[2]
-            along = (b - a).Normalize()
-            side = normal.Multiply(_ft(r_bf) / 2.0)
-            down = along.CrossProduct(normal).Normalize()
-            if down.Z > 0:
-                down = down.Negate()
-            th = down.Multiply(_ft(r_tf))
-            rect = [a - side, a + side, a + side + th, a - side + th]
-            flange = DB.GeometryCreationUtilities.CreateExtrusionGeometry(
-                List[DB.CurveLoop]([_loop(rect)]), along, a.DistanceTo(b))
-            made["haunches"].append(_shape(doc, [web, flange], int(DB.BuiltInCategory.OST_StructuralFraming),
+            solids = [_extrude(xyz, normal, _ft(r_tw))]
+            for (ua, za), (ub, zb) in edges:
+                a, b = _frame_xyz(pa, pb, base_z, ua, za), _frame_xyz(pa, pb, base_z, ub, zb)
+                along = (b - a).Normalize()
+                side = normal.Multiply(_ft(r_bf) / 2.0)
+                down = along.CrossProduct(normal).Normalize()
+                if down.Z > 0:
+                    down = down.Negate()
+                th = down.Multiply(_ft(r_tf))
+                rect = [a - side, a + side, a + side + th, a - side + th]
+                solids.append(DB.GeometryCreationUtilities.CreateExtrusionGeometry(
+                    List[DB.CurveLoop]([_loop(rect)]), along, a.DistanceTo(b)))
+            made["haunches"].append(_shape(doc, solids, int(DB.BuiltInCategory.OST_StructuralFraming),
                                            cfg, u"cartela " + name, steel))
     # vigas de amarre en el alero, a lo largo de A y B
     for i in range(len(layout.frames) - 1):

@@ -130,11 +130,13 @@ def frame_points(cfg):
     columnas de z 0 al alero, vigas del alero a la cumbrera (cara superior
     del acero sobre esa linea)."""
     s, h = cfg["span"], cfg["eave"]
+    t = cfg["slope"] / 100.0
+    c = depth_m(cfg["column"]) / 2.0  # la viga llega a la cara de la columna (plancha de extremo)
     return {
         "col_left": ((0.0, 0.0), (0.0, h)),
         "col_right": ((s, 0.0), (s, h)),
-        "rafter_left": ((0.0, h), (s / 2.0, h + rise(cfg))),
-        "rafter_right": ((s, h), (s / 2.0, h + rise(cfg))),
+        "rafter_left": ((c, h + c * t), (s / 2.0, h + rise(cfg))),
+        "rafter_right": ((s - c, h + c * t), (s / 2.0, h + rise(cfg))),
     }
 
 
@@ -166,6 +168,19 @@ def haunch_triangles(cfg):
     return out
 
 
+def haunch_flanges(cfg):
+    """Bordes con ala inferior de cada cartela: en el alero la hipotenusa;
+    en la cumbrera los dos lados inclinados (simetrica, como se fabrica)."""
+    out = []
+    tris = haunch_triangles(cfg)
+    for i, tri in enumerate(tris):
+        if i < 2:
+            out.append([(tri[1], tri[2])])
+        else:
+            out.append([(tri[0], tri[2]), (tri[1], tri[2])])
+    return out
+
+
 def triangle_area(tri):
     (a, b), (c, d), (e, f) = tri
     return abs((c - a) * (f - b) - (e - a) * (d - b)) / 2.0
@@ -175,14 +190,15 @@ def summary(cfg, frames, bays):
     """Cantidades y pesos (kg) antes de generar: `frames` porticos y
     `bays` paños entre ellos (vigas de amarre a cada lado)."""
     col_len = cfg["eave"]
-    raf_len = rafter_length(cfg)
+    (u0, z0), (u1, z1) = frame_points(cfg)["rafter_left"]
+    raf_len = math.hypot(u1 - u0, z1 - z0)  # de la cara de la columna a la cumbrera
     bay = cfg.get("spacing", 6.0)
     tw = profile(cfg["rafter"])[4] / 1000.0
     bf, tf = profile(cfg["rafter"])[3] / 1000.0, profile(cfg["rafter"])[5] / 1000.0
     haunch_kg = 0.0
-    for tri in haunch_triangles(cfg):
-        hyp = math.hypot(tri[2][0] - tri[1][0], tri[2][1] - tri[1][1])
-        haunch_kg += (triangle_area(tri) * tw + hyp * bf * tf) * STEEL_DENSITY
+    for tri, edges in zip(haunch_triangles(cfg), haunch_flanges(cfg)):
+        flange = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in edges)
+        haunch_kg += (triangle_area(tri) * tw + flange * bf * tf) * STEEL_DENSITY
     a, b, t = [x / 1000.0 for x in cfg["plate"]]
     plate_kg = a * b * t * STEEL_DENSITY
     out = {
