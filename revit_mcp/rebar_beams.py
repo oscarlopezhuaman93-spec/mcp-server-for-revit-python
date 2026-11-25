@@ -101,6 +101,30 @@ def _section_tilt(poly):
     return longest if along > 0.9 * total else 0.0
 
 
+def _middle_section(solids, mid, d, p0, across, up):
+    """(area, polygon) of the beam cut square to its axis at `mid` (world):
+    the face the cut leaves on that plane. None if the cut fails."""
+    best = None
+    for solid in solids:
+        try:
+            half = DB.BooleanOperationsUtils.CutWithHalfSpace(solid, DB.Plane.CreateByNormalAndOrigin(d, mid))
+        except Exception:
+            continue
+        if half is None:
+            continue
+        for face in half.Faces:
+            if not isinstance(face, DB.PlanarFace) or abs(abs(face.FaceNormal.DotProduct(d)) - 1.0) > 1e-3:
+                continue
+            if abs((face.Origin - mid).DotProduct(d)) > 1e-4:
+                continue  # an end face, not the cut
+            loop = max(face.EdgeLoops, key=lambda lp: lp.Size)
+            pts = [edge.AsCurve().GetEndPoint(0) for edge in loop]
+            poly = [((q - p0).DotProduct(across), (q - p0).DotProduct(up)) for q in pts]
+            if best is None or face.Area > best[0]:
+                best = (face.Area, poly)
+    return best
+
+
 class BeamSection(object):
     """Cross-section of a straight beam element, from its end face (the
     element's own geometry). `polygon_m` in the local frame (x across, y
@@ -129,6 +153,33 @@ class BeamSection(object):
                     poly = [((q - p0).DotProduct(across), (q - p0).DotProduct(up)) for q in pts]
                     if best is None or face.Area > best[0]:
                         best = (face.Area, poly)
+        if best is not None and abs(d.Z) <= 1e-3:
+            # (2026-11-25) an end face cut short by what the beam is joined to
+            # (a foundation beam's ends inside the footings: 0.50 of its
+            # 0.80 m left there) is no section: the beam cut at its middle
+            ys_end = [p[1] for p in best[1]]
+            # the element's own extent (its box: a beam mostly inside a footing
+            # keeps its 0.80 there, its solid cut to 0.30 by the footing)
+            bb = beam.get_BoundingBox(None)
+            zs_all = [bb.Min.Z, bb.Max.Z] if bb is not None else []
+            # only when the type's own depth (its name, "_0.25x0.80m") is that
+            # extent: a beam of another shape (a deeper piece under it) keeps
+            # its end face
+            import re as _re
+            try:
+                tname = beam.Document.GetElement(beam.GetTypeId()).get_Parameter(
+                    DB.BuiltInParameter.SYMBOL_NAME_PARAM).AsString() or u""
+            except Exception:
+                tname = u""
+            dims = _re.findall(r"(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)\s*m", tname)
+            nominal_h = float(dims[-1][1]) if dims else None
+            if zs_all and (max(zs_all) - min(zs_all)) - (max(ys_end) - min(ys_end)) > 0.03 / FT \
+                    and len(best[1]) == 4 and nominal_h is not None \
+                    and abs((max(zs_all) - min(zs_all)) * FT - nominal_h) < 0.02:
+                # a rectangular beam: its whole depth (the width as its end face)
+                ys = [z - p0.Z for z in zs_all]
+                xe = [p[0] for p in best[1]]
+                best = (best[0], [(min(xe), min(ys)), (max(xe), min(ys)), (max(xe), max(ys)), (min(xe), max(ys))])
         if best is None and abs(d.Z) > 1e-3:
             # a sloped beam cut plumb at its ends: its section's box
             pts = [edge.AsCurve().GetEndPoint(k) for solid in solids for edge in solid.Edges for k in (0, 1)]
