@@ -23,10 +23,10 @@ if REVIT_MCP_DIR not in sys.path:
 import formwork_spatial as fw_spatial
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
-import rebar_columns as rc
+import columna_spec as rs  # Acero Columna: its own rules (2026-11-25)
+import columna_rc as rc  # Acero Columna: its own rules (2026-11-25)
 import rebar_group as rg
-from rebar_beams import seat_in_bends as rb_seat
+from columna_rc import seat_in_bends as rb_seat  # its own (2026-11-25)
 import rebar_views as rv
 import utils as fw_utils
 
