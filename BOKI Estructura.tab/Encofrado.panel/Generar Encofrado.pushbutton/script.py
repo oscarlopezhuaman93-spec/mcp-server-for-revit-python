@@ -60,6 +60,11 @@ class CategoriesWindow(forms.WPFWindow):
 
     def __init__(self, xaml_file_path):
         forms.WPFWindow.__init__(self, xaml_file_path)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.confirmed = False
         self.selected_keys = []
         self.formwork_materials = {}

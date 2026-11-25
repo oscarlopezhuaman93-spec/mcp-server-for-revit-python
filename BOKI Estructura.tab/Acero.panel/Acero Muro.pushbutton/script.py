@@ -345,6 +345,11 @@ class AceroWindow(forms.WPFWindow):
         # Esc must not close the window (it cancels the current stroke,
         # see window_key).
         forms.WPFWindow.__init__(self, xaml_file_path, handle_esc=False)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.types = types
         self.by_id = dict((t.id, t) for t in types)
         self.state = state

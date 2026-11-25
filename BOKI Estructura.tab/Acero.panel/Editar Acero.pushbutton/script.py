@@ -55,6 +55,11 @@ def host_cover(host):
 class EditarWindow(forms.WPFWindow):
     def __init__(self, xaml, edit):
         forms.WPFWindow.__init__(self, xaml)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.edit = edit
         self.points = list(edit.points)
         self.action = None

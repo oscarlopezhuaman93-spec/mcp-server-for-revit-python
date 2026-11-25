@@ -99,6 +99,11 @@ class State(object):
 class CorregirWindow(forms.WPFWindow):
     def __init__(self, xaml, state):
         forms.WPFWindow.__init__(self, xaml)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.state = state
         self.action = None
         self._filling = True

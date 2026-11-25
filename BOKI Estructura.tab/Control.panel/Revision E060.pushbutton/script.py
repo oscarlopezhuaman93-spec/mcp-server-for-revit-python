@@ -228,6 +228,11 @@ def run_review():
 class ReviewWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, findings, ids):
         forms.WPFWindow.__init__(self, xaml_file_path)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.findings = findings
         self.ids = ids
         self.selected_ids = None

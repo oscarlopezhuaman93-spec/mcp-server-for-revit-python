@@ -104,6 +104,11 @@ def run_check():
 class ClashWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, result):
         forms.WPFWindow.__init__(self, xaml_file_path)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.rows, self.ids, n_clash, n_warn, n_sets = result
         self.show_ids = None
         self.txt_clash.Text = u"Choques: {}".format(n_clash)

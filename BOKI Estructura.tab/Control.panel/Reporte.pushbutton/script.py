@@ -115,6 +115,11 @@ def checks():
 class ReportWindow(forms.WPFWindow):
     def __init__(self, xaml_file_path, bars, volumes):
         forms.WPFWindow.__init__(self, xaml_file_path)
+        try:
+            import boki_brand  # BOKI ESTRUCTURAS and the seal in the header
+            boki_brand.apply(self)
+        except Exception:
+            pass
         self.rows, self.totals = sr.aggregate(bars, rs.bar_weight_kg_per_m, rs.BAR_DIAMETERS_MM)
         self.volumes = volumes
         count, length, weight = sr.grand_total(self.totals)
