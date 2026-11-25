@@ -134,6 +134,50 @@ def cylinder(DB, base, axis, radius, length):
     return DB.GeometryCreationUtilities.CreateExtrusionGeometry(List[DB.CurveLoop]([loop]), axis, length)
 
 
+def hex_prism(DB, base, axis, across_flats, length):
+    """Prisma hexagonal (cabeza o tuerca) desde `base` a lo largo de `axis`."""
+    from System.Collections.Generic import List
+    axis = axis.Normalize()
+    x = axis.CrossProduct(DB.XYZ.BasisZ)
+    if x.GetLength() < 1e-6:
+        x = DB.XYZ.BasisX
+    x = x.Normalize()
+    y = axis.CrossProduct(x).Normalize()
+    r = across_flats / math.sqrt(3.0)  # radio a las esquinas
+    pts = [base + x * (r * math.cos(math.pi / 3 * k)) + y * (r * math.sin(math.pi / 3 * k)) for k in range(6)]
+    return DB.GeometryCreationUtilities.CreateExtrusionGeometry(List[DB.CurveLoop]([_loop(DB, pts)]), axis, length)
+
+
+def structural_bolt(DB, head_face, axis, d, grip):
+    """Perno estructural A325 como se instala: cabeza hexagonal apoyada en
+    `head_face` (lado opuesto a `axis`), vastago a traves del paquete de
+    planchas (`grip`), arandela, tuerca hexagonal y 2 hilos fuera.
+    Medidas (ASTM A325 / A563): cabeza 1.5d entre caras x 0.625d, tuerca
+    1.5d x 0.875d, arandela 2d x 4 mm. Todo en pies."""
+    axis = axis.Normalize()
+    w = _ft(0.004)
+    head = hex_prism(DB, head_face - axis * (0.625 * d), axis, 1.5 * d, 0.625 * d)
+    shank = cylinder(DB, head_face, axis, d / 2.0, grip + w + 0.875 * d + 0.3 * d)
+    washer = cylinder(DB, head_face + axis * grip, axis, d, w)
+    nut = hex_prism(DB, head_face + axis * (grip + w), axis, 1.5 * d, 0.875 * d)
+    return [head, shank, washer, nut]
+
+
+def anchor_bolt(DB, plate_top, d, length, hook_dir):
+    """Perno de anclaje F1554 en L: vastago vertical embebido `length`
+    bajo la placa con gancho horizontal de 4d al fondo, y arriba arandela
+    plana (2.5d x 6 mm) y tuerca hexagonal sobre la placa, con el
+    vastago saliendo 3 hilos (0.5d) sobre la tuerca. Pies."""
+    up = DB.XYZ.BasisZ
+    w = _ft(0.006)
+    bottom = plate_top - up * length
+    parts = [cylinder(DB, bottom, up, d / 2.0, length + w + 0.875 * d + 0.5 * d),
+             cylinder(DB, bottom + up * (d / 2.0), hook_dir, d / 2.0, 4 * d),  # gancho
+             cylinder(DB, plate_top, up, 1.25 * d, w),
+             hex_prism(DB, plate_top + up * w, up, 1.5 * d, 0.875 * d)]
+    return parts
+
+
 def _category(doc, DB, bics):
     for bic in bics:
         try:
@@ -181,6 +225,17 @@ def kg(solids):
 
 
 # --- porticos ---------------------------------------------------------------
+def _portico_plate_mm(DB, column):
+    """Espesor de la placa base del portico (de la configuracion guardada
+    en la marca de la columna; 25 mm si no se lee)."""
+    text = _comment(DB, column)
+    j = text.find(u"{")
+    try:
+        return float(json.loads(text[j:])["plate"][2]) if j >= 0 else 25.0
+    except (ValueError, KeyError, IndexError, TypeError):
+        return 25.0
+
+
 def _portico_connections(doc, DB, name, data, cfg, cat_plate, cat_bolt, made):
     cols = data["cols"]
     rafters = data["rafters"]
@@ -212,24 +267,27 @@ def _portico_connections(doc, DB, name, data, cfg, cat_plate, cat_bolt, made):
             t = cfg["end_plate"] / 304.8
             pl = plate(DB, face, n_frame, DB.XYZ.BasisZ, raf_bf + _ft(0.04), hgt, t, inward)
             made["plates"].append(_shape(doc, DB, [pl], cat_plate, cfg, u"plancha_alero " + name))
-            # 8 pernos: 2 columnas (gramil 100 mm) x 4 filas, a traves de plancha y ala de columna
+            # 8 pernos A325: 2 columnas (gramil 100 mm) x 4 filas; cabeza contra
+            # la cara interior del ala de la columna, tuerca sobre la plancha
             bolts = []
             g = _ft(0.05)
+            tf_col = _type_mm(doc, cols[0], u"tf", 15.1) / 304.8
             for k in range(4):
                 z = h_top - _ft(0.10) - (hgt - _ft(0.20)) * k / 3.0
                 for s in (-1, 1):
-                    p0 = start + DB.XYZ.BasisZ * z + n_frame * (s * g) - inward * _ft(0.035)
-                    bolts.append(cylinder(DB, p0, inward, bolt_r, t + _ft(0.07)))
+                    face = start + DB.XYZ.BasisZ * z + n_frame * (s * g) - inward * tf_col
+                    bolts += structural_bolt(DB, face, inward, 2 * bolt_r, tf_col + t)
             made["bolts"].append(_shape(doc, DB, bolts, cat_bolt, cfg, u"pernos_alero " + name))
         if cfg["anchors"]:
-            # pernos de anclaje en la placa base (4, a 60 mm de los bordes de 400 x 400)
+            # pernos de anclaje en L en la placa base (4, a 60 mm de los bordes de 400 x 400)
             anchors = []
             e = _ft(0.14)
+            pt = _ft(_portico_plate_mm(DB, cols[0]) / 1000.0)
             for s1 in (-1, 1):
                 for s2 in (-1, 1):
-                    top = DB.XYZ(foot.X, foot.Y, foot.Z) + d * (s1 * e) + n_frame * (s2 * e) + DB.XYZ.BasisZ * _ft(0.06)
-                    anchors.append(cylinder(DB, top, DB.XYZ.BasisZ.Negate(), cfg["anchor"] / 2.0 / 304.8,
-                                            _ft(cfg["anchor_len"])))
+                    top = DB.XYZ(foot.X, foot.Y, foot.Z) + d * (s1 * e) + n_frame * (s2 * e) + DB.XYZ.BasisZ * pt
+                    hook = (d * (-s1) + n_frame * (-s2)).Normalize()  # gancho hacia el centro del pedestal
+                    anchors += anchor_bolt(DB, top, cfg["anchor"] / 304.8, _ft(cfg["anchor_len"]), hook)
             made["anchors"].append(_shape(doc, DB, anchors, cat_bolt, cfg, u"anclajes " + name))
     if cfg["ridge"]:
         ends = [r.Location.Curve.GetEndPoint(k) for r in rafters for k in (0, 1)]
@@ -244,8 +302,9 @@ def _portico_connections(doc, DB, name, data, cfg, cat_plate, cat_bolt, made):
         for k in range(3):
             z = _ft(0.05) - _ft(0.10) - (hgt - _ft(0.20)) * k / 2.0
             for s in (-1, 1):
-                bolts.append(cylinder(DB, apex + DB.XYZ.BasisZ * z + n_frame * (s * _ft(0.05)) - d * (t + _ft(0.02)),
-                                      d, bolt_r, 2 * t + _ft(0.04)))
+                # cabeza contra una plancha, tuerca contra la otra (paquete 2 t)
+                face = apex + DB.XYZ.BasisZ * z + n_frame * (s * _ft(0.05)) - d * t
+                bolts += structural_bolt(DB, face, d, 2 * bolt_r, 2 * t)
         made["bolts"].append(_shape(doc, DB, bolts, cat_bolt, cfg, u"pernos_cumbrera " + name))
 
 
@@ -287,15 +346,20 @@ def _truss_supports(doc, DB, name, data, cfg, cat_plate, cat_bolt, made):
         made["plates"].append(_shape(doc, DB, gussets, cat_plate, cfg, u"cartelas_apoyo " + name))
         pin_len = (offs[-1] - offs[0]) / FT + _ft(0.12)
         pin_c = center + inward * _ft(0.10) + DB.XYZ.BasisZ * _ft(0.10) + along * (_ft(offs[0]) - _ft(0.06))
-        made["bolts"].append(_shape(doc, DB, [cylinder(DB, pin_c, along, cfg["pin"] / 2.0 / 304.8, pin_len)],
-                                    cat_bolt, cfg, u"pasador " + name))
+        pr = cfg["pin"] / 2.0 / 304.8
+        pin = [cylinder(DB, pin_c, along, pr, pin_len),
+               # cabeza y arandela con tuerca en los extremos (pasador retenido)
+               cylinder(DB, pin_c - along * _ft(0.010), along, pr * 1.6, _ft(0.010)),
+               cylinder(DB, pin_c + along * pin_len, along, pr * 1.6, _ft(0.008)),
+               hex_prism(DB, pin_c + along * (pin_len + _ft(0.008)), along, pr * 3.0, pr * 1.2)]
+        made["bolts"].append(_shape(doc, DB, pin, cat_bolt, cfg, u"pasador " + name))
         if cfg["anchors"]:
             anchors = []
             for s1 in (-1, 1):
                 for s2 in (-1, 1):
                     top = center + inward * (s1 * (lu / 2.0 - _ft(0.06))) + along * (s2 * (width / 2.0 - _ft(0.06)))
-                    anchors.append(cylinder(DB, top + DB.XYZ.BasisZ * _ft(0.04), DB.XYZ.BasisZ.Negate(),
-                                            cfg["anchor"] / 2.0 / 304.8, _ft(cfg["anchor_len"])))
+                    hook = (inward * (-s1) + along * (-s2)).Normalize()
+                    anchors += anchor_bolt(DB, top, cfg["anchor"] / 304.8, _ft(cfg["anchor_len"]), hook)
             made["anchors"].append(_shape(doc, DB, anchors, cat_bolt, cfg, u"anclajes " + name))
 
 
