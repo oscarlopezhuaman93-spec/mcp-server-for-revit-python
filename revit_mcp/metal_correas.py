@@ -567,8 +567,9 @@ def generate(doc, DB, level, cfg):
                                                         u"arriostre techo {}-{}".format(F[i][0], F[i + 1][0])))
         if cfg["brace_walls"] and shed.walls:
             for k in (1, 2):
-                lo0 = DB.XYZ(F[i][k].X, F[i][k].Y, shed.base_z)
-                lo1 = DB.XYZ(F[i + 1][k].X, F[i + 1][k].Y, shed.base_z)
+                # abajo: a la cartela de la columna 0.30 m sobre la placa base (no dentro de la placa)
+                lo0 = DB.XYZ(F[i][k].X, F[i][k].Y, shed.base_z + _ft(0.30))
+                lo1 = DB.XYZ(F[i + 1][k].X, F[i + 1][k].Y, shed.base_z + _ft(0.30))
                 hi0 = DB.XYZ(lo0.X, lo0.Y, shed.eave_z - _ft(0.20))
                 hi1 = DB.XYZ(lo1.X, lo1.Y, shed.eave_z - _ft(0.20))
                 for p, q in ((lo0, hi1), (lo1, hi0)):
