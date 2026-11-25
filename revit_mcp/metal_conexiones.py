@@ -386,11 +386,20 @@ def generate(doc, DB, cfg):
 
 
 def weight(made):
+    """kg por clase de lo creado (regenera antes si hace falta)."""
+    from Autodesk.Revit.DB import Options
     out = {}
     for k, items in made.items():
         total = 0.0
         for e in items:
-            for g in e.get_Geometry(__import__("Autodesk.Revit.DB", fromlist=["Options"]).Options()):
+            geo = e.get_Geometry(Options())
+            if geo is None:
+                try:
+                    e.Document.Regenerate()
+                except Exception:
+                    pass
+                geo = e.get_Geometry(Options())
+            for g in geo or []:
                 if hasattr(g, "Volume"):
                     total += g.Volume * FT ** 3 * STEEL
         out[k] = total
