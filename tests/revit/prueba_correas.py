@@ -74,9 +74,12 @@ def orientation(doc, DB, made, mc):
     shed = mc.Shed(doc, DB)
     rep = []
     n = len(made["purlins"]) // max(1, len(shed.frames) - 1)
-    for idx, side in ((0, 0), (n // 2, 1)):
-        e = made["purlins"][idx]
+    for side in (0, 1):
         a, b = shed.water(shed.frames[0], side)
+        mid = (a + b) * 0.5
+        e = min(made["purlins"], key=lambda x: x.Location.Curve.GetEndPoint(0).DistanceTo(mid)
+                if x.Location.Curve.GetEndPoint(0).DistanceTo(mid) < x.Location.Curve.GetEndPoint(1).DistanceTo(mid)
+                else x.Location.Curve.GetEndPoint(1).DistanceTo(mid))
         u = (b - a).Normalize()
         wn = _web_normal(DB, e)
         pts = []

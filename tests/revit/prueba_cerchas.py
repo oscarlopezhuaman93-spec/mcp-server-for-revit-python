@@ -86,6 +86,7 @@ def run(doc, DB, root, cases, images=True, origin=(400.0, 400.0)):
     for name, cfg, n, bay, span, box, fwd in cases:
         tg = DB.TransactionGroup(doc, "prueba cerchas")
         tg.Start()
+        t = None
         try:
             t = DB.Transaction(doc, "cerchas")
             t.Start()
@@ -107,5 +108,10 @@ def run(doc, DB, root, cases, images=True, origin=(400.0, 400.0)):
             import traceback
             rep.append(u"{}: ERROR {}".format(name, traceback.format_exc()[-600:]))
         finally:
+            try:
+                if t is not None and t.HasStarted() and not t.HasEnded():
+                    t.RollBack()
+            except Exception:
+                pass
             tg.RollBack()
     return rep

@@ -46,8 +46,17 @@ C_PROFILES = {
     u"C200x50x15x3": (200, 50, 15, 3.0),
     u"C250x75x20x3": (250, 75, 20, 3.0),
 }
+# Tubos rectangulares (mm): alto Ht, ancho b, espesor t (como la cancha de
+# Chumbivilcas: correa 100x50x4 @ 2.03 m)
+TUBE_PROFILES = {
+    u"TR 75x50x3": (75, 50, 3.0), u"TR 100x50x2": (100, 50, 2.0), u"TR 100x50x3": (100, 50, 3.0),
+    u"TR 100x50x4": (100, 50, 4.0), u"TR 150x50x3": (150, 50, 3.0), u"TR 150x100x4": (150, 100, 4.0),
+}
 RODS = {12.7: u"\u00d8 1/2\"", 15.875: u"\u00d8 5/8\"", 19.05: u"\u00d8 3/4\"", 25.4: u"\u00d8 1\""}
 
+CERCHA_TAG = u"BOKI Cercha"
+HSS_FAMILY = u"M_HSS-Hollow Structural Section"  # de familias/metalicas (cancha)
+FAMILY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), u"familias", u"metalicas")
 PURLIN_FAMILY = u"Calibre delgado-Vigueta"  # C con labios (D peralte, B ala, d labio, t)
 ROD_FAMILY = u"Barra redonda"
 LIBRARIES = [u"C:\\ProgramData\\Autodesk\\RVT 2025\\Libraries\\Spanish",
@@ -69,17 +78,29 @@ def config(data=None):
     cfg.update(dict((k, v) for k, v in (data or {}).items() if v is not None))
     for k in ("spacing", "first", "girt_step", "girt_top_gap", "sag_rod", "brace_rod"):
         cfg[k] = float(cfg[k])
-    if not 0.60 <= cfg["spacing"] <= 2.00:
-        raise SpecError(u"separaci\u00f3n de correas fuera de rango (0.60 a 2.00 m)")
+    if not 0.60 <= cfg["spacing"] <= 2.50:  # TR5 de la cancha: 2.03 m
+        raise SpecError(u"separaci\u00f3n de correas fuera de rango (0.60 a 2.50 m)")
     if not 0.80 <= cfg["girt_step"] <= 2.50:
         raise SpecError(u"separaci\u00f3n de largueros fuera de rango (0.80 a 2.50 m)")
     for k in ("purlin", "girt"):
-        if cfg[k] not in C_PROFILES:
+        if cfg[k] not in C_PROFILES and cfg[k] not in TUBE_PROFILES:
             raise SpecError(u"perfil no disponible: {}".format(cfg[k]))
     return cfg
 
 
+def profiles():
+    return sorted(C_PROFILES) + sorted(TUBE_PROFILES)
+
+
+def depth_mm(name):
+    return (C_PROFILES.get(name) or TUBE_PROFILES[name])[0]
+
+
 def c_kg_per_m(name):
+    """kg/m de una C con labios o de un tubo rectangular."""
+    if name in TUBE_PROFILES:
+        h, b, t = TUBE_PROFILES[name]
+        return 2 * (h + b - 2 * t) * t * 1e-6 * STEEL
     h, b, lip, t = C_PROFILES[name]
     area = (h + 2 * b + 2 * lip - 4 * t) * t  # mm2, linea media
     return area * 1e-6 * STEEL
@@ -109,11 +130,96 @@ def girt_heights(eave, step, top_gap):
 
 # --- lectura de la nave -----------------------------------------------------
 class Shed(object):
-    """La nave generada por Porticos, leida del modelo: por portico (en orden
-    a lo largo de la nave) los pies de columna A y B, el alero y la
-    cumbrera (cara superior de las vigas), en pies."""
+    """La cubierta leida del modelo: de los Porticos BOKI (vigas a dos aguas
+    sobre columnas) o de las Cerchas BOKI (arco, dos aguas o recta). Por
+    portico/cercha, en orden a lo largo de la cubierta: `waters[i]` = sus
+    aguas, curvas (recta o arco) del alero a la cumbrera sobre las que van
+    las correas; `top_offset` (pies) de esas curvas a la cara superior del
+    acero; `walls` si hay columnas BOKI para largueros y arriostres de
+    pared."""
 
     def __init__(self, doc, DB):
+        try:
+            self._porticos(doc, DB)
+        except SpecError:
+            try:
+                self._cerchas(doc, DB)
+            except SpecError:
+                raise SpecError(u"no hay pórticos ni cerchas BOKI en el modelo "
+                                u"(genera primero Pórticos o Cerchas)")
+
+    def _cerchas(self, doc, DB):
+        tops, cfg_text = {}, u"{}"
+        for e in DB.FilteredElementCollector(doc).WhereElementIsNotElementType():
+            try:
+                p = e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+            except Exception:
+                continue
+            text = (p.AsString() or u"") if p is not None else u""
+            if not text.startswith(CERCHA_TAG + u" cordon_sup "):
+                continue
+            name = text[len(CERCHA_TAG + u" cordon_sup "):].split(u" ")[0]
+            if isinstance(getattr(e, "Location", None), DB.LocationCurve):
+                tops.setdefault(name, []).append(e.Location.Curve)
+                cfg_text = text[text.find(u"{"):] if u"{" in text else cfg_text
+        if len(tops) < 2:
+            raise SpecError(u"no hay cerchas BOKI")
+        try:
+            ccfg = json.loads(cfg_text)
+        except ValueError:
+            ccfg = {}
+        chord = ccfg.get("chord", u"TR 100x50x3")
+        try:
+            ht = float(chord.split(u" ")[1].split(u"x")[0])
+        except (IndexError, ValueError):
+            ht = 100.0
+        self.source = u"cerchas"
+        self.top_offset = _ft(ht / 2000.0)  # eje del cordon -> cara superior
+        frames = []
+        for name, curves in tops.items():
+            ends = [c.GetEndPoint(k) for c in curves for k in (0, 1)]
+            low = sorted(ends, key=lambda q: q.Z)[:2] if len(curves) == 1 else None
+            frames.append([name, curves])
+        # direccion de la luz: de un extremo bajo al otro del primer cordon
+        c0 = frames[0][1]
+        pts = [c.GetEndPoint(k) for c in c0 for k in (0, 1)]
+        pa = min(pts, key=lambda q: (q.Z, q.X, q.Y))
+        pb = max(pts, key=lambda q: DB.XYZ(q.X - pa.X, q.Y - pa.Y, 0).GetLength())
+        span_dir = DB.XYZ(pb.X - pa.X, pb.Y - pa.Y, 0).Normalize()
+        along = DB.XYZ.BasisZ.CrossProduct(span_dir).Normalize()
+        if along.X < -1e-9 or (abs(along.X) < 1e-9 and along.Y < 0):
+            along = along.Negate()
+        self.span_dir, self.along = span_dir, along
+        out = []
+        for name, curves in frames:
+            # espacial: dos planos -> la linea media entre ellos
+            pos = lambda c: c.Evaluate(0.5, True).DotProduct(along)
+            curves = sorted(curves, key=pos)
+            if len(curves) >= 2 and abs(pos(curves[-1]) - pos(curves[0])) > _ft(0.05):
+                half = len(curves) // 2
+                shift = along * ((pos(curves[-1]) - pos(curves[0])) / 2.0)
+                curves = [c.CreateTransformed(DB.Transform.CreateTranslation(shift)) for c in curves[:half]]
+            waters = []
+            for c in curves:
+                waters += _split_at_apex(DB, c)
+            o = waters[0].GetEndPoint(0)
+            waters.sort(key=lambda c: (_low_end(c) - o).DotProduct(span_dir))
+            ends = [_low_end(c) for c in waters]
+            fa = min(ends, key=lambda q: q.DotProduct(span_dir))
+            fb = max([w.GetEndPoint(k) for w in waters for k in (0, 1)], key=lambda q: q.DotProduct(span_dir))
+            ridge = max([w.GetEndPoint(k) for w in waters for k in (0, 1)], key=lambda q: q.Z)
+            out.append([name, fa, fb, waters, ridge])
+        o = out[0][1]
+        out.sort(key=lambda f: (f[1] - o).DotProduct(along))
+        self.frames = out
+        self.waters = [f[3] for f in out]
+        self.walls = False
+        self.base_z = self.eave_z = min(_low_end(w).Z for f in out for w in f[3])
+        self.span = DB.XYZ(out[0][2].X - out[0][1].X, out[0][2].Y - out[0][1].Y, 0).GetLength() * FT
+        self.column_depth = 0.0
+        self.shape = ccfg.get("shape", u"")
+
+    def _porticos(self, doc, DB):
         cols, rafters = {}, {}
         self.column_depth = 0.0
         for e in DB.FilteredElementCollector(doc).WhereElementIsNotElementType():
@@ -167,6 +273,26 @@ class Shed(object):
         bb = cols[names[0]][0].get_BoundingBox(None)
         dx = abs((bb.Max - bb.Min).DotProduct(span_dir))
         self.column_depth = dx if dx > 0 else 0.35 / FT  # pies, en el plano del portico
+        self.source = u"porticos"
+        self.top_offset = 0.0  # las vigas ya estan en su cara superior
+        self.walls = True
+        self.shape = u"dos_aguas"
+        self.waters = []
+        for f in frames:
+            ws = []
+            for side in (0, 1):
+                a, b = self.water(f, side)
+                ws.append(DB.Line.CreateBound(a, b))
+            self.waters.append(ws)
+
+    def water_lengths(self):
+        return [w.Length * FT for w in self.waters[0]]
+
+    def text(self):
+        what = u"pórticos" if self.source == u"porticos" else u"cerchas ({})".format(self.shape)
+        return u"Cubierta leída de los/las {} BOKI: {} ({} a {}), luz {:.2f} m{}.".format(
+            what, len(self.frames), self.frames[0][0], self.frames[-1][0], self.span,
+            u"" if self.walls else u" - sin columnas BOKI: no hay largueros ni arriostres de pared")
 
     def water(self, f, side):
         """(inicio, fin) de la cara superior de la viga de un agua: side 0 =
@@ -176,9 +302,32 @@ class Shed(object):
         a, b = c.GetEndPoint(0), c.GetEndPoint(1)
         return (a, b) if a.Z <= b.Z else (b, a)
 
-    def text(self):
-        return u"Nave le\u00edda de los p\u00f3rticos BOKI: {} p\u00f3rticos ({} a {}), luz {:.2f} m.".format(
-            len(self.frames), self.frames[0][0], self.frames[-1][0], self.span)
+
+def _low_end(c):
+    a, b = c.GetEndPoint(0), c.GetEndPoint(1)
+    return a if a.Z <= b.Z + 1e-9 else b
+
+
+def _split_at_apex(DB, c):
+    """Un arco con cumbrera en medio -> dos arcos (cada agua); una recta
+    queda como esta."""
+    if not isinstance(c, DB.Arc):
+        return [c]
+    ts = [k / 200.0 for k in range(201)]
+    tz = max(ts, key=lambda t: c.Evaluate(t, True).Z)
+    if tz < 0.05 or tz > 0.95:
+        return [c]
+    P = lambda t: c.Evaluate(t, True)
+    return [DB.Arc.Create(P(0.0), P(tz), P(tz / 2.0)), DB.Arc.Create(P(1.0), P(tz), P((1.0 + tz) / 2.0))]
+
+
+def _at(c, s):
+    """(punto, tangente subiendo) a `s` pies del extremo bajo de la curva."""
+    lowfirst = c.GetEndPoint(0).Z <= c.GetEndPoint(1).Z + 1e-9
+    t = max(0.0, min(1.0, s / c.Length))
+    d = c.ComputeDerivatives(t if lowfirst else 1.0 - t, True)
+    tan = d.BasisX.Normalize()
+    return d.Origin, (tan if lowfirst else tan.Negate())
 
 
 # --- Revit ------------------------------------------------------------------
@@ -219,8 +368,31 @@ def _set_mm(DB, sym, name, mm):
         p.Set(mm / 304.8)
 
 
+def _tube_type(doc, DB, name):
+    """Tubo rectangular `name` en la familia HSS de BOKI (familias/metalicas)."""
+    fam = next((f for f in DB.FilteredElementCollector(doc).OfClass(DB.Family) if f.Name == HSS_FAMILY), None)
+    if fam is None:
+        import clr
+        ref = clr.Reference[DB.Family]()
+        path = os.path.join(FAMILY_DIR, HSS_FAMILY + u".rfa")
+        if not os.path.isfile(path) or not doc.LoadFamily(path, ref):
+            raise SpecError(u"no se encontró la familia de tubo de BOKI ({})".format(path))
+        fam = ref.Value
+    syms = [doc.GetElement(i) for i in fam.GetFamilySymbolIds()]
+    s = next((x for x in syms if _name(DB, x) == name), None) or syms[0].Duplicate(name)
+    h, b, t = TUBE_PROFILES[name]
+    for k, v in ((u"Ht", h), (u"b", b), (u"t", t)):
+        _set_mm(DB, s, k, v)
+    if not s.IsActive:
+        s.Activate()
+    return s
+
+
 def purlin_type(doc, DB, name):
-    """El tipo C con labios `name` (creado en la familia de calibre delgado)."""
+    """El tipo `name`: C con labios (familia de calibre delgado) o tubo
+    rectangular (familia HSS de BOKI)."""
+    if name in TUBE_PROFILES:
+        return _tube_type(doc, DB, name)
     fam = _family(doc, DB, PURLIN_FAMILY)
     syms = [doc.GetElement(i) for i in fam.GetFamilySymbolIds()]
     for s in syms:
@@ -284,7 +456,11 @@ def saved_config(doc, DB):
 def _beam(doc, DB, line, sym, level, cfg, kind, z_just=None, rotation=None):
     from Autodesk.Revit.DB.Structure import StructuralType
     e = doc.Create.NewFamilyInstance(line, sym, level, StructuralType.Beam)
+    # centrada tambien en el ancho: Revit gira la seccion alrededor de su eje
+    # de justificacion (con "origen" el tubo se corria en la cubierta curva)
+    y_just = 1 if z_just == 1 else None
     for bip, val in ((DB.BuiltInParameter.Z_JUSTIFICATION, z_just),
+                     (DB.BuiltInParameter.Y_JUSTIFICATION, y_just),
                      (DB.BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE, rotation)):
         if val is None:
             continue
@@ -310,50 +486,59 @@ def generate(doc, DB, level, cfg):
     old = List[DB.ElementId]([e.Id for e in existing(doc, DB)])
     if old.Count:
         doc.Delete(old)
-    made = {"purlins": [], "sag": [], "girts": [], "brace_roof": [], "brace_walls": []}
+    made = {"purlins": [], "sag": [], "girts": [], "brace_roof": [], "brace_walls": [], "notes": []}
     F = shed.frames
-    slope = math.atan2(F[0][4].Z - shed.eave_z, shed.span / 2.0 / FT)
+    Wt = shed.waters
+    Z = DB.XYZ.BasisZ
+
+    def roof_normal(tan):
+        n = shed.along.CrossProduct(tan).Normalize()
+        return n.Negate() if n.Z < 0 else n
+
     if cfg["roof"]:
         pt = purlin_type(doc, DB, cfg["purlin"])
-        h = C_PROFILES[cfg["purlin"]][0] / 1000.0
-        stations = {}
-        for side in (0, 1):
-            a, b = shed.water(F[0], side)
-            L = a.DistanceTo(b) * FT
-            stations[side] = purlin_stations(L, cfg["spacing"], cfg["first"])
-        for i in range(len(F) - 1):
-            for side in (0, 1):
-                a0, b0 = shed.water(F[i], side)
-                a1, b1 = shed.water(F[i + 1], side)
-                u0, u1 = (b0 - a0).Normalize(), (b1 - a1).Normalize()
-                # normal al techo (hacia arriba): la correa centrada a medio
-                # peralte sobre la cara superior de la viga (la justificacion
-                # "inferior" de Revit no se respeta con el perfil girado)
-                n_roof = shed.along.CrossProduct(u0).Normalize()
-                if n_roof.Z < 0:
-                    n_roof = n_roof.Negate()
-                lift = n_roof * _ft(h / 2.0)
-                for s in stations[side]:
-                    p0, p1 = a0 + u0 * _ft(s) + lift, a1 + u1 * _ft(s) + lift
-                    # la familia trae el alma vertical: girarla lo que sube el techo
+        h = depth_mm(cfg["purlin"]) / 1000.0
+        rt = rod_type(doc, DB, cfg["sag_rod"]) if cfg["sag"] else None
+        for w in range(len(Wt[0])):
+            stations = purlin_stations(Wt[0][w].Length * FT, cfg["spacing"], cfg["first"])
+            for i in range(len(F) - 1):
+                c0, c1 = Wt[i][w], Wt[i + 1][w]
+
+                def place(s, frac=None):
+                    """Punto de la correa (su eje, a medio peralte sobre la
+                    cara superior del acero) a `s` m del alero; con `frac`,
+                    el punto a esa fraccion del pano entre las dos cerchas."""
+                    p0, t0 = _at(c0, _ft(s))
+                    p1, t1 = _at(c1, _ft(s))
+                    n = roof_normal(t0)
+                    off = n * (shed.top_offset + _ft(h / 2.0))
+                    if frac is None:
+                        return p0 + off, p1 + off, n, t0
+                    return p0 + (p1 - p0) * frac + off, None, n, t0
+                for s in stations:
+                    q0, q1, n, t0 = place(s)
+                    # la familia trae el alma vertical: girarla lo que se inclina el techo
                     # (el signo segun el sentido de la correa respecto a donde sube el agua)
-                    axis = (p1 - p0).Normalize()
-                    rot = slope if axis.CrossProduct(DB.XYZ.BasisZ).DotProduct(u0) > 0 else -slope
-                    made["purlins"].append(_beam(doc, DB, DB.Line.CreateBound(p0, p1), pt, level, cfg,
+                    ang = math.acos(max(-1.0, min(1.0, n.Z)))
+                    axis = (q1 - q0).Normalize()
+                    rot = ang if axis.CrossProduct(Z).DotProduct(t0) > 0 else -ang
+                    made["purlins"].append(_beam(doc, DB, DB.Line.CreateBound(q0, q1), pt, level, cfg,
                                                  u"correa {}-{}".format(F[i][0], F[i + 1][0]), 1, rot))
-                if cfg["sag"] and len(stations[side]) > 1:
-                    rt = rod_type(doc, DB, cfg["sag_rod"])
+                if rt is not None and len(stations) > 1:
                     for frac in (1 / 3.0, 2 / 3.0):
-                        def at(s):
-                            p0, p1 = a0 + u0 * _ft(s), a1 + u1 * _ft(s)
-                            n = n_roof  # a media altura de la correa
-                            return p0 + (p1 - p0) * frac + n * _ft(h / 2.0)
-                        line = DB.Line.CreateBound(at(stations[side][0]), at(stations[side][-1]))
-                        made["sag"].append(_beam(doc, DB, line, rt, level, cfg,
-                                                 u"templador {}-{}".format(F[i][0], F[i + 1][0]), 1))
-    if cfg["girts"]:
+                        if isinstance(c0, DB.Line):
+                            pairs = [(stations[0], stations[-1])]
+                        else:  # curva: un tramo recto entre correas consecutivas
+                            pairs = list(zip(stations[:-1], stations[1:]))
+                        for sa, sb in pairs:
+                            line = DB.Line.CreateBound(place(sa, frac)[0], place(sb, frac)[0])
+                            made["sag"].append(_beam(doc, DB, line, rt, level, cfg,
+                                                     u"templador {}-{}".format(F[i][0], F[i + 1][0]), 1))
+    if cfg["girts"] and not shed.walls:
+        made["notes"].append(u"sin columnas BOKI: no se colocan largueros ni arriostres de pared")
+    if cfg["girts"] and shed.walls:
         gt = purlin_type(doc, DB, cfg["girt"])
-        gd = C_PROFILES[cfg["girt"]][0] / 1000.0
+        gd = depth_mm(cfg["girt"]) / 1000.0
         heights = girt_heights((shed.eave_z - shed.base_z) * FT, cfg["girt_step"], cfg["girt_top_gap"])
         for i in range(len(F) - 1):
             for k, out in ((1, shed.span_dir.Negate()), (2, shed.span_dir)):
@@ -368,18 +553,19 @@ def generate(doc, DB, level, cfg):
         bt = rod_type(doc, DB, cfg["brace_rod"])
     for i in bays:
         if cfg["brace_roof"]:
-            for side in (0, 1):
-                a0, b0 = shed.water(F[i], side)
-                a1, b1 = shed.water(F[i + 1], side)
-                for t0, t1 in ((0.0, 0.5), (0.5, 1.0)):
-                    q00, q01 = a0 + (b0 - a0) * t0, a0 + (b0 - a0) * t1
-                    q10, q11 = a1 + (b1 - a1) * t0, a1 + (b1 - a1) * t1
-                    # bajo las correas: el eje medio diametro debajo de la cara superior de la viga
-                    drop = DB.XYZ(0, 0, -_ft(cfg["brace_rod"] / 2000.0))
-                    for p, q in ((q00, q11), (q10, q01)):
-                        made["brace_roof"].append(_beam(doc, DB, DB.Line.CreateBound(p + drop, q + drop), bt, level, cfg,
+            for w in range(len(Wt[i])):
+                c0, c1 = Wt[i][w], Wt[i + 1][w]
+
+                def top(c, frac):
+                    # bajo las correas: el eje medio diametro debajo de la cara superior del acero
+                    p, tan = _at(c, c.Length * frac)
+                    n = roof_normal(tan)
+                    return p + n * (shed.top_offset - _ft(cfg["brace_rod"] / 2000.0))
+                for f0, f1 in ((0.0, 0.5), (0.5, 1.0)):
+                    for p, q in ((top(c0, f0), top(c1, f1)), (top(c1, f0), top(c0, f1))):
+                        made["brace_roof"].append(_beam(doc, DB, DB.Line.CreateBound(p, q), bt, level, cfg,
                                                         u"arriostre techo {}-{}".format(F[i][0], F[i + 1][0])))
-        if cfg["brace_walls"]:
+        if cfg["brace_walls"] and shed.walls:
             for k in (1, 2):
                 lo0 = DB.XYZ(F[i][k].X, F[i][k].Y, shed.base_z)
                 lo1 = DB.XYZ(F[i + 1][k].X, F[i + 1][k].Y, shed.base_z)
@@ -391,23 +577,28 @@ def generate(doc, DB, level, cfg):
     return made
 
 
-def summary(cfg, frames, span, eave, slope_pct, water=None):
-    """Cantidades y pesos (kg) para la ventana, con la geometria de la nave."""
+def summary(cfg, frames, span, eave, slope_pct, water=None, waters=None, walls=True):
+    """Cantidades y pesos (kg) para la ventana, con la geometria de la
+    cubierta (`waters`: largo de cada agua en m, si se conoce)."""
     cfg = config(cfg)
     bays = max(frames - 1, 0)
     bay = 6.0 if "bay" not in cfg else cfg["bay"]
     rise = span / 2.0 * slope_pct / 100.0
     water = water or math.hypot(span / 2.0, rise)  # largo real de la viga si se conoce
-    st = purlin_stations(water, cfg["spacing"], cfg["first"]) if cfg["roof"] else []
-    hs = girt_heights(eave, cfg["girt_step"], cfg["girt_top_gap"]) if cfg["girts"] else []
+    waters = waters or [water, water]
+    sts = [purlin_stations(w, cfg["spacing"], cfg["first"]) if cfg["roof"] else [] for w in waters]
+    st = sts[0]
+    hs = girt_heights(eave, cfg["girt_step"], cfg["girt_top_gap"]) if cfg["girts"] and walls else []
     run = (st[-1] - st[0]) if len(st) > 1 else 0.0
+    water = waters[0]
     end_bays = min(2, bays)
+    lines = sum(len(s) for s in sts)
     out = {
-        "purlin_lines": 2 * len(st), "purlins": 2 * len(st) * bays,
-        "sag": (4 * bays if cfg["sag"] and cfg["roof"] else 0),
+        "purlin_lines": lines, "purlins": lines * bays,
+        "sag": (2 * len(waters) * bays if cfg["sag"] and cfg["roof"] else 0),
         "girt_lines": 2 * len(hs), "girts": 2 * len(hs) * bays,
-        "brace_roof": (4 * end_bays if cfg["brace_roof"] else 0),
-        "brace_walls": (2 * end_bays if cfg["brace_walls"] else 0),
+        "brace_roof": (2 * len(waters) * end_bays if cfg["brace_roof"] else 0),
+        "brace_walls": (2 * end_bays if cfg["brace_walls"] and walls else 0),
         "spacing_real": (run / (len(st) - 1)) if len(st) > 1 else 0.0,
     }
     out["kg_purlins"] = out["purlins"] * bay * c_kg_per_m(cfg["purlin"])

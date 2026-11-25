@@ -60,7 +60,7 @@ class CorreasWindow(forms.WPFWindow):
         except mc.SpecError as e:
             self.shed = None
             self.txt_shed.Text = u"{}".format(e)
-        names = sorted(mc.C_PROFILES)
+        names = mc.profiles()  # C con labios y tubos rectangulares
         self.cbo_purlin.ItemsSource = names
         self.cbo_girt.ItemsSource = names
         rods = [mc.RODS[k] for k in sorted(mc.RODS)]
@@ -107,8 +107,8 @@ class CorreasWindow(forms.WPFWindow):
         eave = (s.eave_z - s.base_z) * mc.FT
         rise = (s.frames[0][4].Z - s.eave_z) * mc.FT
         bay = s.frames[0][1].DistanceTo(s.frames[1][1]) * mc.FT
-        a, b = s.water(s.frames[0], 0)
-        return len(s.frames), s.span, eave, rise / (s.span / 2.0) * 100.0, bay, a.DistanceTo(b) * mc.FT
+        self.waters = s.water_lengths()
+        return len(s.frames), s.span, eave, rise / (s.span / 2.0) * 100.0, bay, self.waters[0]
 
     def refresh(self):
         if not self._ready:
@@ -121,7 +121,8 @@ class CorreasWindow(forms.WPFWindow):
         self.txt_error.Text = u""
         frames, span, eave, slope, bay, water = self.geometry()
         cfg["bay"] = bay
-        s = mc.summary(cfg, frames, span, eave, slope, water)
+        s = mc.summary(cfg, frames, span, eave, slope, water,
+                       getattr(self, "waters", None), self.shed.walls if self.shed else True)
         self.txt_summary.Text = (
             u"Techo: {} líneas de correas x {} paños = {} correas {} (separación real {:.2f} m) - {} templadores\n"
             u"Paredes: {} líneas = {} largueros {} - Arriostres: {} cruces de techo + {} cruces de pared\n"
@@ -153,8 +154,9 @@ class CorreasWindow(forms.WPFWindow):
         water = water_len or (span / 2.0) * (1 + (slope / 100.0) ** 2) ** 0.5
         st = mc.purlin_stations(water, cfg["spacing"], cfg["first"]) if cfg["roof"] else []
         k = (span / 2.0) / ((span / 2.0) * (1 + (slope / 100.0) ** 2) ** 0.5)
+        two = len(getattr(self, "waters", [0, 0])) > 1
         for s in st:
-            for y in (s * k, span - s * k):
+            for y in ((s * k, span - s * k) if two else (s / water * span,)):
                 line(P(0, y), P(length, y), C_PURLIN, 2)
         for i in range(frames - 1):
             if cfg["roof"] and cfg["sag"] and len(st) > 1:
