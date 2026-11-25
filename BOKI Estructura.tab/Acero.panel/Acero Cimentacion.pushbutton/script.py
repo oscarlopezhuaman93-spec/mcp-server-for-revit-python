@@ -20,9 +20,9 @@ if REVIT_MCP_DIR not in sys.path:
 
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
-import rebar_columns as rc
-import rebar_foundation as rf
+import cimentacion_spec as rs  # Acero Cimentacion: its own rules (2026-11-25)
+import cimentacion_rc as rc  # Acero Cimentacion: its own rules (2026-11-25)
+import cimentacion_rf as rf  # Acero Cimentacion: its own rules (2026-11-25)
 import rebar_views as rv
 import rebar_splice_ui as su
 import utils as fw_utils
