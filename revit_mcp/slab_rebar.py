@@ -19,7 +19,7 @@ Pure (tests/unit/test_slab_rebar.py)."""
 import json
 import math
 
-import rebar_spec as rs
+import losa_spec as rs  # Acero Losa: its own rules (2026-11-25)
 
 INF, SUP = u"inf", u"sup"
 X, Y = u"x", u"y"

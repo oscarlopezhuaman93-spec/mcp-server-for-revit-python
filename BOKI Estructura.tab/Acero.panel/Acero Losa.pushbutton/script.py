@@ -21,9 +21,9 @@ if REVIT_MCP_DIR not in sys.path:
 
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
-import rebar_columns as rc
-import rebar_foundation as rf
+import losa_spec as rs  # Acero Losa: its own rules (2026-11-25)
+import losa_rc as rc  # Acero Losa: its own rules (2026-11-25)
+import losa_rf as rf  # Acero Losa: its own rules (2026-11-25)
 import slab_rebar as sr
 import rebar_slabs as rsl
 import roof_rebar as rr

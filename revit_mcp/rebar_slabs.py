@@ -10,7 +10,7 @@ import math
 from pyrevit import DB
 from System.Collections.Generic import List
 
-import rebar_foundation as rf
+import losa_rf as rf  # Acero Losa: its own rules (2026-11-25)
 import slab_rebar as sr
 
 FT = 0.3048
@@ -298,7 +298,7 @@ def generate(model, settings, mm, bar_type_for, splice=None, tag=None, skip=None
     Returns ([(rebar, face, axis)], warnings)."""
     from Autodesk.Revit.DB.Structure import Rebar, RebarStyle, RebarHookOrientation
     doc = model.element.Document
-    import rebar_columns as _rc
+    import losa_rc as _rc  # Acero Losa: its own rules (2026-11-25)
     _rc.set_host_cover(doc, model.element, float(settings.get("cover") or 2.0) / 100.0)  # Revit's own, as laid
     lines, _, warnings = model.plan(settings, mm, splice, brick_library(doc, settings))
     made = []
