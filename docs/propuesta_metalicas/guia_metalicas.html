@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>BOKI Metálicas - Guía de uso</title>
+<style>
+@page { size: A4; margin: 15mm 14mm 15mm 14mm; }
+body { font-family: "Segoe UI", Arial, sans-serif; color: #16324F; font-size: 10.3pt; line-height: 1.42; margin: 0; }
+.band { background: #16324F; color: #fff; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; border-radius: 6px; }
+.band h1 { margin: 0; font-size: 20pt; } .band p { margin: 2px 0 0; color: #B9C9DA; font-size: 10pt; }
+.brand { font-weight: bold; font-size: 15pt; display: flex; align-items: center; gap: 10px; }
+.brand b { color: #FFB347; } .brand img { height: 52px; border: 1.5px solid #FFB347; border-radius: 6px; }
+h2 { font-size: 14pt; border-bottom: 2px solid #FFB347; padding-bottom: 3px; margin: 20px 0 8px; }
+h3 { font-size: 11.5pt; margin: 12px 0 4px; color: #1F6FC5; }
+img.shot { width: 100%; border: 1px solid #D0D7DF; border-radius: 4px; margin: 5px 0 2px; }
+.cap { font-size: 8.8pt; color: #6B7B8C; margin: 0 0 8px; }
+table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; font-size: 9.3pt; }
+th { background: #16324F; color: #fff; text-align: left; padding: 4px 7px; }
+td { border-bottom: 1px solid #D0D7DF; padding: 3px 7px; } td.n { text-align: right; }
+tr.tot td { font-weight: bold; border-top: 2px solid #16324F; }
+.note { background: #FFF4E5; border-left: 4px solid #FFB347; padding: 7px 12px; margin: 8px 0; }
+.ok { background: #EAF6EE; border-left: 4px solid #1F9D55; padding: 7px 12px; margin: 8px 0; }
+ol li, ul li { margin: 2px 0; }
+.two { display: flex; gap: 10px; } .two > div { flex: 1; }
+.pb { page-break-before: always; }
+.keep { page-break-inside: avoid; }
+</style></head><body>
+
+<div class="band"><div><h1>BOKI Metálicas</h1><p>Guía de uso con ejemplos · Pórticos, Cerchas, Correas y arriostres, Conexiones</p></div>
+<div class="brand"><span><b>BOKI</b> ESTRUCTURAS</span><img src="../../BOKI Estructura.tab/_recursos/boki_logo.png"></div></div>
+
+<h2>1. Qué trae la pestaña</h2>
+<table>
+<tr><th>Botón</th><th>Qué hace</th><th>Lee</th></tr>
+<tr><td><b>Pórticos</b></td><td>Nave de alma llena: columnas y vigas W, cartelas, vigas de amarre y placas base (base articulada).</td><td>Ejes</td></tr>
+<tr><td><b>Cerchas</b></td><td>Cerchas de tubo rectangular: <b>en arco</b>, <b>a dos aguas</b> o <b>rectas</b>; sección <b>plana</b> o <b>espacial rectangular</b>.</td><td>Ejes y columnas</td></tr>
+<tr><td><b>Correas y arriostres</b></td><td>Correas de techo (C con labios o <b>tubo rectangular</b>), templadores, largueros, cruces de arriostre.</td><td>Pórticos o Cerchas</td></tr>
+<tr><td><b>Conexiones</b></td><td>Plancha de extremo en alero y cumbrera (A325), anclajes F1554, apoyo articulado con pasador de cerchas.</td><td>Pórticos y Cerchas</td></tr>
+</table>
+<div class="note"><b>Reglas independientes:</b> cada botón tiene su propio archivo de reglas (metal_porticos, metal_cerchas, metal_correas, metal_conexiones). Se comunican solo por la marca que dejan en los elementos (Comentarios: "BOKI Portico…", "BOKI Cercha…"), así un cambio en un botón no altera otro. Todo se edita volviendo a abrir el botón: borra lo que generó y lo crea de nuevo.</div>
+<div class="note"><b>Familias de BOKI:</b> los tubos, barras, cobertura TR5, pernos y templadores se guardaron de la cancha de Chumbivilcas en <i>familias\metalicas</i>; el plugin los carga solo en cualquier proyecto.</div>
+
+<h2>2. Flujo de trabajo</h2>
+<ol>
+<li>Dibuja los <b>ejes</b>: los transversales (uno por pórtico o cercha) y los <b>dos longitudinales</b> de apoyo (A y B).</li>
+<li><b>Pórticos</b> (nave de alma llena) <b>o Cerchas</b> (arco, dos aguas o recta). Con cerchas, el apoyo se toma de la cara superior de la columna (concreto o acero) que esté en el cruce de ejes.</li>
+<li><b>Correas y arriostres</b>: elige C con labios o tubo rectangular, separación y qué colocar.</li>
+<li><b>Conexiones</b>: planchas, pernos, anclajes y apoyos.</li>
+</ol>
+<p>En cada ventana: <b>SELECCIONAR EJES</b> (cuando aplica) → revisa la <b>vista previa</b> y el <b>resumen</b> (cantidades y pesos) → <b>Generar</b>. Nada se crea antes de pulsar Generar.</p>
+
+<h2 class="pb">3. Ejemplo A – Nave de 20 x 36 m con pórticos de alma llena</h2>
+<table>
+<tr><th>Dato</th><th>Valor</th></tr>
+<tr><td>Ejes</td><td>7 pórticos @ 6.00 m (P1–P7), columnas en A y B, luz 20.00 m</td></tr>
+<tr><td>Pórtico</td><td>Alero 7.00 m, pendiente 10 %, columna W14x48, viga W16x31, cartela 1.50 m, amarre W8x10</td></tr>
+<tr><td>Correas</td><td>C 150x50x15x2.5 @ ≤ 1.20 m (TR-4), templadores Ø1/2" a los tercios, largueros C150 cada 1.50 m</td></tr>
+<tr><td>Arriostres</td><td>Cruces Ø3/4" en paños extremos, techo y paredes</td></tr>
+<tr><td>Conexiones</td><td>Plancha de extremo 25 mm (8 pernos 3/4") en alero, par de 20 mm (6 pernos) en cumbrera, 4 anclajes 3/4" L = 0.60 m</td></tr>
+</table>
+<img class="shot" src="11_correas_3d.png"><p class="cap">Resultado: pórticos, correas, largueros y arriostres.</p>
+<div class="two">
+<div><img class="shot" src="50_conexion_alero.png"><p class="cap">Alero: plancha de extremo con 8 pernos y cartela.</p></div>
+<div><img class="shot" src="51_conexion_cumbrera.png"><p class="cap">Cumbrera: par de planchas con 6 pernos.</p></div>
+</div>
+<div class="keep">
+<h3>Cantidades del ejemplo A (aprox.)</h3>
+<table>
+<tr><th>Elemento</th><th>Cant.</th><th class="n">Peso (t)</th></tr>
+<tr><td>Columnas W14x48 (7.00 m)</td><td>14</td><td class="n">7.06</td></tr>
+<tr><td>Vigas W16x31 (9.87 m)</td><td>14</td><td class="n">6.37</td></tr>
+<tr><td>Amarres W8x10 / cartelas / placas base</td><td>12 / 21 / 14</td><td class="n">2.19</td></tr>
+<tr><td>Correas C150 (108) + largueros (48)</td><td>156</td><td class="n">4.9</td></tr>
+<tr><td>Templadores + arriostres</td><td>24 + 24 barras</td><td class="n">0.6</td></tr>
+<tr><td>Conexiones (planchas, pernos, anclajes)</td><td>-</td><td class="n">≈ 1.2</td></tr>
+<tr class="tot"><td>Total aproximado</td><td></td><td class="n">≈ 22.3</td></tr>
+</table></div>
+
+<h2 class="pb">4. Ejemplo B – Cancha con cercha espacial en arco (estándar Chumbivilcas)</h2>
+<table>
+<tr><th>Dato</th><th>Valor</th></tr>
+<tr><td>Ejes</td><td>14 cerchas @ 5.20 m, apoyos A y B a 47.40 m, sobre columnas de concreto (tope +5.00)</td></tr>
+<tr><td>Cercha</td><td>En arco, flecha 7.50 m, sección espacial rectangular 0.40 m x 0.70 m, montantes @ ≤ 0.85 m</td></tr>
+<tr><td>Tubos</td><td>Cordones 100x50x3, montantes y diagonales 50x50x3, travesaños 25x50x3</td></tr>
+<tr><td>Correas</td><td>Tubo 100x50x4 @ 2.03 m (cobertura TR5), templadores Ø1/2"</td></tr>
+<tr><td>Apoyos</td><td>Articulados con pasador Ø50, cartelas 12 mm, placa 400x600x20, 4 anclajes 3/4"</td></tr>
+</table>
+<img class="shot" src="34_cerchas_ventana.png"><p class="cap">Ventana de Cerchas con el ejemplo B (resumen: 14 cerchas, 1708 montantes, 1680 diagonales, ≈ 35 t).</p>
+<div class="two">
+<div><img class="shot" src="43_correas_arco_detalle.png"><p class="cap">Arco espacial con correas de tubo apoyadas sobre los cordones.</p></div>
+<div><img class="shot" src="53_conexion_apoyo_arco.png"><p class="cap">Apoyo articulado: placa anclada, cartelas y pasador.</p></div>
+</div>
+<div class="ok"><b>Comparado con la cancha real:</b> montantes 1680 (real) / 1708 (BOKI), diagonales 1616 / 1680, cordones 50x100 2800 m / 2852 m. Las diferencias vienen de la separación exacta de montantes y de los extremos.</div>
+
+<h2 class="pb">5. Otras formas de cercha</h2>
+<div class="two">
+<div><img class="shot" src="31_cercha_dos_aguas.png"><p class="cap">A dos aguas, sección plana (20 m, 15 %, peralte 1.00 m).</p></div>
+<div><img class="shot" src="32_cercha_recta_espacial.png"><p class="cap">Recta de cordones paralelos, sección espacial rectangular (15 m).</p></div>
+</div>
+<img class="shot" src="41_correas_dos_aguas.png"><p class="cap">Correas de tubo 100x50x4 y arriostres sobre cerchas a dos aguas.</p>
+
+<h2>6. Cómo se revisó (como se construye)</h2>
+<div class="ok"><ul style="margin:0">
+<li>Correas (C y tubo): alma perpendicular a la cubierta (1.000) y apoyadas sobre la viga o el cordón (0 mm de hueco), en pórticos, arcos, dos aguas y rectas.</li>
+<li>Largueros: alma horizontal, por fuera y apoyados en la cara de las columnas.</li>
+<li>Arriostres de techo: bajo las correas; templadores a media altura de la correa.</li>
+<li>Pórticos: la viga llega a la cara de la columna; cartelas con ala inferior.</li>
+<li>Cerchas: cumbre del arco 8.20 m sobre el apoyo (7.50 + 0.70), igual que la cancha.</li>
+<li>Todas las pruebas en Revit en zonas vacías del modelo y deshechas al terminar.</li>
+</ul></div>
+<div class="note"><b>Pendiente:</b> verificación E.090 / AISC 360 de perfiles y conexiones, y el metrado (kg por perfil, planchas, pernos y pintura) en un cuadro.</div>
+</body></html>
