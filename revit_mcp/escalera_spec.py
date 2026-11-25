@@ -1,0 +1,2096 @@
+# -*- coding: UTF-8 -*-
+# Acero Escalera's own copy (2026-11-25): its rules change here without touching the other buttons.
+"""
+Pure-Python helpers for the rebar ("Acero") generator: reading the
+per-type reinforcement table, stirrup spacing, longitudinal bar layout and
+bar weights. No Revit imports, so it can be unit-tested outside Revit.
+
+Lengths are in meters unless a name says otherwise.
+"""
+import io
+import json
+import math
+import os
+import re
+
+# Nominal diameters (mm) of the bars used in Peru (ASTM A615 / NTP 341.031).
+# 1 3/8" is the #11 bar (35.8 mm, 1006 mm2), as sold under that name.
+BAR_DIAMETERS_MM = {
+    u'1/4"': 6.35,
+    u"6mm": 6.0,
+    u"8mm": 8.0,
+    u'3/8"': 9.525,
+    u"12mm": 12.0,
+    u'1/2"': 12.7,
+    u'5/8"': 15.875,
+    u'3/4"': 19.05,
+    u'1"': 25.4,
+    u'1 3/8"': 35.8,
+}
+
+STEEL_DENSITY_KG_M3 = 7850.0
+
+# Weight per diameter table (data/acero_pesos_por_diametro.csv), editable.
+WEIGHT_TABLE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "acero_pesos_por_diametro.csv")
+_weight_table = None
+
+
+class SpecError(ValueError):
+    """A reinforcement table entry that can't be read (message in Spanish,
+    shown to the user)."""
+
+
+def read_weight_table(path=WEIGHT_TABLE_FILE):
+    """{diameter key: {"area_mm2", "nominal", "minimum"}} (kg/m) from the
+    weight table: 'DIAMETRO;AREA_NOMINAL_MM2;PESO_NOMINAL_KG_M;PESO_MINIMO_KG_M'
+    lines, '#' comments and the header skipped. A diameter the plugin
+    doesn't know yet (a 7/8" row added to the table) becomes a known bar,
+    its diameter taken from its nominal area."""
+    table = {}
+    with io.open(path, encoding="utf-8") as f:
+        for number, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith(u"#") or line.upper().startswith(u"DIAMETRO"):
+                continue
+            cells = [c.strip() for c in line.split(u";")]
+            try:
+                key = _diameter_key(cells[0])
+                row = {
+                    "area_mm2": float(cells[1]),
+                    "nominal": float(cells[2]),
+                    "minimum": float(cells[3]),
+                }
+            except (IndexError, ValueError):
+                raise SpecError(u"Tabla de pesos, linea {}: no se entiende '{}'".format(number, line))
+            if key not in BAR_DIAMETERS_MM:
+                BAR_DIAMETERS_MM[key] = round(math.sqrt(4.0 * row["area_mm2"] / math.pi), 2)
+            table[key] = row
+    return table
+
+
+def weight_table():
+    """The weight table, read once."""
+    global _weight_table
+    if _weight_table is None:
+        _weight_table = read_weight_table()
+    return _weight_table
+
+
+def bar_weight_kg_per_m(diameter_key):
+    """Nominal weight of the table; for a diameter not in it, the steel
+    density times the bar's area."""
+    row = weight_table().get(diameter_key)
+    if row:
+        return row["nominal"]
+    d = BAR_DIAMETERS_MM[diameter_key] / 1000.0
+    return STEEL_DENSITY_KG_M3 * math.pi * d * d / 4.0
+
+
+# Crossties with 180-degree hooks (kept in the tie's shape slot of the
+# drawing): C bends both hooks to one side, S to opposite sides. A tie
+# without one of these takes the 135-degree stirrup hooks.
+TIE_C = u"GRAPA C"
+TIE_S = u"GRAPA S"
+TIE_STYLES = (TIE_C, TIE_S)
+
+
+def hooked_tie_line(a, b, radius, style):
+    """Straight part of a C/S crosstie between the bar centers a and b whose
+    180-degree hooks (bent at `radius`, to the bar's centerline) wrap those
+    bars, each bend centered on its bar. Seen along a->b the hooks turn
+    left - both for TIE_C, so the line passes by their right sides; for
+    TIE_S the end hook turns right, so the line crosses diagonally from the
+    right of a to the left of b."""
+    turn_end = 1.0 if style == TIE_C else -1.0
+    pa, pb = a, b
+    for _ in range(6):  # the offsets tilt the line: settle it
+        dx, dy = pb[0] - pa[0], pb[1] - pa[1]
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length  # left of a->b
+        pa = (a[0] - nx * radius, a[1] - ny * radius)
+        pb = (b[0] - turn_end * nx * radius, b[1] - turn_end * ny * radius)
+    return pa, pb
+
+
+def tie_leg_cm(diameter_key, angle):
+    """Norma E.060 minimum straight leg (cm) of a crosstie hook: 180 deg ->
+    4 db and at least 6.5 cm; 135 deg -> 6 db and at least 7.5 cm; rounded
+    up to 0.5 cm."""
+    db = BAR_DIAMETERS_MM[diameter_key] / 10.0
+    leg = max(4 * db, 6.5) if angle >= 170 else max(6 * db, 7.5)
+    return math.ceil(leg * 2.0 - 1e-9) / 2.0
+
+
+def _arc(center, radius, a0, a1, step=math.pi / 16):
+    """Points on a circle from angle a0 to a1 (either way), both ends in."""
+    n = max(1, int(math.ceil(abs(a1 - a0) / step)))
+    return [(center[0] + radius * math.cos(a0 + (a1 - a0) * k / float(n)),
+             center[1] + radius * math.sin(a0 + (a1 - a0) * k / float(n))) for k in range(n + 1)]
+
+
+def bent_stirrup(vertices, radius, hook_leg, is_open=False, bend=None):
+    """A stirrup in plan as it is bent: its centerline `radius` outside the
+    drawn vertices (the wrapped bar centers), round over each bar, and - a
+    closed one - the two 135-degree hooks at the first corner, each going
+    on round the bar so both legs leave it parallel (45 degrees past a
+    square corner, more past an open one) and then straight into the core
+    `hook_leg`. `bend`: the bend radius of the centerline when larger
+    than `radius` (Revit bends a stirrup round a pin: about 2.5 db), the
+    corner then rounding inside the bar. Returns [path, hook, hook]
+    ([path] when open)."""
+    bend = max(bend or 0.0, radius)
+    pts = list(vertices) if is_open else counterclockwise(vertices)
+    n = len(pts)
+    if n < 2:
+        return []
+
+    def normal(a, b):  # outward of a counterclockwise polygon (right side)
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length = math.hypot(dx, dy) or 1.0
+        return dy / length, -dx / length
+
+    if is_open:
+        if polygon_signed_area(pts) < 0:  # the U bulges to the right of its run
+            pts = pts[::-1]
+        path = [(pts[0][0] + normal(pts[0], pts[1])[0] * radius, pts[0][1] + normal(pts[0], pts[1])[1] * radius)]
+        corners = range(1, n - 1)
+    else:
+        path = []
+        corners = range(n)
+    angles, centers = {}, {}
+    for k in corners:
+        p, prev, nxt = pts[k], pts[k - 1], pts[(k + 1) % n]
+        n_in, n_out = normal(prev, p), normal(p, nxt)
+        a_in, a_out = math.atan2(n_in[1], n_in[0]), math.atan2(n_out[1], n_out[0])
+        turn = (a_out - a_in + math.pi) % (2 * math.pi) - math.pi
+        if turn >= 0:  # convex: round over the bar
+            # the centre `bend` inside both offset sides
+            k_ = (bend - radius) / (1.0 + math.cos(turn))
+            c = (p[0] - k_ * (math.cos(a_in) + math.cos(a_in + turn)),
+                 p[1] - k_ * (math.sin(a_in) + math.sin(a_in + turn)))
+            path += _arc(c, bend, a_in, a_in + turn)
+            centers[k] = c
+        else:  # concave: the offset sides meet
+            half = turn / 2.0
+            r = radius / max(math.cos(half), 0.2)
+            path.append((p[0] + r * math.cos(a_in + half), p[1] + r * math.sin(a_in + half)))
+        angles[k] = (a_in, a_in + turn)
+    if is_open:
+        path.append((pts[-1][0] + normal(pts[-2], pts[-1])[0] * radius,
+                     pts[-1][1] + normal(pts[-2], pts[-1])[1] * radius))
+        return [path]
+    path.append(path[0])
+    a_in, a_out = angles[0]
+    p = centers.get(0, pts[0])
+    hooks = []
+    # the two hooks leave the bar parallel, side by side, whatever the
+    # corner (45 degrees past a square one, more past an open one)
+    extra = max(0.0, (math.pi - (a_out - a_in)) / 2.0)
+    for start, end, sign in ((a_in, a_out + extra, 1.0), (a_out, a_in - extra, -1.0)):
+        arc = _arc(p, bend, start, end)
+        tx, ty = -math.sin(end) * sign, math.cos(end) * sign
+        arc.append((arc[-1][0] + tx * hook_leg, arc[-1][1] + ty * hook_leg))
+        hooks.append(arc)
+    return [path] + hooks
+
+
+def bent_tie(a, b, radius_a, radius_b, style, hook_leg):
+    """A crosstie in plan as it is bent, between bar centers a and b: a
+    straight run beside the bars and, at each end, round its bar (135
+    degrees; 180 for TIE_C / TIE_S, the S turning to opposite sides) and a
+    straight leg `hook_leg`. One polyline."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux
+    sweep = math.pi if style in TIE_STYLES else 0.75 * math.pi
+    side_b = -1.0 if style == TIE_S else 1.0
+    ends = []
+    for c, r, side, toward in ((a, radius_a, 1.0, -1.0), (b, radius_b, side_b, 1.0)):
+        start = math.atan2(ny * side, nx * side)
+        # from the tie's side round the far side of the bar (away from the run)
+        sign = 1.0 if (side * toward) < 0 else -1.0
+        end = start + sign * sweep
+        arc = _arc(c, r, start, end)
+        tx, ty = -math.sin(end) * sign, math.cos(end) * sign
+        arc.append((arc[-1][0] + tx * hook_leg, arc[-1][1] + ty * hook_leg))
+        ends.append(arc)
+    return ends[0][::-1] + ends[1]
+
+
+# --- circular columns: hoops and spirals --------------------------------------
+
+CIRC_HOOP, CIRC_SPIRAL = u"aro", u"espiral"
+SPIRAL_PITCH_M = 0.075
+SPIRAL_EXTRA_TURNS = 1.5  # E.060: anchorage, at each end
+SPIRAL_CLEAR_MIN, SPIRAL_CLEAR_MAX = 0.025, 0.075  # E.060 clear pitch, m
+
+
+def circle_points(radius, n=48, start=0.0):
+    return [(radius * math.cos(start + 2 * math.pi * k / n), radius * math.sin(start + 2 * math.pi * k / n))
+            for k in range(n)]
+
+
+def circular_bars(radius_bars, count, key, start=None):
+    """`count` bars evenly round a circle of radius `radius_bars` (centers);
+    none on the axes when it can be helped (start half a step off)."""
+    start = math.pi / count if start is None else start
+    return [(x, y, key) for x, y in circle_points(radius_bars, count, start)]
+
+
+def _bend_to(point, direction, sign, radius, target, steps=10):
+    """Points of a bend of `radius` starting at `point` heading `direction`,
+    turning left (sign +1) or right (-1) until it heads `target`."""
+    tx, ty = direction
+    nx, ny = (-ty, tx) if sign > 0 else (ty, -tx)
+    cx, cy = point[0] + nx * radius, point[1] + ny * radius
+    turn = (math.atan2(target[1], target[0]) - math.atan2(ty, tx)) * sign % (2 * math.pi)
+    a0 = math.atan2(point[1] - cy, point[0] - cx)
+    return [(cx + radius * math.cos(a0 + sign * turn * k / float(steps)),
+             cy + radius * math.sin(a0 + sign * turn * k / float(steps))) for k in range(1, steps + 1)]
+
+
+def hoop_path(radius, ds, hook_leg, start=math.pi / 2, steps=48, wrap=None):
+    """A circular hoop in plan as it is bent on site: nearly a full turn,
+    both ends at `start` bent into the core (2.5 ds bends) as two parallel
+    legs `hook_leg` long, side by side towards the centre - no crossing.
+    `wrap` (bar radius + ds / 2): it closes on the vertical bar at `start`
+    - both ends wrap that bar, a 90-degree bend round it each, and run into
+    the core on either side of it. One polyline [(x, y)], counterclockwise."""
+    bend = 2.5 * ds if wrap is None else max(wrap, 2.5 * ds)  # Revit's minimum bend
+    gap = 1.5 * ds  # half the clear space between the two legs
+    delta = 0.0 if wrap is not None else math.asin(min(0.9, (gap + bend + ds / 2.0) / radius))
+    a0, a1 = start + delta, start - delta + 2 * math.pi
+    arc = [(radius * math.cos(a0 + (a1 - a0) * k / float(steps)), radius * math.sin(a0 + (a1 - a0) * k / float(steps)))
+           for k in range(steps + 1)]
+    inward = (-math.cos(start), -math.sin(start))
+
+    def end(angle, sign):
+        # at the arc's end (sign +1, going counterclockwise: turns left) or
+        # its start (sign -1, going back clockwise: turns right)
+        p = (radius * math.cos(angle), radius * math.sin(angle))
+        travel = (-math.sin(angle) * sign, math.cos(angle) * sign)
+        pts = _bend_to(p, travel, sign, bend, inward)
+        last = pts[-1]
+        return pts + [(last[0] + inward[0] * hook_leg, last[1] + inward[1] * hook_leg)]
+
+    return end(a0, -1.0)[::-1] + arc + end(a1, 1.0)
+
+def hoop_closing(bars, ds):
+    """Where a circular hoop closes: on the topmost vertical bar, wrapping
+    it ({"start", "wrap"} for hoop_path); {} without bars."""
+    if not bars:
+        return {}
+    x, y, key = max(bars, key=lambda b: (round(b[1], 4), -b[0]))
+    return {"start": math.atan2(y, x), "wrap": BAR_DIAMETERS_MM[key] / 2000.0 + ds / 2.0}
+
+
+def spiral_path(radius, z_start, z_end, pitch, ds, extra_turns=SPIRAL_EXTRA_TURNS, per_turn=24):
+    """A spiral as points (x, y, z) from z_start to z_end (m): `extra_turns`
+    nearly flat turns at each end (anchorage, one bar diameter apart) and
+    the body at `pitch`."""
+    tight = ds * 1.05
+    body = max(z_end - z_start - 2 * extra_turns * tight, 0.0)
+    turns_body = body / pitch
+    segments = [(extra_turns, tight), (turns_body, pitch), (extra_turns, tight)]
+    pts, angle, z = [], 0.0, z_start
+    pts.append((radius, 0.0, z))
+    for turns, step in segments:
+        n = max(1, int(round(turns * per_turn)))
+        for k in range(n):
+            angle += 2 * math.pi * turns / n
+            z += step * turns / n
+            pts.append((radius * math.cos(angle), radius * math.sin(angle), z))
+    return pts
+
+
+def spiral_clear_ok(pitch, ds):
+    """E.060: the clear space between turns, 2.5 to 7.5 cm."""
+    clear = pitch - ds
+    return SPIRAL_CLEAR_MIN - 1e-9 <= clear <= SPIRAL_CLEAR_MAX + 1e-9, clear
+
+
+def tie_hook_marks(a, b, style, radius):
+    """Plan preview of a crosstie's 180-degree hooks: at each end (a, b) a
+    half circle of `radius` turning back along the tie - both on one side
+    for TIE_C, on opposite sides for TIE_S. [[(x, y)...]] per hook."""
+    if style not in TIE_STYLES:
+        return []
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    tx, ty = dx / length, dy / length
+    nx, ny = -ty, tx
+    marks = []
+    for end, inward, side in ((a, 1.0, 1.0), (b, -1.0, 1.0 if style == TIE_C else -1.0)):
+        cx, cy = end[0] + nx * radius * side, end[1] + ny * radius * side
+        pts = []
+        for k in range(9):
+            ang = math.pi * k / 8.0
+            # from the end point round the outside back to the tie's side
+            ox = -nx * side * math.cos(ang) - tx * inward * math.sin(ang)
+            oy = -ny * side * math.cos(ang) - ty * inward * math.sin(ang)
+            pts.append((cx + ox * radius, cy + oy * radius))
+        last = pts[-1]
+        pts.append((last[0] + tx * inward * radius * 1.5, last[1] + ty * inward * radius * 1.5))
+        marks.append(pts)
+    return marks
+
+
+def e060_lap_cm(diameter_key, fc_mpa=21.0, fy_mpa=420.0, factor=1.3):
+    """Suggested tension lap splice (cm) for a bar, per Norma E.060 cap. 12:
+    `factor` x ld (1.3: class B), ld = fy / (2.1 sqrt(f'c)) db up to 3/4"
+    (1.7 instead of 2.1 from 7/8"), normal concrete, uncoated bars;
+    rounded up to 5 cm, at least 30 cm. The project's own table rules."""
+    db = BAR_DIAMETERS_MM[diameter_key]
+    k = 2.1 if db <= 20.0 else 1.7
+    ld = fy_mpa / (k * math.sqrt(fc_mpa)) * db / 10.0  # cm
+    return max(30, int(math.ceil(factor * ld / 5.0 - 1e-9)) * 5)
+
+
+MAX_BAR_LENGTH = 9.0  # m, the commercial bar length
+CRANK_SLOPE = 6.0  # a lapping bar is cranked 1:6 (run per unit of offset)
+
+
+def splice_pieces(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH):
+    """Where a longitudinal bar running the whole stacked column (bar_start
+    .. bar_end, m) is cut into bars of at most `max_length`, lapping `lap`.
+    Each lap lies in the central half of a story's clear height
+    (`stories`: [(clear_start, clear_end)], m) - outside the confinement
+    zones -, as high as the bar length allows.
+    Returns ([(start, end)] pieces bottom up, each overlapping the next by
+    `lap`; warnings) - a warning when no story fits a lap (then the cut
+    goes at the maximum length)."""
+    zones = []  # central halves
+    for b, c in stories:
+        quarter = (c - b) / 4.0
+        zones.append((b + quarter, c - quarter))
+    return lap_pieces(bar_start, bar_end, zones, lap, max_length, u"un tramo central de piso")
+
+
+def lap_pieces(bar_start, bar_end, zones, lap, max_length=MAX_BAR_LENGTH, where=u"una zona permitida"):
+    """Cut a bar running bar_start .. bar_end (m) into bars of at most
+    `max_length` lapping `lap`, every lap inside one of the `zones` where
+    splices are allowed ([(lo, hi)]), as far along as the bar length
+    allows. Returns ([(start, end)] pieces, warnings); `where` names the
+    zones in the warning given when none fits a lap (the cut then goes at
+    the maximum length)."""
+    eps = 1e-6
+    pieces, warnings = [], []
+    if lap >= max_length:
+        return [(bar_start, bar_end)], [u"el empalme ({:.2f} m) no puede ser mayor que la barra ({:.2f} m)"
+                                        .format(lap, max_length)]
+    zones = sorted(zones, key=lambda z: -z[1])  # furthest first
+    start = bar_start
+    while bar_end - start > max_length + eps:
+        limit = start + max_length
+        end = None
+        for lo, hi in zones:
+            e = min(limit, hi)
+            if e - lap >= lo - eps and e - lap > start + eps:
+                end = e
+                break
+        if end is None:
+            end = limit
+            warnings.append(u"no hay {} donde quepa un empalme de {:.2f} m; "
+                            u"se empalma a {:.2f} m".format(where, lap, end))
+        pieces.append((start, end))
+        start = end - lap
+    pieces.append((start, bar_end))
+    return pieces, warnings
+
+
+# Lamina "Empalmes por traslape en columnas": minimum anchorage (La) and lap
+# (Le) per diameter, m. Other diameters fall back to E.060.
+COLUMN_LA = {u'3/8"': 0.30, u'1/2"': 0.35, u'5/8"': 0.45, u'3/4"': 0.60, u'1"': 0.90}
+COLUMN_LE = {u'3/8"': 0.40, u'1/2"': 0.50, u'5/8"': 0.60, u'3/4"': 0.80, u'1"': 1.20}
+LAP_INCREASE = 1.7  # more than 50% of the bars lapped in one section
+
+
+def column_lap_cm(diameter_key):
+    """The column lap (cm) of the lamina's table, E.060 when not listed."""
+    if diameter_key in COLUMN_LE:
+        return int(round(COLUMN_LE[diameter_key] * 100))
+    return e060_lap_cm(diameter_key)
+
+
+def central_thirds(stories):
+    """The central third of each story's clear height ([(b, c)] -> [(lo, hi)])."""
+    return [(b + (c - b) / 3.0, c - (c - b) / 3.0) for b, c in stories]
+
+
+def column_splice(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH, group=0, other=None):
+    """Column bars cut per the lamina: every lap in the central third of a
+    story, at most half the bars lapped in one section. Group 0 laps as
+    high as it can; group 1 (`other`: group 0's pieces) laps just below
+    group 0's lap in the same third, or in another story's third when both
+    don't fit; only with no third apart do the bars lap together, the lap
+    increased 70% (column_splice_groups).
+    Returns (pieces, lap used, warnings)."""
+    thirds = central_thirds(stories)
+    if group == 0 or not other:
+        return _with_lap(lap_pieces(bar_start, bar_end, thirds, lap, max_length, u"un tercio central de piso"), lap)
+    # below group 0's lap in the same third when both fit, else a third of
+    # another story (the one below, as the bar length allows)
+    cuts = [e for _, e in other[:-1]]
+    zones = []
+    for lo, hi in thirds:
+        inside = [e for e in cuts if lo - 1e-6 <= e - lap and e <= hi + 1e-6]
+        if not inside:
+            zones.append((lo, hi))
+        elif min(inside) - 2 * lap >= lo - 1e-6:
+            zones.append((lo, min(inside) - lap))
+    pieces, warnings = lap_pieces(bar_start, bar_end, zones, lap, max_length, u"un tercio central de piso")
+    if warnings and not lap_pieces(bar_start, bar_end, thirds, lap, max_length)[1]:
+        return None  # nowhere apart: caller laps together, +70%
+    return pieces, lap, warnings
+
+
+def _with_lap(result, lap):
+    return result[0], lap, result[1]
+
+
+def column_splice_groups(bar_start, bar_end, stories, lap, max_length=MAX_BAR_LENGTH):
+    """Both groups' cuts: ({0: pieces, 1: pieces}, lap used, warnings)."""
+    a = column_splice(bar_start, bar_end, stories, lap, max_length, 0)
+    b = column_splice(bar_start, bar_end, stories, lap, max_length, 1, a[0])
+    if b is not None:
+        return {0: a[0], 1: b[0]}, lap, a[2] + b[2]
+    big = int(math.ceil(LAP_INCREASE * lap * 20 - 1e-9)) / 20.0
+    a = column_splice(bar_start, bar_end, stories, big, max_length, 0)
+    note = [u"no caben dos empalmes alternados en el tercio central: se empalman juntos con "
+            u"Le x 1.7 = {:.2f} m".format(big)]
+    return {0: a[0], 1: a[0]}, big, a[2] + note
+
+
+def clear_spans(extent, supports, min_length=0.05):
+    """The clear spans of a beam: its extent (start, end, m along it) minus
+    the supports crossing it ([(s0, s1)]: columns, walls, the beams it
+    rests on), pieces shorter than `min_length` left out."""
+    a, b = extent
+    cuts = sorted((max(s0, a), min(s1, b)) for s0, s1 in supports if s1 > a and s0 < b)
+    spans, pos = [], a
+    for s0, s1 in cuts:
+        if s0 > pos + min_length:
+            spans.append((pos, s0))
+        pos = max(pos, s1)
+    if b > pos + min_length:
+        spans.append((pos, b))
+    return spans
+
+
+def confinement_length(zones):
+    """How far the end zones of a distribution reach from each end
+    ('1@.05, 10@.10' -> 1.05 m)."""
+    return sum(count * spacing for count, spacing in zones)
+
+
+def beam_lap_zones(spans, top, confinement, lap=0.0):
+    """Where the bars of a beam may be spliced (the user's detail, E.060):
+    top bars in the central third of each clear span (L/3), bottom bars
+    starting at a column face, in the end quarter (L/4) - the lap `lap`
+    reaching past it when longer. [(lo, hi)]. (`confinement` is kept for the
+    callers; the bottom splice no longer avoids it.)"""
+    zones = []
+    for a, b in spans:
+        if top:
+            third = (b - a) / 3.0
+            zones.append((a + third, b - third))
+            continue
+        reach = min(b - a, max((b - a) / 4.0, lap))
+        zones.append((a, a + reach))
+        zones.append((b - reach, b))
+    return zones
+
+
+def beam_bar_points(x, y, diameter, s_start, s_end, lap, cranked, leg_start=0.0, leg_end=0.0):
+    """Points (x, y, s) of one piece of a beam's longitudinal bar at section
+    position (x across, y up from the section center), along the beam from
+    s_start to s_end: cranked before a lap like `bar_piece_points`, with a
+    90-degree hook leg at either end (legs > 0) turned towards the other
+    face - down for a top bar, up for a bottom one."""
+    turn = -1.0 if y > 0 else 1.0
+    # cranked vertically (in the plane of its hooks: one flat bar)
+    points = bar_piece_points(x, y, diameter, s_start, s_end, lap, cranked, inward=(0.0, turn))
+    if leg_start > 0:
+        px, py, ps = points[0]
+        points.insert(0, (px, py + turn * leg_start, ps))
+    if leg_end > 0:
+        px, py, ps = points[-1]
+        points.append((px, py + turn * leg_end, ps))
+    return points
+
+
+def interpolate(points, s):
+    """Piecewise-linear value at s of [(s, value)] sorted by s (held flat
+    beyond the ends)."""
+    if not points:
+        return 0.0
+    if s <= points[0][0]:
+        return points[0][1]
+    for (s0, v0), (s1, v1) in zip(points, points[1:]):
+        if s <= s1:
+            return v0 if s1 - s0 < 1e-9 else v0 + (v1 - v0) * (s - s0) / (s1 - s0)
+    return points[-1][1]
+
+
+def haunch_shift(y, ref_bottom, ref_top, bottom, top):
+    """How far a point of the reference (deepest) section at height y moves
+    where the section runs from `bottom` to `top`: a point in the upper
+    half keeps its distance to the top face, one in the lower half to the
+    bottom face (so the cover holds on a haunch)."""
+    if y >= (ref_bottom + ref_top) / 2.0:
+        return top - ref_top
+    return bottom - ref_bottom
+
+
+def haunch_polyline(points, ref_bottom, ref_top, bottom, top):
+    """A stirrup drawn on the reference section, fitted to a section running
+    from `bottom` to `top`: each corner moves with its nearer face."""
+    return [(x, y + haunch_shift(y, ref_bottom, ref_top, bottom, top)) for x, y in points]
+
+
+def follow_profile(path, shift_at, breaks):
+    """A bar path [(x, y, s)] made to follow a sloped face: the points where
+    the face changes slope (`breaks`, s values) inserted along its runs and
+    every point moved up or down by shift_at(s)."""
+    out = []
+    for k, (x, y, s) in enumerate(path):
+        if k:
+            px, py, ps = path[k - 1]
+            lo, hi = sorted((ps, s))
+            inner = [b for b in breaks if lo + 1e-6 < b < hi - 1e-6]
+            for b in (sorted(inner) if s > ps else sorted(inner, reverse=True)):
+                t = (b - ps) / (s - ps)
+                out.append((px + (x - px) * t, py + (y - py) * t, b))
+        out.append((x, y, s))
+    moved = [(x, y + shift_at(s), s) for x, y, s in out]
+    # a point in line with its neighbours goes (Revit refuses collinear runs)
+    kept = moved[:1]
+    for k in range(1, len(moved) - 1):
+        a, b, c = kept[-1], moved[k], moved[k + 1]
+        u = (b[1] - a[1], b[2] - a[2])
+        v = (c[1] - b[1], c[2] - b[2])
+        if abs(u[0] * v[1] - u[1] * v[0]) > 1e-9 or abs(b[0] - a[0]) > 1e-9:
+            kept.append(b)
+    return kept + moved[-1:]
+
+
+def bar_piece_points(x, y, diameter, z_start, z_end, lap, cranked, inward=None):
+    """Points (x, y, z) of one piece of a spliced longitudinal bar at plan
+    position (x, y): straight, or - `cranked`, the lower bar of a lap -
+    bent 1:6 one bar diameter towards the section center (or `inward`, a
+    unit (x, y) direction) just before the lap, so it runs beside the
+    upper bar there."""
+    r = math.hypot(x, y)
+    if inward is not None:
+        ux, uy = inward
+    else:
+        ux, uy = (-x / r, -y / r) if r > 1e-6 else (1.0, 0.0)
+    crank_from = z_end - lap - CRANK_SLOPE * diameter
+    if not cranked or crank_from <= z_start + 0.01:
+        return [(x, y, z_start), (x, y, z_end)]
+    ix, iy = x + ux * diameter, y + uy * diameter
+    return [(x, y, z_start), (x, y, crank_from), (ix, iy, z_end - lap), (ix, iy, z_end)]
+
+
+def _seg_dist(a, b, c, d):
+    """Plan distance (m) between segments ab and cd."""
+    def pt_seg(p, q, r):
+        qx, qy = r[0] - q[0], r[1] - q[1]
+        L = qx * qx + qy * qy
+        t = 0.0 if L <= 1e-12 else max(0.0, min(1.0, ((p[0] - q[0]) * qx + (p[1] - q[1]) * qy) / L))
+        return ((p[0] - q[0] - t * qx) ** 2 + (p[1] - q[1] - t * qy) ** 2) ** 0.5
+
+    def cross(o, p, q):
+        return (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
+    d1, d2, d3, d4 = cross(c, d, a), cross(c, d, b), cross(a, b, c), cross(a, b, d)
+    if ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0)) and d1 and d2 and d3 and d4:
+        return 0.0
+    return min(pt_seg(a, c, d), pt_seg(b, c, d), pt_seg(c, a, b), pt_seg(d, a, b))
+
+
+def paths_clash(p, q, gap):
+    """True when two plan polylines (closed: last point back to the
+    first) come closer than `gap` (m): set at one height they would run
+    through each other."""
+    def segs(path):
+        pts, closed = path
+        n = len(pts)
+        return [(pts[k], pts[(k + 1) % n]) for k in range(n if closed and n > 2 else n - 1)]
+    for a, b in segs(p):
+        for c, d in segs(q):
+            if _seg_dist(a, b, c, d) < gap:
+                return True
+    return False
+
+
+def plan_path(poly, wrap, is_open, bars, key):
+    """(centerline, closed) of a drawn stirrup for stack_lifts; None for a tie."""
+    if is_open is None:
+        return None
+    try:
+        return (list(stirrup_centerline(poly, bars, key, wrap, is_open)), not is_open)
+    except Exception:
+        return None
+
+
+def stack_lifts(items, paths=None):
+    """How far (m) each stirrup/tie is raised over its set height so the
+    ones set at the same height lie stacked, touching, like on site, not
+    through each other. `items`: [(kind, diameter_m, is_tie)] in drawing
+    order. Edge ("borde") stirrups go first, then confinement; within a
+    kind, stirrups before ties. The first one stays where it is set.
+    Stirrups stack one on another (they cross). Every tie lies one tie
+    diameter BELOW the first stirrup (negative lift), touching it: above,
+    it would run into the stirrup's 135-degree hooks, which Revit lifts
+    over the stirrup; the ties sit side by side in plan, never stacked on
+    each other.
+    (2026-11-10, with the user) `paths`: optional [(plan points, closed)]
+    per item. Then a stirrup is raised only over the ones it would touch
+    in plan; stirrups apart (e.g. the two U's of an L wall) stay aligned
+    at the same height."""
+    order = sorted(range(len(items)), key=lambda i: (
+        0 if items[i][0] == KIND_EDGE else 1, 1 if items[i][2] else 0, i))
+    lifts = [0.0] * len(items)
+    height = 0.0
+    placed = []
+    for i in order:
+        kind, diameter, is_tie = items[i]
+        if is_tie:
+            lifts[i] = -diameter
+            continue
+        if paths is not None and paths[i]:
+            top = 0.0
+            for j in placed:
+                # closer than their radii: through each other (facing U's,
+                # one diameter apart, stay at one height)
+                gap = (diameter + items[j][1]) / 2.0 - 0.001
+                if not paths[j] or paths_clash(paths[i], paths[j], gap):
+                    top = max(top, lifts[j] + items[j][1])
+            lifts[i] = top
+        else:
+            lifts[i] = height
+        height = max(height, lifts[i] + diameter)
+        placed.append(i)
+    return lifts
+
+
+def diameter_from_name(name):
+    """The bar diameter written in a bar type name ('..._Ø5/8"_ZAPATA',
+    'Ø12mm_COLUMNA C-8'), or None."""
+    m = re.search(u'[Øø∅]\\s*(\\d+(?:\\s+\\d+/\\d+|/\\d+)?\\s*(?:"|”|mm))', name or u"", re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return parse_diameter(m.group(1))
+    except SpecError:
+        return None
+
+
+def nearest_diameter(diameter_mm, tolerance_mm=0.5):
+    """The diameter key whose nominal diameter is within tolerance, or None."""
+    key, best = None, tolerance_mm
+    for k, d in BAR_DIAMETERS_MM.items():
+        if abs(d - diameter_mm) <= best:
+            key, best = k, abs(d - diameter_mm)
+    return key
+
+
+def _clean(text):
+    t = (text or u"").strip().lower()
+    # A space, not nothing: "8Ø5/8" must stay "8 5/8", not "85/8".
+    for ch in (u"ø", u"Ø", u"φ", u"∅", u"#"):
+        t = t.replace(ch, u" ")
+    for q in (u"”", u"″", u"''", u"“"):
+        t = t.replace(q, u'"')
+    return re.sub(r"\s+", u" ", t).strip()
+
+
+def _diameter_key(text):
+    """'5/8"', 'Ø5/8', '5/8 pulg', '1 3/8"', '12mm', '8 mm' -> the key
+    form ('5/8"', '12mm'), known or not."""
+    t = _clean(text)
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*mm$", t)
+    if m:
+        return u"{}mm".format(m.group(1).rstrip("0").rstrip(".") if "." in m.group(1) else m.group(1))
+    t = re.sub(r'\s*(pulg|in|")\s*$', u"", t).replace(u"-", u" ").strip()
+    return t + u'"'
+
+
+def parse_diameter(text):
+    """'5/8"', 'Ø5/8', '5/8 pulg', '1 3/8"', '12mm', '8 mm' -> a
+    BAR_DIAMETERS_MM key."""
+    key = _diameter_key(text)
+    if key in BAR_DIAMETERS_MM:
+        return key
+    raise SpecError(
+        u'Diametro no reconocido: "{}" (usa 3/8", 1/2", 5/8", 3/4", 1", 8mm, 12mm... '
+        u'o agregalo a la tabla de pesos)'.format(text)
+    )
+
+
+def bar_diameter_keys():
+    """Every known bar diameter, thinnest first (the weight table's ones
+    included)."""
+    return sorted(BAR_DIAMETERS_MM, key=lambda k: BAR_DIAMETERS_MM[k])
+
+
+def parse_longitudinal(text):
+    """'8Ø5/8"', '4Ø3/4" + 4Ø5/8"', '8 5/8' -> [(count, diameter_key)],
+    largest diameter first (those go to the corners)."""
+    t = (text or u"").strip()
+    if not t:
+        raise SpecError(u"Falta el acero longitudinal")
+    groups = []
+    for part in t.split(u"+"):
+        p = _clean(part)
+        m = re.match(r"^(\d+)\s*[x×-]?\s*(.+)$", p)
+        if not m:
+            raise SpecError(u'No se entiende "{}": usa por ejemplo 8Ø5/8"'.format(part.strip()))
+        count = int(m.group(1))
+        if count <= 0:
+            raise SpecError(u'Cantidad invalida en "{}"'.format(part.strip()))
+        groups.append((count, parse_diameter(m.group(2))))
+    total = sum(c for c, _ in groups)
+    if total < 4:
+        raise SpecError(u"Una columna rectangular necesita al menos 4 barras (una por esquina)")
+    if (total - 4) % 2:
+        raise SpecError(
+            u"{} barras: el total debe ser par para repartirlas simetricamente".format(total)
+        )
+    groups.sort(key=lambda g: -BAR_DIAMETERS_MM[g[1]])
+    return groups
+
+
+_REST_WORDS = (u"r", u"rto", u"resto", u"rest", u"rt")
+
+
+def parse_distribution(text, need_rest=True):
+    """'1@.05, 10@.10, rto@.20' (meters, or cm when >= 1: '1@5, 10@10,
+    R@20') -> ([(count, spacing_m), ...], rest_spacing_m). Read from each
+    end of the element towards its middle."""
+    t = _clean(text)
+    if not t:
+        raise SpecError(u"Falta la distribucion de estribos")
+    zones = []
+    rest = None
+    # Tokens like "10@.10" / "rto@20cm", separated by commas, semicolons
+    # or just spaces ("1@5 6@10 Rto@25").
+    # "rto 0.10" / "rto0.10" read as "rto@0.10" (the @ forgotten after the word)
+    t = re.sub(r"(?<![\d.a-z])([a-z]+)\s*(?=\.?\d)", r"\1@", t)
+    token_re = re.compile(r"([a-z]+|\d+)\s*@\s*(\d*\.?\d+)\s*(cm|m)?(?![a-z0-9])")
+    leftover = token_re.sub(u"", t)
+    if re.sub(r"[\s,;]", u"", leftover):
+        raise SpecError(
+            u'No se entiende "{}": usa por ejemplo 1@.05, 10@.10, rto@.20'.format(text.strip())
+        )
+    for m in token_re.finditer(t):
+        token = m.group(0).strip()
+        value = float(m.group(2))
+        unit = m.group(3)
+        spacing = value / 100.0 if unit == u"cm" or (unit is None and value >= 1.0) else value
+        if spacing <= 0:
+            raise SpecError(u'Espaciamiento invalido en "{}"'.format(token))
+        if m.group(1).isdigit():
+            if rest is not None:
+                raise SpecError(u"El resto (rto@...) debe ir al final")
+            zones.append((int(m.group(1)), spacing))
+        elif m.group(1) in _REST_WORDS:
+            rest = spacing
+        else:
+            raise SpecError(u'No se entiende "{}"'.format(token))
+    if rest is None and need_rest:
+        raise SpecError(u"Falta el resto, por ejemplo: rto@.20")
+    return zones, rest
+
+
+# --- Izaje stirrups and bar ends in the foundation ---------------------------
+LEG_OUT = u"Afuera"
+LEG_IN = u"Adentro"
+LEG_DIRS = (LEG_OUT, LEG_IN)
+
+
+def izaje_positions(height, text, min_offset=0.0):
+    """Offsets (m, over the column base) of the izaje stirrups, as drawn
+    on site: the first ON the izaje height (the cota), then down towards
+    the footing ('9@.15' under a 1.20 cota: 1.20, 1.05 ... 0.00, the last
+    on the footing face; a final 'rto@..' fills down to it)."""
+    zones, rest = parse_distribution(text, need_rest=False)
+    positions, z, step = [], height, 0.0
+    for count, spacing in zones:
+        for _ in range(count):
+            z -= step
+            step = spacing
+            if z < min_offset - 1e-6:
+                return sorted(positions)
+            positions.append(round(z, 4))
+    while rest and z - rest >= min_offset - 1e-6:
+        z -= rest
+        positions.append(round(z, 4))
+    return sorted(positions)
+
+
+def izaje_conf_positions(height, rest, first=0.05, text=None):
+    """(2026-11-10, with the user) Confinement stirrups in the izaje zone,
+    from the footing face up to below the izaje height (where their own
+    distribution starts). `text`: their own distribution ('1@0.05,
+    rto@0.15'), counted up from the footing face; blank: the first 5 cm
+    over the face, then every 'rest' (their rto)."""
+    # (2026-11-11, with the user) read like the izaje: the first ON the izaje
+    # height, then down towards the footing (izaje_positions); blank: every
+    # 'rest' (their rto) from the izaje height down.
+    if text and text.strip():
+        return izaje_positions(height, text)
+    if not rest or rest <= 0:
+        return []
+    return izaje_positions(height, u"{}@{:.4f}".format(int(height / rest) + 2, rest))
+
+
+def leg_vector(x, y, half_b, half_h, direction):
+    """Unit (x, y) of a bar end leg at plan position (x, y) of a b x h
+    section: square to its nearest face, outwards (LEG_OUT) or inwards."""
+    if half_b - abs(x) <= half_h - abs(y):
+        v = (1.0 if x >= 0 else -1.0, 0.0)
+    else:
+        v = (0.0, 1.0 if y >= 0 else -1.0)
+    return v if direction != LEG_IN else (-v[0], -v[1])
+
+
+def leg_candidates(x, y, half_b, half_h):
+    """The directions a bar's end leg may take, best first (2026-11-03,
+    with the user): out by the nearest face (where the beam / slab /
+    footing usually is), out by the other face (a beam coming from the
+    other side), that axis the other way, and last into the column."""
+    out = leg_vector(x, y, half_b, half_h, LEG_OUT)
+    other = (0.0, 1.0 if y >= 0 else -1.0) if out[0] else (1.0 if x >= 0 else -1.0, 0.0)
+    return [out, other, (-other[0], -other[1]), (-out[0], -out[1])]
+
+
+def leg_samples(leg, tip_cover=0.025, step=0.02):
+    """Distances along a leg checked to be in concrete: the whole leg, every
+    `step` m from its bend to its tip, and the tip plus the cover - not only
+    its middle and tip: a leg crossing the joint between two blocks' footings
+    (a few cm of nothing between them) went out of its own footing into the
+    next block's (2026-11-11, with the user)."""
+    n = max(1, int(math.ceil(leg / step - 1e-9)))
+    return [leg * k / float(n) for k in range(1, n + 1)] + [leg + tip_cover]
+
+
+def bar_with_ends(points, anchor=0.0, leg_bottom=0.0, dir_bottom=None, top_drop=0.0,
+                  leg_top=0.0, dir_top=None, rise_top=0.0):
+    """A vertical bar's points (x, y, z) from bottom to top, run `anchor` m
+    further down (into the foundation) and ended `top_drop` m lower at the
+    top, with a horizontal leg of `leg_bottom` / `leg_top` m along the
+    unit (x, y) `dir_bottom` / `dir_top` (none when 0), like on site.
+    `rise_top`: the top leg's tip that much higher (lower if negative) - a
+    leg bent along a sloped beam, `leg_top` then its plan length."""
+    pts = [tuple(p) for p in points]
+    x, y, z = pts[0]
+    pts[0] = (x, y, z - anchor)
+    if leg_bottom > 1e-6 and dir_bottom:
+        pts.insert(0, (x + dir_bottom[0] * leg_bottom, y + dir_bottom[1] * leg_bottom, z - anchor))
+    x, y, z = pts[-1]
+    pts[-1] = (x, y, z - top_drop)
+    if leg_top > 1e-6 and dir_top:
+        pts.append((x + dir_top[0] * leg_top, y + dir_top[1] * leg_top, z - top_drop + rise_top))
+    return pts
+
+
+MIN_LEG_M = 0.05  # a shorter leg can't be bent (Revit: "no se puede resolver forma")
+
+
+def leg_m(value):
+    """A bar end leg typed in the window, in meters: 0.25 (m) or, as
+    first saved, 25 (cm) - a value of 2 or more is taken as cm. 0 when
+    blank or too short to bend (MIN_LEG_M)."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    v = v / 100.0 if v >= 2.0 else v
+    return v if v >= MIN_LEG_M - 1e-9 else 0.0
+
+
+def read_json_setting(text):
+    """{...} stored in a text parameter; {} if blank or unreadable."""
+    try:
+        value = json.loads(text) if (text or u"").strip() else {}
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def stirrup_positions(length, zones, rest):
+    """Stirrup offsets (m) along a clear length, laid out from both ends
+    towards the middle (Peruvian '1@.05, 10@.10, rto@.20' convention)."""
+    return [p for p, _ in stirrup_zone_positions(length, zones, rest)]
+
+
+def group_runs(positions, tol=1e-4):
+    """Split sorted positions into runs of constant spacing:
+    [(start, count, spacing)] - each run becomes one rebar set."""
+    runs = []
+    i = 0
+    n = len(positions)
+    while i < n:
+        if i + 1 >= n:
+            runs.append((positions[i], 1, 0.0))
+            break
+        spacing = positions[i + 1] - positions[i]
+        j = i + 1
+        while j + 1 < n and abs((positions[j + 1] - positions[j]) - spacing) <= tol:
+            j += 1
+        count = j - i + 1
+        runs.append((positions[i], count, spacing))
+        i = j + 1
+    return runs
+
+
+def layout_rectangular_bars(b, h, cover, stirrup_diameter, groups):
+    """Longitudinal bar centers of a b x h section (x along b, y along h,
+    origin at the center): the 4 largest bars at the corners, the rest in
+    symmetric pairs on the faces with the widest spacing.
+    `groups` as from `parse_longitudinal`. Returns [(x, y, diameter_key)]."""
+    diameters = []
+    for count, key in groups:
+        diameters.extend([key] * count)
+    corners, extra = diameters[:4], diameters[4:]
+
+    def inset(key):
+        return cover + stirrup_diameter + BAR_DIAMETERS_MM[key] / 2000.0
+
+    ci = inset(corners[0])
+    span_x = b - 2 * ci  # between corner bar centers, along b
+    span_y = h - 2 * ci
+    if span_x <= 0 or span_y <= 0:
+        raise SpecError(u"La seccion es muy pequena para ese recubrimiento y diametros")
+
+    # Bars per face: faces at x = +/- (along h) and at y = +/- (along b).
+    on_x_faces = 0
+    on_y_faces = 0
+    for _ in range(len(extra) // 2):
+        if span_y / (on_x_faces + 1) >= span_x / (on_y_faces + 1):
+            on_x_faces += 1
+        else:
+            on_y_faces += 1
+
+    bars = [
+        (-span_x / 2.0, -span_y / 2.0, corners[0]),
+        (span_x / 2.0, -span_y / 2.0, corners[1]),
+        (span_x / 2.0, span_y / 2.0, corners[2]),
+        (-span_x / 2.0, span_y / 2.0, corners[3]),
+    ]
+    pairs = []
+    for k in range(1, on_x_faces + 1):
+        y = -span_y / 2.0 + span_y * k / (on_x_faces + 1)
+        pairs.append(((-1, y, "x"), (1, y, "x")))
+    for k in range(1, on_y_faces + 1):
+        x = -span_x / 2.0 + span_x * k / (on_y_faces + 1)
+        pairs.append(((x, -1, "y"), (x, 1, "y")))
+    keys = iter(extra)
+    for pair in pairs:
+        for a, c, face in pair:
+            key = next(keys)
+            if face == "x":
+                x = a * (b / 2.0 - inset(key))
+                bars.append((x, c, key))
+            else:
+                y = c * (h / 2.0 - inset(key))
+                bars.append((a, y, key))
+    return bars
+
+
+# --- Section drawing ("dibujo del armado") -----------------------------------
+# A design lives in the column type as JSON, in local section coordinates
+# (meters, x along the family's X, origin at the section's bounding-box
+# center): longitudinal bars [x, y, diameter_key], closed stirrups drawn
+# through the centers of the bars they wrap, and crossties (grapas) from
+# one bar center to another.
+
+DESIGN_VERSION = 2
+# Each drawn stirrup/crosstie belongs to one stirrup family, chosen when
+# sketching: the edge ("borde") or the confinement settings.
+KIND_EDGE = u"borde"
+KIND_CONFINEMENT = u"confinamiento"
+KINDS = (KIND_EDGE, KIND_CONFINEMENT)
+
+
+def empty_design():
+    return {"v": DESIGN_VERSION, "bars": [], "stirrups": [], "ties": []}
+
+
+def design_shapes(design, key):
+    """Rebar shape name of each of the design's "stirrups" or "ties" (key),
+    in the same order; None where Revit picks the shape itself."""
+    shapes = design.setdefault("shapes", {}).setdefault(key, [])
+    count = len(design.get(key, []))
+    shapes.extend([None] * (count - len(shapes)))
+    del shapes[count:]
+    return shapes
+
+
+def add_item(design, key, item, shape=None):
+    """Append a stirrup or tie (key "stirrups" / "ties") with its shape."""
+    shapes = design_shapes(design, key)
+    design[key].append(item)
+    shapes.append(shape)
+
+
+def remove_item(design, key, index):
+    """Delete one stirrup or tie together with its shape."""
+    shapes = design_shapes(design, key)
+    del design[key][index]
+    del shapes[index]
+
+
+def design_to_text(design):
+    def r(v):
+        return round(v, 4)
+
+    def shape(key, i):
+        name = design_shapes(design, key)[i]
+        return [("f", name)] if name else []
+
+    data = {
+        "v": DESIGN_VERSION,
+        "bars": [[r(x), r(y), key] for x, y, key in design.get("bars", [])],
+        "stirrups": [
+            dict(
+                [("k", kind), ("p", [[r(x), r(y)] for x, y in poly])]
+                + ([("r", r(wrap))] if wrap is not None else [])
+                + ([("o", 1)] if is_open else [])
+                + shape("stirrups", i)
+            )
+            for i, (kind, poly, wrap, is_open) in enumerate(design.get("stirrups", []))
+        ],
+        "ties": [
+            dict([("k", kind), ("p", [[r(a[0]), r(a[1])], [r(b[0]), r(b[1])]])] + shape("ties", i))
+            for i, (kind, a, b) in enumerate(design.get("ties", []))
+        ],
+    }
+    if design.get("tie_leg"):
+        data["tl"] = r(design["tie_leg"])  # crosstie hook leg, cm
+    circ = design.get("circ")
+    if circ:  # circular column: hoops or a spiral at the cover ({"t", "p"})
+        data["ci"] = {"t": circ.get("t", CIRC_HOOP), "p": r(circ.get("p", SPIRAL_PITCH_M))}
+    if not (data["bars"] or data["stirrups"] or data["ties"] or circ):
+        return u""
+    return json.dumps(data, separators=(",", ":"))
+
+
+def _kind_and_points(entry, default_kind):
+    """(kind, points) of a saved stirrup/tie: {"k", "p"}, or a bare point
+    list from the first format (kind unknown -> `default_kind`)."""
+    if isinstance(entry, dict):
+        kind = entry.get("k")
+        points = entry.get("p", [])
+    else:
+        kind, points = default_kind, entry
+    if kind not in KINDS:
+        kind = default_kind
+    return kind, [(float(x), float(y)) for x, y in points]
+
+
+def design_from_text(text):
+    """Design dict from its JSON text; None for blank text."""
+    if not (text or u"").strip():
+        return None
+    try:
+        data = json.loads(text)
+        design = empty_design()
+        if data.get("tl"):
+            design["tie_leg"] = float(data["tl"])
+        if data.get("ci"):
+            design["circ"] = {"t": data["ci"].get("t", CIRC_HOOP),
+                              "p": float(data["ci"].get("p", SPIRAL_PITCH_M))}
+        for x, y, key in data.get("bars", []):
+            if key not in BAR_DIAMETERS_MM:
+                raise SpecError(u"Diametro desconocido en el dibujo: {}".format(key))
+            design["bars"].append((float(x), float(y), key))
+        for entry in data.get("stirrups", []):
+            kind, points = _kind_and_points(entry, None)
+            wrap = entry.get("r") if isinstance(entry, dict) else None
+            is_open = bool(entry.get("o")) if isinstance(entry, dict) else False
+            shape = entry.get("f") if isinstance(entry, dict) else None
+            if len(points) >= (2 if is_open else 3):
+                add_item(design, "stirrups",
+                         (kind, points, None if wrap is None else float(wrap), is_open), shape)
+        for entry in data.get("ties", []):
+            kind, points = _kind_and_points(entry, KIND_CONFINEMENT)
+            shape = entry.get("f") if isinstance(entry, dict) else None
+            if len(points) == 2:
+                add_item(design, "ties", (kind, points[0], points[1]), shape)
+        # Stirrups of the first format: perimeter ones are edge stirrups.
+        design["stirrups"] = [
+            (kind or (KIND_EDGE if is_edge_stirrup(poly, design["bars"]) else KIND_CONFINEMENT),
+             poly, wrap, is_open)
+            for kind, poly, wrap, is_open in design["stirrups"]
+        ]
+        return design
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise SpecError(u"El dibujo guardado esta danado; vuelve a dibujarlo")
+
+
+# --- configuration files (Acero "Guardar en archivo" / "Abrir archivo") -------
+
+CONFIG_FILE_VERSION = 1
+CONFIG_FORM_KEYS = ("izaje", "ends", "bars_type", "conf", "conf_type", "conf_dist", "edge", "edge_type", "edge_dist", "cover", "nucleo", "anchor")
+
+
+def config_file_text(type_name, size_cm, form, design):
+    """JSON text of a column type's steel configuration: the stirrup
+    settings of the form, the section drawing and the section size (b, h
+    in cm) it was drawn on."""
+    return json.dumps({
+        "acero_columnas": CONFIG_FILE_VERSION,
+        "tipo": type_name,
+        "seccion_cm": [round(size_cm[0], 1), round(size_cm[1], 1)],
+        "estribos": dict((k, form.get(k) or u"") for k in CONFIG_FORM_KEYS),
+        "dibujo": design_to_text(design),
+    }, indent=2, ensure_ascii=False)
+
+
+def read_config_file(text):
+    """(type name, (b, h) cm, form, design or None) of a configuration file
+    written by `config_file_text` (raises SpecError)."""
+    try:
+        data = json.loads(text)
+        if not isinstance(data, dict) or "acero_columnas" not in data:
+            raise SpecError(u"el archivo no es una configuracion de Acero - Columnas")
+        b, h = data.get("seccion_cm") or (0.0, 0.0)
+        estribos = data.get("estribos") or {}
+        form = dict((k, u"{}".format(estribos.get(k) or u"")) for k in CONFIG_FORM_KEYS)
+        return data.get("tipo") or u"", (float(b), float(h)), form, design_from_text(data.get("dibujo"))
+    except (ValueError, TypeError, AttributeError) as e:
+        if isinstance(e, SpecError):
+            raise
+        raise SpecError(u"el archivo esta danado o no es una configuracion de Acero")
+
+
+def polygon_signed_area(points):
+    s = 0.0
+    n = len(points)
+    for k in range(n):
+        x1, y1 = points[k]
+        x2, y2 = points[(k + 1) % n]
+        s += x1 * y2 - x2 * y1
+    return s / 2.0
+
+
+def start_on_bar(points, bars):
+    """A closed stirrup's corners starting at the first one on a bar (its
+    hooks go at the first corner and must wrap a vertical bar); unchanged
+    when the first click was on a bar or none is."""
+    for k, (x, y) in enumerate(points):
+        if any(abs(x - bx) < 1e-6 and abs(y - by) < 1e-6 for bx, by, _ in bars):
+            return list(points[k:]) + list(points[:k])
+    return list(points)
+
+
+def counterclockwise(points):
+    """The points counterclockwise, the first one kept first (a stirrup's
+    hooks go at its first corner, where it was drawn from)."""
+    points = list(points)
+    if polygon_signed_area(points) > 0 or not points:
+        return points
+    return points[:1] + points[:0:-1]
+
+
+def offset_polygon_outward(points, distance):
+    """Miter offset of a simple polygon, `distance` outward (any vertex
+    order). Collinear vertices are dropped first."""
+    pts = counterclockwise(points)
+    cleaned = []
+    n = len(pts)
+    for k in range(n):
+        ax, ay = pts[k - 1]
+        bx, by = pts[k]
+        cx, cy = pts[(k + 1) % n]
+        if abs((bx - ax) * (cy - by) - (by - ay) * (cx - bx)) > 1e-12:
+            cleaned.append(pts[k])
+    pts = cleaned
+    n = len(pts)
+    if n < 3:
+        raise SpecError(u"El estribo necesita al menos 3 esquinas")
+    out = []
+    for k in range(n):
+        p0, p1, p2 = pts[k - 1], pts[k], pts[(k + 1) % n]
+        lines = []
+        for a, b in ((p0, p1), (p1, p2)):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            length = math.hypot(dx, dy)
+            nx, ny = dy / length, -dx / length  # outward normal of a CCW edge
+            lines.append(((a[0] + nx * distance, a[1] + ny * distance), (dx, dy)))
+        (ax, ay), (adx, ady) = lines[0]
+        (bx, by), (bdx, bdy) = lines[1]
+        det = adx * bdy - ady * bdx
+        t = ((bx - ax) * bdy - (by - ay) * bdx) / det
+        out.append((ax + adx * t, ay + ady * t))
+    return out
+
+
+def point_in_polygon(point, polygon):
+    x, y = point
+    inside = False
+    n = len(polygon)
+    for k in range(n):
+        x1, y1 = polygon[k]
+        x2, y2 = polygon[(k + 1) % n]
+        if (y1 > y) != (y2 > y):
+            if x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                inside = not inside
+    return inside
+
+
+def distance_to_polygon(point, polygon):
+    """Distance from a point to the polygon's outline."""
+    px, py = point
+    best = None
+    n = len(polygon)
+    for k in range(n):
+        (x1, y1), (x2, y2) = polygon[k], polygon[(k + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        l2 = dx * dx + dy * dy
+        t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / l2))
+        d = math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+        best = d if best is None else min(best, d)
+    return best
+
+
+def _bar_at(point, bars, tol=0.005):
+    for x, y, key in bars:
+        if math.hypot(point[0] - x, point[1] - y) <= tol:
+            return key
+    return None
+
+
+def wrap_radius(vertices, bars):
+    """Radius of the largest bar a stirrup drawn through `vertices` wraps
+    (0 when its corners aren't on bars)."""
+    radii = [BAR_DIAMETERS_MM[k] / 2000.0 for k in (_bar_at(v, bars) for v in vertices) if k]
+    return max(radii) if radii else 0.0
+
+
+def offset_polyline_outward(points, distance):
+    """Offset of an open polyline (an open, U-shaped stirrup) away from the
+    bars it wraps: the side opposite to its inside, taken as the polygon
+    it would make if closed. Inner corners are mitered; the two ends move
+    square to their own segment."""
+    pts = list(points)
+    n = len(pts)
+    if n < 2:
+        raise SpecError(u"El estribo abierto necesita al menos 2 puntos")
+    sign = 1.0 if n < 3 or polygon_signed_area(pts) > 0 else -1.0
+    normals = []
+    for k in range(n - 1):
+        dx, dy = pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]
+        length = math.hypot(dx, dy)
+        if length < 1e-9:
+            raise SpecError(u"El estribo tiene dos puntos repetidos")
+        normals.append((sign * dy / length, -sign * dx / length))
+    out = []
+    for k in range(n):
+        if k == 0 or k == n - 1:
+            nx, ny = normals[0] if k == 0 else normals[-1]
+            out.append((pts[k][0] + nx * distance, pts[k][1] + ny * distance))
+            continue
+        (ax, ay), (bx, by) = normals[k - 1], normals[k]
+        mx, my = ax + bx, ay + by
+        dot = mx * ax + my * ay
+        if abs(dot) < 1e-9:  # a U-turn: just push along the first normal
+            mx, my, dot = ax, ay, 1.0
+        scale = distance / dot
+        out.append((pts[k][0] + mx * scale, pts[k][1] + my * scale))
+    return out
+
+
+def stirrup_centerline(vertices, bars, stirrup_key, wrap=None, is_open=False):
+    """Centerline of a stirrup drawn through bar centers: pushed outward
+    by the wrapped bar radius (`wrap`, stored with the stirrup so editing
+    its measures can't change it; computed from the bars when None) plus
+    half the stirrup diameter. `is_open`: a U-shaped stirrup whose ends
+    are not joined."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    if wrap is None:
+        wrap = wrap_radius(vertices, bars)
+    offset = offset_polyline_outward if is_open else offset_polygon_outward
+    return offset(vertices, wrap + ds / 2.0)
+
+
+def stirrup_outline(vertices, bars, stirrup_key, wrap=None, is_open=False):
+    """Outer face of the stirrup (its measured size)."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    if wrap is None:
+        wrap = wrap_radius(vertices, bars)
+    offset = offset_polyline_outward if is_open else offset_polygon_outward
+    return offset(vertices, wrap + ds)
+
+
+def side_lengths(polygon, closed=True):
+    n = len(polygon)
+    count = n if closed else n - 1
+    return [math.hypot(polygon[(k + 1) % n][0] - polygon[k][0], polygon[(k + 1) % n][1] - polygon[k][1])
+            for k in range(count)]
+
+
+def distance_to_polyline(point, points):
+    """Distance from a point to an open polyline."""
+    best = None
+    for k in range(len(points) - 1):
+        d = distance_to_polygon(point, [points[k], points[k + 1]])
+        best = d if best is None else min(best, d)
+    return best if best is not None else float("inf")
+
+
+def rect_measures(outline, section_polygon, tol=1e-4):
+    """(width, height, to_left_face, to_bottom_face) of an axis-aligned
+    rectangular stirrup outline, measured from the section's bounding
+    faces; None for any other shape."""
+    if len(outline) != 4:
+        return None
+    xs = sorted(set(round(x, 6) for x, _ in outline))
+    ys = sorted(set(round(y, 6) for _, y in outline))
+    if len(xs) != 2 or len(ys) != 2 or xs[1] - xs[0] < tol or ys[1] - ys[0] < tol:
+        return None
+    left = min(x for x, _ in section_polygon)
+    bottom = min(y for _, y in section_polygon)
+    return xs[1] - xs[0], ys[1] - ys[0], xs[0] - left, ys[0] - bottom
+
+
+def stretch_polygon(vertices, d_width, d_height):
+    """Any closed stirrup made d_width wider and d_height taller, its shape
+    kept: the corners left of its middle go left by half d_width, those
+    right of it right (one on the middle - a ridge's peak - stays); the
+    corners of its upper half go up by d_height."""
+    xs = [x for x, _ in vertices]
+    ys = [y for _, y in vertices]
+    cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+    out = []
+    for x, y in vertices:
+        sx = 0.0 if abs(x - cx) < 1e-4 else (0.5 if x > cx else -0.5)
+        out.append((x + sx * d_width, y + (d_height if y > cy else 0.0)))
+    if max(x for x, _ in out) - min(x for x, _ in out) < 0.01 or max(y for _, y in out) - min(y for _, y in out) < 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    return out
+
+
+def drop_collinear(points, tol=1e-4):
+    """A closed polygon without the vertices that lie on a straight side
+    (a point clicked mid-side): its real corners."""
+    pts = list(points)
+    changed = True
+    while changed and len(pts) > 3:
+        changed = False
+        for k in range(len(pts)):
+            (ax, ay), (bx, by), (cx, cy) = pts[k - 1], pts[k], pts[(k + 1) % len(pts)]
+            if abs((bx - ax) * (cy - by) - (by - ay) * (cx - bx)) < tol * max(1e-9, math.hypot(cx - ax, cy - ay)):
+                del pts[k]
+                changed = True
+                break
+    return pts
+
+
+def turned_rect_measures(outline, tol=1e-3):
+    """(length, width) of a rectangular stirrup outline at any angle: its
+    first side and the next; None if the 4 corners aren't square."""
+    if len(outline) != 4:
+        return None
+    for k in range(4):
+        (ax, ay), (bx, by), (cx, cy) = outline[k - 1], outline[k], outline[(k + 1) % 4]
+        u, v = (bx - ax, by - ay), (cx - bx, cy - by)
+        lu, lv = math.hypot(*u), math.hypot(*v)
+        if lu < tol or lv < tol or abs(u[0] * v[0] + u[1] * v[1]) / (lu * lv) > 0.01:
+            return None
+    sides = side_lengths(outline)
+    return sides[0], sides[1]
+
+
+def resize_turned_rect(vertices, d_length, d_width):
+    """A rectangle at any angle grown by d_length along its first side and
+    d_width along the next, around its own center."""
+    p0, p1, p2 = vertices[0], vertices[1], vertices[2]
+    ux, uy = p1[0] - p0[0], p1[1] - p0[1]
+    vx, vy = p2[0] - p1[0], p2[1] - p1[1]
+    lu, lv = math.hypot(ux, uy), math.hypot(vx, vy)
+    if lu + d_length < 0.01 or lv + d_width < 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    ux, uy, vx, vy = ux / lu, uy / lu, vx / lv, vy / lv
+    cx = sum(x for x, _ in vertices) / 4.0
+    cy = sum(y for _, y in vertices) / 4.0
+    out = []
+    for x, y in vertices:
+        su = 1.0 if (x - cx) * ux + (y - cy) * uy > 0 else -1.0
+        sv = 1.0 if (x - cx) * vx + (y - cy) * vy > 0 else -1.0
+        out.append((x + su * ux * d_length / 2.0 + sv * vx * d_width / 2.0,
+                    y + su * uy * d_length / 2.0 + sv * vy * d_width / 2.0))
+    return out
+
+
+def rect_from_measures(width, height, to_left, to_bottom, section_polygon, stirrup_key, wrap):
+    """Vertices (bar-center rectangle, as drawn) of a rectangular stirrup
+    whose outer face measures width x height at the given distances from
+    the section's left and bottom faces."""
+    inset = wrap + BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    if width <= 2 * inset + 0.01 or height <= 2 * inset + 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    x0 = min(x for x, _ in section_polygon) + to_left + inset
+    y0 = min(y for _, y in section_polygon) + to_bottom + inset
+    x1 = x0 + width - 2 * inset
+    y1 = y0 + height - 2 * inset
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def tie_centerline(start, end, bars, stirrup_key):
+    """A crosstie drawn from one bar center to another, lengthened at each
+    end to the far side of that bar (where its hook wraps it)."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length < 0.02:
+        raise SpecError(u"Grapa demasiado corta")
+    ux, uy = dx / length, dy / length
+    ks, ke = _bar_at(start, bars), _bar_at(end, bars)
+    es = (BAR_DIAMETERS_MM[ks] / 2000.0 if ks else 0.0) + ds / 2.0
+    ee = (BAR_DIAMETERS_MM[ke] / 2000.0 if ke else 0.0) + ds / 2.0
+    return ((start[0] - ux * es, start[1] - uy * es), (end[0] + ux * ee, end[1] + uy * ee))
+
+
+def fitted_design(polygon, cover, stirrup_key, bar_key):
+    """Any section (rectangular or not, e.g. a ridge beam): one bar in each
+    convex corner and one edge stirrup round them, both inside the cover -
+    the stirrup's outer face at `cover` from every face of `polygon`."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    rb = BAR_DIAMETERS_MM[bar_key] / 2000.0
+    inner = counterclockwise(offset_polygon_outward(polygon, -(cover + ds + rb)))
+    n = len(inner)
+    bars = []
+    for k in range(n):
+        (ax, ay), (bx, by), (cx, cy) = inner[k - 1], inner[k], inner[(k + 1) % n]
+        if (bx - ax) * (cy - by) - (by - ay) * (cx - bx) > 1e-12:  # convex
+            bars.append((bx, by, bar_key))
+    # Revit hooks a stirrup at its first corner: start at the convex corner
+    # nearest a right angle, where the 135-degree hooks sit as usual (at an
+    # open corner, like a ridge apex, their legs cross the core)
+    def squareness(k):
+        (ax, ay), (bx, by), (cx, cy) = inner[k - 1], inner[k], inner[(k + 1) % n]
+        u, v = (ax - bx, ay - by), (cx - bx, cy - by)
+        cross = u[0] * v[1] - u[1] * v[0]
+        if cross >= 0:  # concave (counterclockwise polygon)
+            return 9.0
+        return abs(abs(math.atan2(abs(cross), u[0] * v[0] + u[1] * v[1])) - math.pi / 2)
+    first = min(range(n), key=squareness)
+    inner = inner[first:] + inner[:first]
+    design = empty_design()
+    design["bars"] = bars
+    design["stirrups"] = [(KIND_EDGE, inner, rb, False)]
+    return design
+
+
+def auto_design(b, h, cover, stirrup_key, groups):
+    """Rectangular section: bars from `layout_rectangular_bars` and one
+    perimeter stirrup through the four corner bars."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    bars = layout_rectangular_bars(b, h, cover, ds, groups)
+    design = empty_design()
+    design["bars"] = [(x, y, k) for x, y, k in bars]
+    corners = [(x, y) for x, y, _ in bars[:4]]
+    design["stirrups"] = [(KIND_EDGE, corners, wrap_radius(corners, design["bars"]), False)]
+    return design
+
+
+def joint_positions(joint_length, spacing, end_clear=0.05):
+    """Stirrup offsets inside the beam-column joint ("nucleo"): from the
+    beam underside up to `end_clear` below the column top."""
+    positions = []
+    z = spacing
+    while z <= joint_length - end_clear + 1e-6:
+        positions.append(z)
+        z += spacing
+    if not positions and joint_length > 2 * end_clear:
+        positions.append(joint_length / 2.0)
+    return positions
+
+
+JOINT_COUNT_SUFFIX = u" est"  # EA_Nucleo_cm "3 est": a count; a bare number is a legacy spacing (cm)
+
+
+def joint_count_text(count):
+    return u"{}{}".format(int(count), JOINT_COUNT_SUFFIX)
+
+
+def parse_joint(text):
+    """EA_Nucleo_cm: ("count", n) for '3 est' (the user's rule since
+    2026-11-03: a number of stirrups splitting the joint in equal parts),
+    ("spacing", m) for a legacy '10' (cm), None when blank or unreadable."""
+    text = (text or u"").strip().lower().replace(u",", u".")
+    if not text:
+        return None
+    try:
+        if text.endswith(JOINT_COUNT_SUFFIX.strip()):
+            n = int(float(text[:-len(JOINT_COUNT_SUFFIX.strip())].strip()))
+            return ("count", n) if n > 0 else None
+        cm = float(text)
+        return ("spacing", cm / 100.0) if cm > 0 else None
+    except ValueError:
+        return None
+
+
+def joint_positions_count(joint_length, count):
+    """`count` stirrups splitting the joint in equal parts: joint/(n+1) apart,
+    from the beam underside to the column top."""
+    if joint_length <= 0 or count <= 0:
+        return []
+    step = joint_length / float(count + 1)
+    return [step * k for k in range(1, int(count) + 1)]
+
+
+def is_edge_stirrup(polygon, bars, tol=0.005):
+    """A stirrup drawn around every longitudinal bar is the perimeter
+    ("borde") stirrup; one around only some of them is a confinement
+    ("confinamiento") stirrup."""
+    if not bars:
+        return True
+    for x, y, _ in bars:
+        if not (point_in_polygon((x, y), polygon) or distance_to_polygon((x, y), polygon) <= tol):
+            return False
+    return True
+
+
+def auto_tie(click, bars, tol=0.01):
+    """Crosstie for a single click: the pair of facing bars (the only two
+    bars on a horizontal or vertical line of the section, so the tie
+    crosses it from face to face) whose segment passes closest to the
+    click. Returns (start, end) bar centers; SpecError if no pair."""
+    best = None
+    for i, (x1, y1, _) in enumerate(bars):
+        for x2, y2, _ in bars[i + 1:]:
+            if abs(y1 - y2) <= tol:
+                axis = 1  # same y: tie along x
+            elif abs(x1 - x2) <= tol:
+                axis = 0  # same x: tie along y
+            else:
+                continue
+            on_line = [
+                b for b in bars
+                if abs((b[1] - y1) if axis == 1 else (b[0] - x1)) <= tol
+            ]
+            if len(on_line) != 2:
+                continue  # a row of 3+ bars is a face, not a crossing
+            d = distance_to_polygon(click, [(x1, y1), (x2, y2)])
+            if best is None or d < best[0]:
+                best = (d, (x1, y1), (x2, y2))
+    if best is None:
+        raise SpecError(u"No hay dos barras enfrentadas para la grapa")
+    return best[1], best[2]
+
+
+# --- Fitting rectangular stirrups to the cover --------------------------------
+# Rectangles here are (x0, y0, x1, y1) of a stirrup's outer face.
+
+COVER_SNAP = 0.025  # a drawn side this close to the cover line lands on it
+
+
+def cover_bounds(section_polygon, cover):
+    """Rectangle a stirrup's outer face must stay inside: the section's
+    bounding faces moved in by the cover."""
+    xs = [x for x, _ in section_polygon]
+    ys = [y for _, y in section_polygon]
+    return min(xs) + cover, min(ys) + cover, max(xs) - cover, max(ys) - cover
+
+
+def snap_rect_to_cover(rect, bounds, snap=COVER_SNAP):
+    """A drawn stirrup: each side that crosses the cover line, or is within
+    `snap` of it, is placed on it."""
+    x0, y0, x1, y1 = rect
+    bx0, by0, bx1, by1 = bounds
+    x0 = bx0 if x0 - bx0 <= snap else x0
+    y0 = by0 if y0 - by0 <= snap else y0
+    x1 = bx1 if bx1 - x1 <= snap else x1
+    y1 = by1 if by1 - y1 <= snap else y1
+    return x0, y0, x1, y1
+
+
+def resize_rect_in_cover(rect, width, height, bounds):
+    """A stirrup resized to width x height around its own center, then
+    shifted (and if needed shrunk) so it stays inside the cover."""
+    bx0, by0, bx1, by1 = bounds
+    width = min(width, bx1 - bx0)
+    height = min(height, by1 - by0)
+    cx, cy = (rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0
+    x0 = min(max(cx - width / 2.0, bx0), bx1 - width)
+    y0 = min(max(cy - height / 2.0, by0), by1 - height)
+    return x0, y0, x0 + width, y0 + height
+
+
+def rect_vertices(rect, stirrup_key, wrap):
+    """Drawn vertices (through the wrapped bar centers) of a stirrup whose
+    outer face is `rect`."""
+    inset = wrap + BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    x0, y0, x1, y1 = rect[0] + inset, rect[1] + inset, rect[2] - inset, rect[3] - inset
+    if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        raise SpecError(u"Medidas demasiado pequenas para ese diametro")
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def outer_rect(vertices, bars, stirrup_key, wrap=None):
+    """(x0, y0, x1, y1) of a stirrup's outer face."""
+    outline = stirrup_outline(vertices, bars, stirrup_key, wrap)
+    xs = [x for x, _ in outline]
+    ys = [y for _, y in outline]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def fit_vertex(point, section_polygon, cover, stirrup_key, bar_radius=0.0,
+               rectangular=True, snap=COVER_SNAP, tol=1e-4):
+    """A stirrup corner clicked at `point` (on a bar of `bar_radius`, or 0
+    for a free point), or None if the stirrup would leave the cover there.
+    In a rectangular section a free corner within `snap` inside the limit
+    is moved onto it; a corner past the limit is never accepted."""
+    margin = cover + BAR_DIAMETERS_MM[stirrup_key] / 1000.0 + bar_radius
+    zone = offset_polygon_outward(section_polygon, -margin)
+    x, y = point
+    if rectangular:
+        x0 = min(p[0] for p in zone)
+        x1 = max(p[0] for p in zone)
+        y0 = min(p[1] for p in zone)
+        y1 = max(p[1] for p in zone)
+        if not (x0 - tol <= x <= x1 + tol and y0 - tol <= y <= y1 + tol):
+            return None
+        if not bar_radius:
+            x = x0 if x - x0 <= snap else (x1 if x1 - x <= snap else x)
+            y = y0 if y - y0 <= snap else (y1 if y1 - y <= snap else y)
+        return (x, y)
+    if point_in_polygon(point, zone) or distance_to_polygon(point, zone) <= tol:
+        return point
+    return None
+
+
+def stirrup_inside_cover(vertices, bars, stirrup_key, wrap, section_polygon, cover, tol=1e-3,
+                         is_open=False):
+    """Does the stirrup's outer face stay within the cover?"""
+    zone = offset_polygon_outward(section_polygon, -cover)
+    for p in stirrup_outline(vertices, bars, stirrup_key, wrap, is_open):
+        if not (point_in_polygon(p, zone) or distance_to_polygon(p, zone) <= tol):
+            return False
+    return True
+
+
+FREE_CORNER_SNAP = 0.01  # Estribo tool: free corners snap to the cover only this close
+
+
+def clean_polyline(points, closed, tol=1e-4):
+    """Drop repeated points and corners lying on a straight line (Revit
+    can't build a stirrup from collinear consecutive segments)."""
+    pts = []
+    for p in points:
+        if not pts or math.hypot(p[0] - pts[-1][0], p[1] - pts[-1][1]) > tol:
+            pts.append(p)
+    if closed and len(pts) > 1 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) <= tol:
+        pts.pop()
+    changed = True
+    while changed and len(pts) > (3 if closed else 2):
+        changed = False
+        n = len(pts)
+        for k in range(n) if closed else range(1, n - 1):
+            a, b, c = pts[k - 1], pts[k], pts[(k + 1) % n]
+            cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+            if abs(cross) <= tol * tol:
+                del pts[k]
+                changed = True
+                break
+    return pts
+
+
+def resize_segment(points, index, delta):
+    """Lengthen (delta > 0) or shorten segment `index` of an open stirrup
+    along its own direction, keeping all angles (chamfers, jogs). The first
+    segment grows from its free end (the start point moves back); any
+    other one pushes every point after it. Returns the new points."""
+    pts = list(points)
+    (x1, y1), (x2, y2) = pts[index], pts[index + 1]
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length + delta < 0.005:
+        raise SpecError(u"El tramo {} quedaria demasiado corto".format(index + 1))
+    ux, uy = (x2 - x1) / length, (y2 - y1) / length
+    if index == 0 and len(pts) > 2:
+        return [(x1 - ux * delta, y1 - uy * delta)] + pts[1:]
+    return pts[:index + 1] + [(x + ux * delta, y + uy * delta) for x, y in pts[index + 1:]]
+
+
+# --- Rebar shapes from Revit's shape browser -----------------------------------
+# A shape arrives as the straight segments of its browser drawing (bends
+# are arcs and are left out), in drawing order: [((x0, y0), (x1, y1)), ...].
+
+def chain_vertices(lines, tol=1e-6):
+    """Corner points of a chain of straight segments: where each segment's
+    line meets the next one's (the bend arcs between them removed)."""
+    if not lines:
+        raise SpecError(u"La forma no tiene tramos rectos")
+    segs = [list(lines[0])]
+    for a, b in lines[1:]:
+        last = segs[-1][1]
+        # orient each segment to continue from the previous one
+        if math.hypot(b[0] - last[0], b[1] - last[1]) < math.hypot(a[0] - last[0], a[1] - last[1]):
+            a, b = b, a
+        segs.append([a, b])
+    if len(segs) > 1:
+        # the first segment may need flipping to lead into the second
+        a, b = segs[0]
+        nxt = segs[1][0]
+        if math.hypot(a[0] - nxt[0], a[1] - nxt[1]) < math.hypot(b[0] - nxt[0], b[1] - nxt[1]):
+            segs[0] = [b, a]
+    vertices = [segs[0][0]]
+    for (a1, b1), (a2, b2) in zip(segs, segs[1:]):
+        d1 = (b1[0] - a1[0], b1[1] - a1[1])
+        d2 = (b2[0] - a2[0], b2[1] - a2[1])
+        det = d1[0] * d2[1] - d1[1] * d2[0]
+        if abs(det) < tol:
+            vertices.append(b1)  # parallel: no corner to rebuild
+            continue
+        t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / det
+        vertices.append((a1[0] + d1[0] * t, a1[1] + d1[1] * t))
+    vertices.append(segs[-1][1])
+    return vertices
+
+
+def _close_corner(vertices):
+    """A closed chain's last-to-first corner rebuilt where the first and
+    last segments' lines meet (Revit leaves a gap there for the hook)."""
+    pts = list(vertices[:-1])
+    (a1, b1), (a2, b2) = (vertices[-2], vertices[-1]), (vertices[0], vertices[1])
+    d1 = (b1[0] - a1[0], b1[1] - a1[1])
+    d2 = (b2[0] - a2[0], b2[1] - a2[1])
+    det = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(det) > 1e-9:
+        t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / det
+        pts[0] = (a1[0] + d1[0] * t, a1[1] + d1[1] * t)
+    return pts
+
+
+def _closes(vertices):
+    """Do a chain's two ends meet (a closed stirrup)?"""
+    if len(vertices) < 4:
+        return False
+    xs = [x for x, _ in vertices]
+    ys = [y for _, y in vertices]
+    size = max(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+    first, last = vertices[0], vertices[-1]
+    return math.hypot(first[0] - last[0], first[1] - last[1]) <= 0.15 * size
+
+
+def shape_outline(lines, hook_at_start=False, hook_at_end=False):
+    """(vertices, is_closed) of a rebar shape for the sketch. A closed
+    stirrup - its ends meet as drawn, or once the straight legs of its
+    hooks are dropped - comes without hooks (Revit adds its 135-degree
+    ones back); an open shape keeps every segment it shows in Revit."""
+    lines = list(lines)
+    body = list(lines)
+    if hook_at_start and len(body) > 2:
+        body = body[1:]
+    if hook_at_end and len(body) > 2:
+        body = body[:-1]
+    if len(body) < len(lines):
+        without_hooks = chain_vertices(body)
+        if _closes(without_hooks):
+            return clean_polyline(_close_corner(without_hooks), closed=True), True
+    vertices = chain_vertices(lines)
+    if _closes(vertices):
+        return clean_polyline(_close_corner(vertices), closed=True), True
+    return clean_polyline(vertices, closed=False), False
+
+
+def fit_polyline_to_box(points, box):
+    """Stretch a shape to fill box (x0, y0, x1, y1); a straight bar is
+    centered along its missing dimension."""
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    w, h = max(xs) - min(xs), max(ys) - min(ys)
+    x0, y0, x1, y1 = box
+
+    def along(v, lo, span, a, b):
+        return (a + b) / 2.0 if span < 1e-9 else a + (v - lo) / span * (b - a)
+
+    return [(along(x, min(xs), w, x0, x1), along(y, min(ys), h, y0, y1)) for x, y in points]
+
+
+STIRRUP_MERGE_GAP = 0.01  # two stirrups closer than this are one
+
+
+def stirrup_sets(length, zones, rest):
+    """(Rule agreed with the user, see Acero.pushbutton/REGLAS_ACERO.md: do
+    not change it without their say.)
+
+    The stirrup sets of a clear length, in order from the bottom, as
+    they are placed on site ('1@.05, 5@.10, rto@.20'), everything measured
+    from each end towards the middle, the top mirroring the bottom:
+    - every zone is its own set: 1 stirrup at 0.05 (a single one), then 5
+      at 0.10 counted from it (0.15 ... 0.55);
+    - the rest, a set from each end every `rest` counted from the last
+      stirrup of that end's zones (0.75, 0.95 ...), up to the middle;
+    - the leftover gap is in the middle: one more stirrup there when it is
+      wider than `rest`, and just one where the two ends meet on the same
+      spot.
+    Zones that don't fit in a short column stop at its middle.
+    Returns [(start, count, spacing, zone_index, side)]: zone_index the
+    position in `zones` or len(zones) for the rest; side +1 for the bottom
+    half, -1 for the top half (see rc._runs)."""
+    if length <= 0:
+        return []
+    rest_zone = len(zones)
+    half = length / 2.0
+    eps = 1e-6
+    bottom = []  # [(offset, zone)] of the bottom half
+    z = 0.0
+    for index, (count, spacing) in enumerate(zones):
+        for _ in range(count):
+            if z + spacing > half + eps:
+                break
+            z += spacing
+            bottom.append((z, index))
+    while z + rest <= half + eps:
+        z += rest
+        bottom.append((z, rest_zone))
+    top = [(length - p, zone) for p, zone in reversed(bottom)]
+    middle = []
+    if not bottom:
+        middle = [(half, rest_zone)]
+    elif top[0][0] - bottom[-1][0] < STIRRUP_MERGE_GAP:
+        top = top[1:]  # both ends reach the same middle spot: one stirrup there
+    elif top[0][0] - bottom[-1][0] > rest + eps:
+        middle = [(half, rest_zone)]  # the leftover in the middle, never wider than rest
+
+    sets = []
+
+    def add_zones(items, side):
+        i = 0
+        while i < len(items):
+            j = i
+            while j + 1 < len(items) and items[j + 1][1] == items[i][1]:
+                j += 1
+            points = [p for p, _ in items[i:j + 1]]
+            spacing = points[1] - points[0] if len(points) > 1 else 0.0
+            sets.append((points[0], len(points), spacing, items[i][1], side))
+            i = j + 1
+
+    add_zones(bottom, 1)
+    add_zones(middle, 1)
+    add_zones(top, -1)
+    return sets
+
+
+def cantilever_sets(length, zones, rest, support_at_end=False, free_cover=0.05):
+    """A cantilever's stirrups (the user's rule): the distribution starts at
+    the support face only - its zones, then the rest - and runs out to the
+    free end (the last one `free_cover` from it); nothing from the free end.
+    Same format as stirrup_sets; measured from the span's start, so when the
+    support is at the span's end the sets are mirrored (side -1)."""
+    if length <= 0:
+        return []
+    rest_zone = len(zones)
+    eps = 1e-6
+    limit = length - free_cover
+    items = []
+    z = 0.0
+    for index, (count, spacing) in enumerate(zones):
+        for _ in range(count):
+            if z + spacing > limit + eps:
+                break
+            z += spacing
+            items.append((z, index))
+    while z + rest <= limit + eps:
+        z += rest
+        items.append((z, rest_zone))
+    side = 1
+    if support_at_end:
+        items = [(length - p, zone) for p, zone in reversed(items)]
+        side = -1
+    sets = []
+    i = 0
+    while i < len(items):
+        j = i
+        while j + 1 < len(items) and items[j + 1][1] == items[i][1]:
+            j += 1
+        points = [p for p, _ in items[i:j + 1]]
+        spacing = abs(points[1] - points[0]) if len(points) > 1 else 0.0
+        sets.append((points[0], len(points), spacing, items[i][1], side))
+        i = j + 1
+    return sets
+
+
+def span_stirrup_sets(length, zones, rest, free=None):
+    """stirrup_sets of a clear span; `free` "start" / "end": a cantilever,
+    free at that end (cantilever_sets from the other)."""
+    if free == "start":
+        return cantilever_sets(length, zones, rest, support_at_end=True)
+    if free == "end":
+        return cantilever_sets(length, zones, rest)
+    return stirrup_sets(length, zones, rest)
+
+
+def span_zone_positions(length, zones, rest, free=None):
+    """[(offset, zone)] of span_stirrup_sets, from the span's start."""
+    out = []
+    for start, count, spacing, zone, side in span_stirrup_sets(length, zones, rest, free):
+        step = spacing if side > 0 else spacing
+        out += [(start + k * step, zone) for k in range(count)]
+    return sorted(out)
+
+
+def free_ends(spans, supports, tol=0.03):
+    """{span index: "start" / "end"} of the cantilevers: a span whose first
+    (last) end has no support - the beam just ends there. A span free at
+    both ends (no support at all) is left as it is."""
+    out = {}
+    for i, (a, b) in enumerate(spans):
+        at_a = any(s0 <= a + tol and s1 >= a - tol for s0, s1 in supports)
+        at_b = any(s0 <= b + tol and s1 >= b - tol for s0, s1 in supports)
+        if at_a and not at_b:
+            out[i] = "end"
+        elif at_b and not at_a:
+            out[i] = "start"
+    return out
+
+
+def stirrup_zone_positions(length, zones, rest):
+    """Every stirrup of `stirrup_sets`, bottom up, tagged with its zone:
+    [(offset, zone_index)]."""
+    return [(start + k * spacing, zone)
+            for start, count, spacing, zone, _ in stirrup_sets(length, zones, rest)
+            for k in range(count)]
+
+
+# --- Custom longitudinal bars, seated against the stirrup ---------------------
+
+BAR_SEAT_SNAP = 0.03  # a bar clicked this close to a stirrup sits against it
+
+
+def custom_bar_layout(inner, corner_key, face_x, face_y):
+    """Bars of a rectangular section laid against a stirrup's inner face.
+    `inner` = (x0, y0, x1, y1) of that face; corner bars (corner_key) sit
+    in its corners; face_x = (count, key) bars on EACH face parallel to x
+    (top and bottom, the corners not counted), face_y the same for the two
+    faces parallel to y. Every bar touches the stirrup with its own
+    diameter. Returns [(x, y, key)], corners first."""
+    x0, y0, x1, y1 = inner
+
+    def r(key):
+        return BAR_DIAMETERS_MM[key] / 2000.0
+
+    rc_ = r(corner_key)
+    if x1 - x0 < 4 * rc_ or y1 - y0 < 4 * rc_:
+        raise SpecError(u"La seccion es muy pequena para esas barras")
+    bars = [(x0 + rc_, y0 + rc_, corner_key), (x1 - rc_, y0 + rc_, corner_key),
+            (x1 - rc_, y1 - rc_, corner_key), (x0 + rc_, y1 - rc_, corner_key)]
+    count, key = face_x
+    for k in range(1, count + 1):
+        x = (x0 + rc_) + (x1 - x0 - 2 * rc_) * k / (count + 1)
+        bars.append((x, y0 + r(key), key))
+        bars.append((x, y1 - r(key), key))
+    count, key = face_y
+    for k in range(1, count + 1):
+        y = (y0 + rc_) + (y1 - y0 - 2 * rc_) * k / (count + 1)
+        bars.append((x0 + r(key), y, key))
+        bars.append((x1 - r(key), y, key))
+    return bars
+
+
+BAR_PLACE_SNAP = 0.06  # the bar tool seats a bar on a stirrup this close to it
+BAR_ALIGN_SNAP = 0.03  # ...and lines it up with a bar this close in x or y
+
+
+def _nearest_seat(click, seats, snap):
+    """(distance, point, edge index or None at a corner) of the nearest
+    place on the seat polygon, or None beyond `snap`."""
+    for corner in seats:
+        if math.hypot(click[0] - corner[0], click[1] - corner[1]) <= snap * 0.7:
+            return (math.hypot(click[0] - corner[0], click[1] - corner[1]), corner, None)
+    best = None
+    n = len(seats)
+    for k in range(n):
+        (ax, ay), (bx, by) = seats[k], seats[(k + 1) % n]
+        dx, dy = bx - ax, by - ay
+        l2 = dx * dx + dy * dy
+        if l2 < 1e-12:
+            continue
+        t = max(0.0, min(1.0, ((click[0] - ax) * dx + (click[1] - ay) * dy) / l2))
+        px, py = ax + t * dx, ay + t * dy
+        d = math.hypot(click[0] - px, click[1] - py)
+        if d <= snap and (best is None or d < best[0]):
+            best = (d, (px, py), k)
+    return best
+
+
+def _align(value, others, tol):
+    near = [o for o in others if abs(o - value) <= tol]
+    return min(near, key=lambda o: abs(o - value)) if near else value
+
+
+def place_bar(click, bar_key, bars, stirrups, snap=BAR_PLACE_SNAP, align=BAR_ALIGN_SNAP):
+    """Where a longitudinal bar clicked at `click` goes. On site every bar
+    is tied to the stirrup: within `snap` of a closed stirrup (`stirrups`:
+    [(outline, stirrup_key)]) the bar sits against its inner face - in its
+    corner near one -, and along that face it lines up with the bars
+    already placed (same x or y within `align`), so facing bars sit face
+    to face. Away from any stirrup it only lines up with the other bars."""
+    rb = BAR_DIAMETERS_MM[bar_key] / 2000.0
+    xs = [x for x, _, _ in bars]
+    ys = [y for _, y, _ in bars]
+    best = None
+    for outline, stirrup_key in stirrups:
+        ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+        try:
+            seats = offset_polygon_outward(outline, -(ds + rb))
+        except SpecError:
+            continue
+        found = _nearest_seat(click, seats, snap)
+        if found and (best is None or found[0] < best[0][0]):
+            best = (found, seats)
+    if best is None:
+        return (_align(click[0], xs, align), _align(click[1], ys, align))
+    (_, (px, py), edge), seats = best
+    if edge is None:
+        return (px, py)  # a corner
+    (ax, ay), (bx, by) = seats[edge], seats[(edge + 1) % len(seats)]
+    if abs(bx - ax) < 1e-9:  # a face along y: line up in y
+        return (px, max(min(ay, by), min(max(ay, by), _align(py, ys, align))))
+    if abs(by - ay) < 1e-9:  # a face along x: line up in x
+        return (max(min(ax, bx), min(max(ax, bx), _align(px, xs, align))), py)
+    return (px, py)
+
+
+def bar_seat(click, stirrup_outline, stirrup_key, bar_key, snap=BAR_SEAT_SNAP):
+    """Where a bar clicked at `click` sits against a closed stirrup: its
+    center on the line `stirrup + bar radius` inside the stirrup's inner
+    face (in a corner when the click is near one), or None if the click
+    isn't within `snap` of that line."""
+    ds = BAR_DIAMETERS_MM[stirrup_key] / 1000.0
+    rb = BAR_DIAMETERS_MM[bar_key] / 2000.0
+    try:
+        seats = offset_polygon_outward(stirrup_outline, -(ds + rb))
+    except SpecError:
+        return None
+    found = _nearest_seat(click, seats, snap)
+    return found[1] if found else None
+
+
+# The diameters the weight table adds are known from the start (parse_diameter).
+try:
+    weight_table()
+except (IOError, OSError, SpecError):
+    pass
+
+
+def wall_horizontal_path(x0, x1, y, anchor_left, anchor_right, hook, max_hook):
+    """Plan path [(x, y)] of a wall's horizontal bar on the face at y (the
+    wall from x0 to x1 along its axis): run into the element at each end
+    (a column) by its anchorage, ended with a leg (`hook`, at most
+    `max_hook`) turned towards the other face, as on site."""
+    a, b = x0 - anchor_left, x1 + anchor_right
+    inward = -1.0 if y > 0 else 1.0
+    h = min(hook, max_hook) if hook > 0 else 0.0
+    path = [(a, y), (b, y)]
+    if h > 0.03:
+        path.insert(0, (a, y + inward * h))
+        path.append((b, y + inward * h))
+    return path

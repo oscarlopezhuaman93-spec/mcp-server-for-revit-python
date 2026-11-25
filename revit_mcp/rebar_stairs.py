@@ -489,7 +489,7 @@ def group_cross(items, tol=1e-3):
 try:
     from pyrevit import DB
     from System.Collections.Generic import List
-    import rebar_foundation as rf
+    import escalera_rf as rf  # Acero Escalera: its own rules (2026-11-25)
 except Exception:  # the pure tests
     DB = None
 

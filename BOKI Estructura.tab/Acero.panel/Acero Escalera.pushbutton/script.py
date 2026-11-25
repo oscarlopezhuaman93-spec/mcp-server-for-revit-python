@@ -20,9 +20,9 @@ if REVIT_MCP_DIR not in sys.path:
 
 import selection_hosts
 import formwork_params as fw_params
-import rebar_spec as rs
-import rebar_columns as rc
-import rebar_foundation as rf
+import escalera_spec as rs  # Acero Escalera: its own rules (2026-11-25)
+import escalera_rc as rc  # Acero Escalera: its own rules (2026-11-25)
+import escalera_rf as rf  # Acero Escalera: its own rules (2026-11-25)
 import rebar_stairs as rst
 import rebar_views as rv
 import utils as fw_utils
