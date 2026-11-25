@@ -598,6 +598,12 @@ def _drawn_in(doc, rebar, curves, normal, tol=1e-4):
     # the side at the hooks reads half a diameter past the drawing even when
     # the stirrup keeps its cover, and it was drawn in for nothing
     made = list(rebar.GetCenterlineCurves(False, False, False, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
+    # ...but not the hooks' straight tails: in a thin section a 135 hook's
+    # tail reaches past the far side and was read as that side run out - the
+    # side was drawn in onto the bars (2026-11-25, as in Acero Columna)
+    body = list(rebar.GetCenterlineCurves(False, True, False, MultiplanarOption.IncludeOnlyPlanarCurves, 0))
+    if len(made) > len(body) and len(made) > 2:
+        made = made[1:-1]
     drawn = list(curves)
     if not made or not drawn:
         return None
