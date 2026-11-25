@@ -1,0 +1,73 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Verificar estructura met&#225;lica"
+        Height="820" Width="1400" MinWidth="1000" MinHeight="600"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResizeWithGrip" Background="#FFF3F5F8">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#FF2D8CF0"/>
+            <Setter Property="Foreground" Value="#FF1F6FC5"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Width" Value="70"/>
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#FF16324F"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#FF16324F" Padding="16,8,16,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="BOKI" Foreground="#FFFFB347" FontSize="20" FontWeight="Bold"/>
+                <StackPanel>
+                    <TextBlock Text="VERIFICAR (E.090 / AISC 360 LRFD)" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock Foreground="#FFB9C9DA" FontSize="11"
+                               Text="Verificaci&#243;n preliminar de p&#243;rticos, cerchas y correas BOKI: an&#225;lisis matricial 2D, combinaciones E.090, resistencia AISC 360 y deflexiones."/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+        <DockPanel Margin="12">
+            <StackPanel DockPanel.Dock="Left" Width="330" Margin="0,0,12,0">
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="Cargas (E.020)" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Muerta (cobertura)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_dead"/><TextBlock Text=" kN/m&#178;"/></StackPanel>
+                    <TextBlock Grid.Row="1" Text="Viva de techo"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_live"/><TextBlock Text=" kN/m&#178;"/></StackPanel>
+                    <TextBlock Grid.Row="2" Text="Velocidad de viento"/><StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_wind"/><TextBlock Text=" km/h"/></StackPanel>
+                </Grid>
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="Acero (Fy)" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Perfiles W (A572 Gr.50)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_fy_w"/><TextBlock Text=" MPa"/></StackPanel>
+                    <TextBlock Grid.Row="1" Text="Tubos (LAC)"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_fy_tube"/><TextBlock Text=" MPa"/></StackPanel>
+                    <TextBlock Grid.Row="2" Text="Correas C"/><StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_fy_c"/><TextBlock Text=" MPa"/></StackPanel>
+                </Grid>
+                <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Padding="8,4"><TextBlock Text="Arriostramiento lateral" FontWeight="Bold"/></Border>
+                <Grid Margin="10,6,0,8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="30"/><RowDefinition Height="30"/></Grid.RowDefinitions>
+                    <TextBlock Text="Lb columnas (largueros)"/><StackPanel Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_girt"/><TextBlock Text=" m"/></StackPanel>
+                    <TextBlock Grid.Row="1" Text="Lb vigas (correas)"/><StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"><TextBox x:Name="txt_purlin"/><TextBlock Text=" m"/></StackPanel>
+                </Grid>
+                <Button Content="VERIFICAR" Height="36" FontWeight="Bold" Click="run_click" Margin="0,4,0,8"/>
+                <TextBlock Foreground="#FF6B7B8C" FontSize="11" TextWrapping="Wrap"
+                           Text="Verificaci&#243;n preliminar para predimensionar: no reemplaza el an&#225;lisis y dise&#241;o del ingeniero responsable (sismo E.030, conexiones, pandeo local, estabilidad global)."/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+                <Button Content="Exportar CSV..." Width="160" Height="36" Margin="0,0,12,0" Click="export_click"/>
+                <Button Content="Cerrar" Width="120" Height="36" Click="close_click" BorderBrush="#FFC9D3DE" Foreground="#FF16324F"/>
+            </StackPanel>
+            <Border Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="pnl_results" Margin="10"/>
+                </ScrollViewer>
+            </Border>
+        </DockPanel>
+    </DockPanel>
+</Window>
