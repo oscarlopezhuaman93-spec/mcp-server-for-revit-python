@@ -369,31 +369,124 @@ def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
         annotate(notes)
 
 
+def _cluster(pts, index, tol=0.03):
+    groups = []
+    for p in sorted(pts, key=lambda q: q[index]):
+        if groups and abs(p[index] - groups[-1][-1][index]) <= tol:
+            groups[-1].append(p)
+        else:
+            groups.append([p])
+    return groups
+
+
+def label_groups(bars, tol=0.03):
+    """The bars labelled as the user's table (2026-11-26), in the section
+    frame (m, y up): [{"side": "right"/"top"/"right_col", "key", "lines":
+    [[(x, y)...]]}] - first the rows of one diameter (2+ bars), labelled on
+    the right, a leader along each row; then the rest by columns of one
+    diameter: on top (a leader down each column), or on the right with a
+    leader per bar for the outermost column; what is left, one label per
+    diameter on the right. Neighbour rows / columns of the same diameter
+    share one label."""
+    left = list(bars)
+    out = []
+    rows = _cluster(left, 1, tol)
+    picked = []
+    for row in rows:
+        keys = set(b[2] for b in row)
+        if len(row) >= 2 and len(keys) == 1:
+            picked.append(row)
+    taken = set(b for row in picked for b in row)
+    left = [b for b in left if b not in taken]
+    for row in picked:  # rows top -> bottom, neighbours merged
+        prev = out[-1] if out else None
+        if (prev and prev["side"] == u"right" and prev["key"] == row[0][2]
+                and rows.index(row) - prev["last"] == 1):
+            prev["lines"].append(row)
+            prev["last"] = rows.index(row)
+        else:
+            out.append({"side": u"right", "key": row[0][2], "lines": [row], "last": rows.index(row)})
+    if left:
+        x_max = max(b[0] for b in bars)
+        cols = _cluster(left, 0, tol)
+        rest = []
+        for col in cols:
+            if len(set(b[2] for b in col)) != 1:
+                rest += col
+                continue
+            if abs(col[0][0] - x_max) <= tol:
+                out.append({"side": u"right_col", "key": col[0][2], "lines": [[b] for b in col]})
+                continue
+            prev = out[-1] if out else None
+            if prev and prev["side"] == u"top" and prev["key"] == col[0][2] and prev["last"] == cols.index(col) - 1:
+                prev["lines"].append(col)
+                prev["last"] = cols.index(col)
+            else:
+                out.append({"side": u"top", "key": col[0][2], "lines": [col], "last": cols.index(col)})
+        by_key = {}
+        for b in rest:
+            by_key.setdefault(b[2], []).append(b)
+        for key in sorted(by_key):
+            out.append({"side": u"right_col", "key": key, "lines": [[b] for b in by_key[key]]})
+    for g in out:
+        g.pop("last", None)
+        g["count"] = sum(len(line) for line in g["lines"])
+    return out
+
+
+def _right_edge(polygon, y):
+    """The polygon's rightmost x at height y."""
+    best = None
+    for (ax, ay), (bx, by) in zip(polygon, polygon[1:] + polygon[:1]):
+        if min(ay, by) - 1e-9 <= y <= max(ay, by) + 1e-9:
+            x = ax if abs(by - ay) < 1e-9 else ax + (bx - ax) * (y - ay) / (by - ay)
+            x = max(ax, bx) if abs(by - ay) < 1e-9 else x
+            best = x if best is None else max(best, x)
+    return best if best is not None else max(p[0] for p in polygon)
+
+
 def section_notes(item, P, diameters_mm):
-    """What a drawn section is dimensioned and labeled with (paper mm):
-    {"outline", "labels": [(text, (x, y) pointed at)]} - a label per bar
-    diameter (count and Ø, at its outermost bar on the right) and one for
-    the stirrups (Ø and distribution)."""
+    """What a drawn section is dimensioned and labeled with (paper mm, y
+    down): {"outline", "labels": [{"text", "at" (the text's top-left, or
+    top-right when "align" is "right"), "align", "leaders": [(elbow, end)]}]}
+    - the user's table (2026-11-26): "2Ø5/8\"" by rows on the right (a
+    leader along the row to its far bar), by columns on top (a leader down
+    the column), no stirrup label (its distribution has its own row)."""
     design = item.design
+    poly = item.polygon
+    top_y = min(P(p)[1] for p in poly)
     labels = []
-    by_key = {}
-    for x, y, key in design["bars"]:
-        by_key.setdefault(key, []).append((x, y))
-    for key in sorted(by_key, key=lambda k: -diameters_mm.get(k, 0)):
-        pts = by_key[key]
-        far = max(pts, key=lambda p: (p[0], p[1]))
-        labels.append((u"{}Ø{}".format(len(pts), key), P(far)))
-    stirrups = design.get("stirrups", [])
-    if stirrups:
-        pts = list(stirrups[0][1])
-        right = max(pts, key=lambda p: p[0])
-        lower = min((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
-        upper = max((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
-        mid = (right[0], (lower[1] + upper[1]) / 2.0)
-        diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
-        dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
-        labels.append((u"Est. Ø{}".format(diam), P(mid)))  # its distribution is in its own row
-    return {"outline": [P(p) for p in item.polygon], "labels": labels}
+    n_top = 0
+    for g in label_groups(design["bars"]):
+        text = u"{}Ø{}".format(g["count"], g["key"])
+        if g["side"] == u"right":
+            rows = g["lines"]
+            first = rows[0]
+            xr = P((_right_edge(poly, first[0][1]), first[0][1]))[0]
+            ty = P(first[0])[1]
+            tx = xr + (2.2 if len(rows) == 1 else 4.7)
+            ends = [P(min(row, key=lambda b: b[0])) for row in rows]
+            labels.append({"text": text, "at": (tx, ty - 1.6), "align": u"left",
+                           "leaders": [((tx, ty), e) for e in ends]})
+        elif g["side"] == u"right_col":
+            pts = [P(line[0]) for line in g["lines"]]
+            xr = max(P((_right_edge(poly, line[0][1]), line[0][1]))[0] for line in g["lines"])
+            ym = sum(p[1] for p in pts) / len(pts)
+            tx = xr + 1.9
+            labels.append({"text": text, "at": (tx, ym - 1.5), "align": u"left",
+                           "leaders": [((tx, ym), p) for p in pts]})
+        else:
+            ey = top_y - 3.8 - 1.5 * n_top
+            n_top += 1
+            ends = [P(min(col, key=lambda b: b[1])) for col in g["lines"]]  # the lowest bar
+            leaders = [((e[0], ey), e) for e in ends]
+            if len(ends) == 1:
+                labels.append({"text": text, "at": (ends[0][0] + 1.7, ey - 1.5), "align": u"left",
+                               "leaders": leaders})
+            else:
+                labels.append({"text": text, "at": (min(e[0] for e in ends) - 1.7, ey - 1.5), "align": u"right",
+                               "leaders": leaders})
+    return {"outline": [P(p) for p in poly], "labels": labels}
 
 
 def draw_table(d, items, title, scale, detail, diameters_mm):
@@ -406,7 +499,7 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
     total = LABEL_W + sum(widths)
     n_levels = max([len(it.levels) for it in items] + [1])
     rows = [(u"TIPO", TIPO_H), (u"BXH", BXH_H),
-            (u"DISTRIBUCION\nDE ESTRIBO", n_levels * LEVEL_LINE_H + 4.0),
+            (u"DISTRIBUCION\nDE ESTRIBO", LEVEL_LINE_H + 4.0),  # one line, as the user's table
             (u"DIAMETRO (Ø)", DIAM_H),
             (u"DETALLE\nSECCION", table_section_height([it.polygon for it in items], scale))]
     ys = [TITLE_H]
@@ -429,20 +522,22 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
     for item, x, w in zip(items, xs, widths):
         mid = x + w / 2.0
         d.text(mid, ys[0] + TIPO_H / 2.0, item.mark, u"BOKI Cuadro Cabecera")
-        d.text(mid, ys[1] + BXH_H / 2.0, shape_text(item.polygon) if item.polygon else u"-", u"BOKI Cuadro 3mm")
+        d.text(mid, ys[1] + BXH_H / 2.0, shape_text(item.polygon) if item.polygon else u"-", u"BOKI Cuadro 2.8mm")
         dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
         diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
         count = len(item.design.get("stirrups", [])) if item.design else 0
         if dist:
-            for k, level in enumerate(item.levels):
-                yl = ys[2] + 2.0 + LEVEL_LINE_H * (k + 0.5)
-                d.text(x + 2.0, yl, u"{}:".format(level), u"BOKI Cuadro 2mm", align=u"left")
-                d.text(x + 31.0, yl, u"{}".format(max(count, 1)), u"BOKI Cuadro 2mm", align=u"left")
-                draw_stirrup_icon(d, x + 34.0, yl)
-                d.text(x + 38.5, yl, u"Ø {}: {}".format(diam, dist), u"BOKI Cuadro 2mm", align=u"left")
+            # one line, centered, no level name (the type's setup is the same on every level)
+            line = u"Ø {}: {}".format(diam, dist)
+            span = 7.5 + len(line) * 2.1 * 0.62
+            x_start = mid - span / 2.0
+            yl = ys[2] + rows[2][1] / 2.0
+            d.text(x_start, yl, u"{}".format(max(count, 1)), u"BOKI Cuadro 2mm", align=u"left")
+            draw_stirrup_icon(d, x_start + 3.0, yl)
+            d.text(x_start + 7.5, yl, line, u"BOKI Cuadro 2mm", align=u"left")
         else:
             d.text(mid, ys[2] + rows[2][1] / 2.0, u"(sin estribos configurados)", u"BOKI Cuadro 2mm")
         bars = item.design["bars"] if item.design else []
-        d.text(mid, ys[3] + DIAM_H / 2.0, bars_text(bars, diameters_mm) if bars else u"-", u"BOKI Cuadro 3mm")
+        d.text(mid, ys[3] + DIAM_H / 2.0, bars_text(bars, diameters_mm) if bars else u"-", u"BOKI Cuadro 2.8mm")
         draw_section(d, item, x, x + w, ys[4], ys[5], scale, detail, diameters_mm)
     return total, bottom

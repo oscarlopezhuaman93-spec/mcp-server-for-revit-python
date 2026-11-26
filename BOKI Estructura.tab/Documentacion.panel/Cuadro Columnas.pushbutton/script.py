@@ -50,10 +50,12 @@ C_GRID = (160, 160, 160)
 TEXTS = {  # text types made for the table: name -> (paper mm, color)
     # on the bands: black bold, as the project legend (Revit's dark theme
     # shows it white; it prints black on the light bands)
-    u"BOKI Cuadro Titulo": (5.0, (0, 0, 0)),
-    u"BOKI Cuadro Cabecera": (3.0, (0, 0, 0)),
+    # sizes as the user's table (2026-11-26)
+    u"BOKI Cuadro Titulo": (4.5, (0, 0, 0)),
+    u"BOKI Cuadro Cabecera": (2.8, (0, 0, 0)),
     u"BOKI Cuadro 3mm": (3.0, C_TEXT),
-    u"BOKI Cuadro 2mm": (2.0, C_TEXT),
+    u"BOKI Cuadro 2.8mm": (2.8, C_TEXT),
+    u"BOKI Cuadro 2mm": (2.1, C_TEXT),
     u"BOKI Cuadro Escala": (2.2, C_SCALE),
 }
 LINES = {  # line styles: name -> (color, weight)
@@ -169,7 +171,12 @@ def ensure_styles():
     texts = dict((_name(t), t) for t in DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType))
     base = texts.get(u"DETALLES 2.5mm") or texts.get(u"2.5mm Arial") or list(texts.values())[0]
     for name, (size, rgb) in TEXTS.items():
-        t = texts.get(name) or base.Duplicate(name)
+        if name in texts:
+            continue  # already in the project: the user's own edits (font, size) kept
+        t = base.Duplicate(name)
+        font = t.get_Parameter(DB.BuiltInParameter.TEXT_FONT)
+        if font is not None and not font.IsReadOnly:
+            font.Set(u"Bahnschrift")  # as the user's table
         t.get_Parameter(DB.BuiltInParameter.TEXT_SIZE).Set(size / 304.8)
         t.get_Parameter(DB.BuiltInParameter.LINE_COLOR).Set(rgb[0] + rgb[1] * 256 + rgb[2] * 65536)
         bold = t.get_Parameter(DB.BuiltInParameter.TEXT_STYLE_BOLD)
@@ -337,17 +344,21 @@ class RevitDrawer(object):
         ttype = self.label_type or self.text_types.get(u"BOKI Cuadro 2mm")
         ttype = self._plain_leader(ttype) if ttype else None
         tid = ttype.Id if ttype else doc.GetDefaultElementTypeId(DB.ElementTypeGroup.TextNoteType)
-        for k, (text, target) in enumerate(notes["labels"]):
-            at = (x1 + 9.0, y0 + 3.0 + k * 7.0)
+        for label in notes["labels"]:
+            # the user's table (2026-11-26): by rows on the right, by columns on top
+            right = label["align"] == u"right"
             opts = DB.TextNoteOptions(tid)
-            opts.HorizontalAlignment = DB.HorizontalTextAlignment.Left
-            note = DB.TextNote.Create(doc, self.view.Id, self.p(*at), text, opts)
-            try:
-                leader = note.AddLeader(DB.TextNoteLeaderTypes.TNLT_STRAIGHT_L)
-                leader.End = self.p(*target)
-                leader.Elbow = self.p(at[0] - 3.0, at[1])
-            except Exception:
-                pass
+            opts.HorizontalAlignment = DB.HorizontalTextAlignment.Right if right else DB.HorizontalTextAlignment.Left
+            opts.VerticalAlignment = DB.VerticalTextAlignment.Top
+            note = DB.TextNote.Create(doc, self.view.Id, self.p(*label["at"]), label["text"], opts)
+            for elbow, end in label["leaders"]:
+                try:
+                    leader = note.AddLeader(DB.TextNoteLeaderTypes.TNLT_STRAIGHT_R if right
+                                            else DB.TextNoteLeaderTypes.TNLT_STRAIGHT_L)
+                    leader.End = self.p(*end)
+                    leader.Elbow = self.p(*elbow)
+                except Exception:
+                    pass
 
     def text(self, x, y, text, kind, rotate=False, align=u"center"):
         ttype = self.text_types.get(kind)
@@ -492,11 +503,15 @@ class CanvasDrawer(object):
             self.line((xd - 1.0, y + 1.0), (xd + 1.0, y - 1.0), style)
         self.text((x0 + x1) / 2.0, yd + 2.5, u"{:.2f}".format((x1 - x0) * k), u"BOKI Cuadro 2mm")
         self.text(xd - 2.5, (y0 + y1) / 2.0, u"{:.2f}".format((y1 - y0) * k), u"BOKI Cuadro 2mm", rotate=True)
-        for n, (text, target) in enumerate(notes["labels"]):
-            at = (x1 + 9.0, y0 + 3.0 + n * 7.0)
-            self.line(target, (at[0] - 3.0, at[1]), style)
-            self.line((at[0] - 3.0, at[1]), (at[0] - 0.5, at[1]), style)
-            self.text(at[0], at[1], text, u"BOKI Cuadro 2mm", align=u"left")
+        for label in notes["labels"]:
+            ax, ay = label["at"]
+            for elbow, end in label["leaders"]:
+                self.line(end, elbow, style)
+            if label["align"] == u"right":
+                w = 2.2 * 0.62 * len(label["text"])  # about the text's width, paper mm
+                self.text(ax - w, ay + 1.5, label["text"], u"BOKI Cuadro 2mm", align=u"left")
+            else:
+                self.text(ax, ay + 1.5, label["text"], u"BOKI Cuadro 2mm", align=u"left")
     def text(self, x, y, text, kind, rotate=False, align=u"center"):
         size = TEXTS.get(kind, (2.0, C_TEXT))[0]
         tb = TextBlock()
