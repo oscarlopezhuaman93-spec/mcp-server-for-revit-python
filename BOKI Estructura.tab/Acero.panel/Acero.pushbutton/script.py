@@ -1892,6 +1892,9 @@ class AceroWindow(forms.WPFWindow):
                     messages.append(u"Izaje: {}".format(e))
                 extra["izaje_h"] = izaje_h
             ends = rs.read_json_setting(f["ends"])
+            if not depth and index == 0 and ends.get("anchor") not in (None, u""):
+                # no foundation but an anchor typed: into the placa / beam under it
+                depth = rc.element_below_depth(doc, column, section)
             if depth:
                 anchor = ends.get("anchor")
                 extra["anchor"] = (float(anchor) if anchor not in (None, u"") else

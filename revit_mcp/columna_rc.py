@@ -1181,6 +1181,30 @@ def foundation_below(doc, column, section):
 ANCHOR_HOST_MAX_M = 1.0  # a beam or wall this deep at most under a column is its foundation
 
 
+def element_below_depth(doc, column, section):
+    """Depth (m) of the concrete element right under the column base when it
+    is not a foundation (2026-11-25): a placa or column of ANOTHER type, a
+    beam or a wall of any height. Used only with an anchor typed by the user
+    (EA_Barra_Extremos "anchor"): the bars go down that much into it."""
+    probe = section.point_m(0.0, 0.0, section.z_bottom - 0.05 / FT)
+    outline = DB.Outline(DB.XYZ(probe.X - 0.05, probe.Y - 0.05, probe.Z - 0.05),
+                         DB.XYZ(probe.X + 0.05, probe.Y + 0.05, probe.Z + 0.05))
+    cats = List[DB.BuiltInCategory]([DB.BuiltInCategory.OST_StructuralColumns,
+                                     DB.BuiltInCategory.OST_StructuralFraming, DB.BuiltInCategory.OST_Walls])
+    deepest = None
+    for element in (DB.FilteredElementCollector(doc).WherePasses(DB.ElementMulticategoryFilter(cats))
+                    .WhereElementIsNotElementType()
+                    .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
+        if element.Id == column.Id or element.GetTypeId() == column.GetTypeId():
+            continue  # the same column stacked: its bars go on (splices)
+        bb = element.get_BoundingBox(None)
+        if bb is None or bb.Max.Z < section.z_bottom - 0.1 / FT or bb.Min.Z > section.z_bottom - 0.02 / FT:
+            continue
+        depth = (section.z_bottom - bb.Min.Z) * FT
+        deepest = depth if deepest is None else max(deepest, depth)
+    return deepest
+
+
 def column_below(doc, column, section):
     """True when the column stands on another element of its category (a
     column, its joint): it doesn't start on the footing."""
@@ -1516,6 +1540,9 @@ def _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
     d = spec.BAR_DIAMETERS_MM[key] / 1000.0
     ends = {}
     depth = foundation_below(doc, bottom_column, Section(bottom_column))
+    if not depth and column_spec.anchor_m:
+        # no foundation but an anchor typed: into the placa / beam under it
+        depth = element_below_depth(doc, bottom_column, Section(bottom_column))
     if depth:
         anchor = column_spec.anchor_m
         if anchor is None:
