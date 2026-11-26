@@ -302,6 +302,73 @@ def draw_stirrup_icon(d, x, y, w=3.0, h=4.0):
     d.line((x, y - h / 2 + 0.2), (x + 1.2, y - h / 2 + 1.4), u"BOKI Cuadro Estribo")
 
 
+def _inside(poly, x, y):
+    hit = False
+    for (ax, ay), (bx, by) in zip(poly, poly[1:] + poly[:1]):
+        if (ay > y) != (by > y) and x < ax + (bx - ax) * (y - ay) / (by - ay):
+            hit = not hit
+    return hit
+
+
+def fitted_bars(design, cfg, diameters_mm):
+    """The bars drawn against the stirrup (2026-11-26): a bar on (or near)
+    a stirrup leg is moved inward until it touches the leg's inner face -
+    centre at half the stirrup plus the bar's radius from the leg's axis -,
+    as they are tied. Section frame (m); only the drawing of the table."""
+    out = []
+    loops = []
+    for kind, pts, wrap, is_open in design.get("stirrups", []):
+        if not is_open:
+            loops.append((list(pts), _stirrup_diameter(cfg, kind, diameters_mm)))
+    for x, y, key in design["bars"]:
+        r = diameters_mm.get(key, 16.0) / 2000.0
+        for _ in range(2):  # twice: a corner bar settles against both legs
+            for pts, dia in loops:
+                target = dia / 2.0 + r
+                for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
+                    ux, uy = bx - ax, by - ay
+                    length = math.hypot(ux, uy)
+                    if length < 1e-6:
+                        continue
+                    ux, uy = ux / length, uy / length
+                    t = (x - ax) * ux + (y - ay) * uy
+                    if t < -target or t > length + target:
+                        continue
+                    nx, ny = -uy, ux  # a normal; flipped to point inside the stirrup
+                    mx, my = ax + ux * length / 2.0, ay + uy * length / 2.0
+                    if not _inside(pts, mx + nx * 0.002, my + ny * 0.002):
+                        nx, ny = -nx, -ny
+                    dist = (x - ax) * nx + (y - ay) * ny  # > 0 inside
+                    if -target < dist < target:
+                        x, y = x + nx * (target - dist), y + ny * (target - dist)
+        # in a corner: seated in the bend (stirrup_band: centerline radius 2
+        # diameters, its centre that far in from both legs)
+        for pts, dia in loops:
+            bend = 2.0 * dia
+            n = len(pts)
+            for i in range(n):
+                a, b, c = pts[i - 1], pts[i], pts[(i + 1) % n]
+                u = (a[0] - b[0], a[1] - b[1])
+                v = (c[0] - b[0], c[1] - b[1])
+                lu, lv = math.hypot(*u), math.hypot(*v)
+                if lu < 1e-6 or lv < 1e-6 or abs(u[0] * v[0] + u[1] * v[1]) > 1e-6 * lu * lv:
+                    continue  # only square corners
+                u, v = (u[0] / lu, u[1] / lu), (v[0] / lv, v[1] / lv)
+                if not _inside(pts, b[0] + (u[0] + v[0]) * 0.002, b[1] + (u[1] + v[1]) * 0.002):
+                    continue  # a re-entrant corner: no bend to sit in
+                du = (x - b[0]) * u[0] + (y - b[1]) * u[1]
+                dv = (x - b[0]) * v[0] + (y - b[1]) * v[1]
+                if not (0 < du < bend and 0 < dv < bend):
+                    continue
+                cx, cy = b[0] + (u[0] + v[0]) * bend, b[1] + (u[1] + v[1]) * bend
+                reach = bend - dia / 2.0 - r
+                dist = math.hypot(x - cx, y - cy)
+                if reach > 0 and dist > reach:
+                    x, y = cx + (x - cx) / dist * reach, cy + (y - cy) / dist * reach
+        out.append((x, y, key))
+    return out
+
+
 def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
     """The section drawn true to size at 1:scale, its steel at the chosen
     detail: HIGH - every bar and stirrup by its outline, bends and hooks
@@ -351,7 +418,7 @@ def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
                 d.polyline([P(q) for q in bar_strip(a, b, dia)], True, u"BOKI Cuadro Acero Fino")
             else:
                 d.region([[P(q) for q in bar_strip(a, b, dia)]], u"BOKI Cuadro Estribo")
-        for x, y, key in design["bars"]:
+        for x, y, key in fitted_bars(design, item.cfg, diameters_mm):
             px, py = P((x, y))
             r = diameters_mm[key] / 2000.0 * k
             if detail == DETAIL_HIGH:
@@ -457,7 +524,7 @@ def section_notes(item, P, diameters_mm):
     top_y = min(P(p)[1] for p in poly)
     labels = []
     n_top = 0
-    for g in label_groups(design["bars"]):
+    for g in label_groups(fitted_bars(design, item.cfg, diameters_mm)):
         text = u"{}Ø{}".format(g["count"], g["key"])
         if g["side"] == u"right":
             rows = g["lines"]
