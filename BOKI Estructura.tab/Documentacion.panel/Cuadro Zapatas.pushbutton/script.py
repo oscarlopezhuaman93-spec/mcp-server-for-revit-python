@@ -8,6 +8,7 @@ __author__ = "Revit MCP"
 
 import json
 import math
+import re
 import os
 import sys
 
@@ -41,11 +42,12 @@ COVERS_PARAM = "EA_Cim_Recubrimientos"
 C_VALUE = (0, 170, 230)
 C_LABEL = (230, 140, 0)
 TEXTS = {  # name -> (paper mm, color, bold); black: Revit's dark theme shows it white
-    ft.T_TITLE: (5.0, (0, 0, 0), True),
-    ft.T_HEAD: (3.0, (0, 0, 0), True),
-    ft.T_TYPE: (4.0, (0, 0, 0), True),
-    ft.T_VALUE: (3.0, C_VALUE, False),
-    ft.T_LABEL: (2.5, C_LABEL, False),
+    # sizes as the user's table (2026-11-26), Bahnschrift
+    ft.T_TITLE: (3.8, (0, 0, 0), True),
+    ft.T_HEAD: (2.5, (0, 0, 0), True),
+    ft.T_TYPE: (2.5, (0, 0, 0), True),
+    ft.T_VALUE: (2.4, C_VALUE, False),
+    ft.T_LABEL: (2.4, C_LABEL, False),
 }
 LINES = {ft.L_GRID: ((160, 160, 160), 1)}
 # the preview shows the legend as Revit's dark theme does (measured on an
@@ -142,9 +144,15 @@ class FootingType(object):
         return out
 
     def label(self):
-        size = u"{:.2f} x {:.2f} x {:.2f}".format(self.b, self.L, self.h) if self.b else u"?"
-        return u"{}  ({} m, {} elem.) - {}".format(self.mark, size, len(self.elements),
-                                                  u"con acero" if self.has_steel else u"sin acero")
+        # "Z-1 (B7)  -  1.50 x 1.50 x 0.50 m  -  4 zapatas" (2026-11-26: only
+        # types with steel are listed, no "con / sin acero")
+        size = u"{:.2f} x {:.2f} x {:.2f} m".format(self.b, self.L, self.h) if self.b else u"?"
+        mark = self.mark
+        block = re.search(r"\((B\d+)\)", self.name)
+        if block and block.group(1) not in mark:
+            mark = u"{} ({})".format(mark, block.group(1))
+        n = len(self.elements)
+        return u"{}  -  {}  -  {} {}".format(mark, size, n, u"elemento" if n == 1 else u"elementos")
 
 
 def collect_types():
@@ -171,7 +179,12 @@ def ensure_styles():
     texts = dict((_name(t), t) for t in DB.FilteredElementCollector(doc).OfClass(DB.TextNoteType))
     base = texts.get(u"DETALLES 2.5mm") or texts.get(u"2.5mm Arial") or list(texts.values())[0]
     for name, (size, rgb, bold) in TEXTS.items():
-        t = texts.get(name) or base.Duplicate(name)
+        if name in texts:
+            continue  # already in the project: the user's own edits (font, size) kept
+        t = base.Duplicate(name)
+        p = t.get_Parameter(DB.BuiltInParameter.TEXT_FONT)
+        if p is not None and not p.IsReadOnly:
+            p.Set(u"Bahnschrift")
         t.get_Parameter(DB.BuiltInParameter.TEXT_SIZE).Set(size / 304.8)
         t.get_Parameter(DB.BuiltInParameter.LINE_COLOR).Set(rgb[0] + rgb[1] * 256 + rgb[2] * 65536)
         p = t.get_Parameter(DB.BuiltInParameter.TEXT_STYLE_BOLD)
@@ -457,9 +470,14 @@ class CuadroWindow(forms.WPFWindow):
 
 
 if __name__ == "__main__":
-    types = collect_types()
+    # only the types with steel: the table shows their steel (2026-11-26)
+    types = [t for t in collect_types() if t.has_steel]
+    types.sort(key=lambda t: (not t.is_footing(),
+                              ft.natural_key((re.search(r"\((B\d+)\)", t.name) or re.search(r"()", u"")).group(1)),
+                              ft.natural_key(t.mark)))
     if not types:
-        forms.alert(u"El modelo no tiene cimentaciones.", title="Cuadro de zapatas")
+        forms.alert(u"Ningún tipo de cimentación tiene acero configurado: configúralo con Acero Cimentación.",
+                    title="Cuadro de zapatas")
     else:
         window = CuadroWindow(os.path.join(SCRIPT_DIR, "CuadroForm.xaml"), types)
         window.ShowDialog()

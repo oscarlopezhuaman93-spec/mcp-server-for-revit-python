@@ -39,16 +39,15 @@
                         <ComboBox x:Name="cbo_level" Width="170" SelectionChanged="options_changed"
                                   ToolTip="ALTURA Df: desde este nivel (terreno) hasta el fondo de la cimentaci&#243;n."/>
                     </StackPanel>
-                    <TextBlock Text="Tipos de cimentaci&#243;n a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
+                    <TextBlock Text="Tipos de cimentaci&#243;n a incluir (solo los que tienen acero):" FontWeight="Bold" Margin="0,12,0,3"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
                         <Button Content="Zapatas" Padding="6,1" Click="check_footings"/>
-                        <Button Content="Con acero" Padding="6,1" Margin="4,0,0,0" Click="check_with_steel"/>
                         <Button Content="Todos" Padding="6,1" Margin="4,0,0,0" Click="check_all"/>
                         <Button Content="Ninguno" Padding="6,1" Margin="4,0,0,0" Click="check_none"/>
                     </StackPanel>
                 </StackPanel>
                 <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
-                           Text="b y L: lados de la planta (b el menor). Acero b: barras repartidas a lo ancho de b; Acero L: a lo largo de L. El acero sale de lo guardado en Acero Cimentaci&#243;n para cada tipo (sin acero: '-')."/>
+                           Text="b y L: lados de la planta (b el menor). Acero b: barras repartidas a lo ancho de b; Acero L: a lo largo de L. El acero sale de lo guardado en Acero Cimentaci&#243;n para cada tipo; solo aparecen los tipos con acero (una capa sin acero sale '-')."/>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <StackPanel x:Name="panel_types"/>
                 </ScrollViewer>
