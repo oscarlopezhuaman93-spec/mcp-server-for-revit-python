@@ -96,6 +96,9 @@ class ColumnType(object):
         self.type = column_type
         self.name = _name(column_type)
         self.mark = rc.type_mark(self.name) or self.name
+        if self.mark == self.name:  # no mark read: the "_CT-1_" piece of the name (2026-11-26)
+            m = re.search(r"_([A-Z]{1,3}-\d+[A-Z]?)_", self.name)
+            self.mark = m.group(1) if m else self.mark
         self.base_mark = self.mark  # from the name: when the chosen parameter is empty
         self.columns = columns
         self.cfg = rc.read_type_config(column_type)

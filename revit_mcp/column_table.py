@@ -38,7 +38,8 @@ def spacing_text(distribution):
         item = item.strip().replace(u" ", u"")
         if not item:
             continue
-        m = re.match(r"^(\d+|rto|r|resto)@([\d.]+)$", item, re.I)
+        m = (re.match(r"^(\d+|rto|r|resto)@([\d.]+)$", item, re.I)
+             or re.match(r"^(rto|resto)([\d.]+)$", item, re.I))  # "rto0.20" written without @
         if not m:
             parts.append(item)
             continue
@@ -287,6 +288,38 @@ def table_type_width(polygon, scale):
 
 def table_section_height(polygons, scale):
     return max([section_size_paper(p, scale)[1] for p in polygons] + [10.0]) + TABLE_SECTION_ROOM + 12.0
+
+
+CHAR_W = 0.62  # a character's width per mm of text height (Bahnschrift, about)
+FIT_MIN_W = 45.0
+
+
+def _text_w(text, size):
+    return len(text or u"") * size * CHAR_W
+
+
+def fit_type_width(item, scale, diameters_mm):
+    """A type's column just as wide as its texts and its drawn section
+    (2026-11-26, the column table only: no fixed 100 mm - small columnetas
+    left the table empty)."""
+    w, _ = section_size_paper(item.polygon, scale)
+    need = [w + 12.0 + 24.0 + 6.0]  # dimensions on the left, labels on the right
+    dist = spacing_text(item.cfg.get("EA_Estribo_Borde_Distribucion"))
+    diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
+    if dist:
+        need.append(7.5 + _text_w(u"Ø {}: {}".format(diam, dist), 2.1) * 1.08 + 10.0)
+    bars = item.design["bars"] if item.design else []
+    if bars:
+        need.append(_text_w(bars_text(bars, diameters_mm), 2.8) + 10.0)
+    need.append(_text_w(shape_text(item.polygon) if item.polygon else u"-", 2.8) + 10.0)
+    need.append(_text_w(item.mark, 2.8) + 10.0)
+    return max(need + [FIT_MIN_W])
+
+
+def fit_section_height(polygons, scale):
+    """The section row just as tall as the tallest section, its top labels,
+    its dimension under it and the scale note."""
+    return max([section_size_paper(p, scale)[1] for p in polygons] + [6.0]) + 30.0
 
 
 def _stirrup_diameter(cfg, kind, diameters_mm, confinement=u"confinamiento"):
@@ -559,7 +592,7 @@ def section_notes(item, P, diameters_mm):
 def draw_table(d, items, title, scale, detail, diameters_mm):
     """The whole table: a column per type (items: .mark, .polygon,
     .design, .cfg, .levels). Returns (width, height) in paper mm."""
-    widths = [table_type_width(it.polygon, scale) for it in items]
+    widths = [fit_type_width(it, scale, diameters_mm) for it in items]
     xs = [LABEL_W]
     for w in widths[:-1]:
         xs.append(xs[-1] + w)
@@ -568,7 +601,7 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
     rows = [(u"TIPO", TIPO_H), (u"BXH", BXH_H),
             (u"DISTRIBUCION\nDE ESTRIBO", LEVEL_LINE_H + 4.0),  # one line, as the user's table
             (u"DIAMETRO (Ø)", DIAM_H),
-            (u"DETALLE\nSECCION", table_section_height([it.polygon for it in items], scale))]
+            (u"DETALLE\nSECCION", fit_section_height([it.polygon for it in items], scale))]
     ys = [TITLE_H]
     for _, h in rows:
         ys.append(ys[-1] + h)
@@ -596,7 +629,7 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
         if dist:
             # one line, centered, no level name (the type's setup is the same on every level)
             line = u"Ø {}: {}".format(diam, dist)
-            span = 7.5 + len(line) * 2.1 * 0.62
+            span = 7.5 + _text_w(line, 2.1) * 1.08
             x_start = mid - span / 2.0
             yl = ys[2] + rows[2][1] / 2.0
             d.text(x_start, yl, u"{}".format(max(count, 1)), u"BOKI Cuadro 2mm", align=u"left")
