@@ -1220,9 +1220,11 @@ def column_below(doc, column, section):
     return False
 
 
-def column_above(doc, column, section):
+def column_above(doc, column, section, same_type=False):
     """True when another element of its category (column on column, wall on
-    wall) stands on this one (its bars go on up)."""
+    wall) stands on this one (its bars go on up). `same_type` (2026-11-25):
+    only one of its own type counts - a placa of another type over it does
+    not continue its bars, they end there with their top leg."""
     top = section.point_m(0.0, 0.0, section.z_top + 0.05 / FT)
     outline = DB.Outline(DB.XYZ(top.X - 0.05, top.Y - 0.05, top.Z - 0.02),
                          DB.XYZ(top.X + 0.05, top.Y + 0.05, top.Z + 0.02))
@@ -1230,7 +1232,7 @@ def column_above(doc, column, section):
                     .OfCategoryId(column.Category.Id)
                     .WhereElementIsNotElementType()
                     .WherePasses(DB.BoundingBoxIntersectsFilter(outline))):
-        if element.Id != column.Id:
+        if element.Id != column.Id and (not same_type or element.GetTypeId() == column.GetTypeId()):
             return True
     return False
 
@@ -1553,7 +1555,7 @@ def _bar_ends(doc, column_spec, key, x, y, section, bottom_column, top_column):
             ends["leg_bottom"] = leg
     leg = spec.leg_m(column_spec.leg_top_cm.get(key))
     top_section = None
-    if leg and not column_above(doc, top_column, Section(top_column)):
+    if leg and not column_above(doc, top_column, Section(top_column), same_type=True):
         ends["top_drop"] = column_spec.cover_m + d
         ends["leg_top"] = leg
         top_section = Section(top_column)

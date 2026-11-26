@@ -1901,7 +1901,7 @@ class AceroWindow(forms.WPFWindow):
                                    depth - rc.FOUNDATION_COVER_M - 0.03)
                 extra["leg_bot"] = max([rs.leg_m(v) for v in (ends.get("bot") or {}).values()] or [0.0])
                 extra["leg_host"] = (column, section)  # the leg turns toward the concrete there (rc.leg_toward_concrete)
-            if index == len(columns) - 1 and not rc.column_above(doc, column, section):
+            if index == len(columns) - 1 and not rc.column_above(doc, column, section, same_type=True):
                 extra["leg_top"] = max([rs.leg_m(v) for v in (ends.get("top") or {}).values()] or [0.0])
                 extra["top_host"] = (column, section)
             joint = []
