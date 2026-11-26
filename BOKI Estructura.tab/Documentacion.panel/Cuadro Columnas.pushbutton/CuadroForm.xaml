@@ -48,15 +48,14 @@
                         <TextBlock Text="Texto etiquetas:" VerticalAlignment="Center" Width="100"/>
                         <ComboBox x:Name="cbo_label" Width="180" ToolTip="Tipo de texto del proyecto para las etiquetas de barras y estribos."/>
                     </StackPanel>
-                    <TextBlock Text="Tipos de columna a incluir:" FontWeight="Bold" Margin="0,12,0,3"/>
+                    <TextBlock Text="Tipos de columna a incluir (solo los que tienen acero):" FontWeight="Bold" Margin="0,12,0,3"/>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
-                        <Button Content="Con armado" Padding="6,1" Click="check_with_steel"/>
-                        <Button Content="Todos" Padding="6,1" Margin="4,0,0,0" Click="check_all"/>
+                        <Button Content="Todos" Padding="6,1" Click="check_all"/>
                         <Button Content="Ninguno" Padding="6,1" Margin="4,0,0,0" Click="check_none"/>
                     </StackPanel>
                 </StackPanel>
                 <TextBlock DockPanel.Dock="Bottom" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"
-                           Text="Cada secci&#243;n sale acotada con el tipo de cota elegido y con etiquetas de barras y estribo. Los datos salen de lo guardado en Acero Columna para cada tipo."/>
+                           Text="Cada secci&#243;n sale acotada con el tipo de cota elegido y con etiquetas de barras. Solo aparecen los tipos con acero configurado en Acero Columna. Los datos salen de lo guardado en Acero Columna para cada tipo."/>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <StackPanel x:Name="panel_types"/>
                 </ScrollViewer>

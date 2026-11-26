@@ -124,11 +124,18 @@ class ColumnType(object):
         return bool(self.design and self.design["bars"])
 
     def label(self):
-        state = u"con armado" if self.has_steel() else u"SIN ARMADO"
+        # "C-01 (B7) - 0.25m x 0.50m - 12 columnas" (2026-11-26: only types with
+        # steel are listed, no "con / sin armado")
+        mark = self.mark
+        if mark == self.name:  # no mark read: the "_CT-1_" / "_PL-01_" piece of the name
+            m = re.search(r"_([A-Z]{1,3}-\d+[A-Z]?)_", self.name)
+            mark = m.group(1) if m else mark
         block = re.search(r"\((B\d+)\)", self.name)  # its block (B7...): the same mark in every block
-        mark = u"{} ({})".format(self.mark, block.group(1)) if block and block.group(1) not in self.mark else self.mark
-        return u"{}  ({}, {} col.) - {}".format(mark, ct.shape_text(self.polygon) if self.polygon else u"?",
-                                               len(self.columns), state)
+        mark = u"{} ({})".format(mark, block.group(1)) if block and block.group(1) not in mark else mark
+        if u"NUDO" in self.name.upper():
+            mark += u" nudo"  # the joint type beside its column, same mark
+        return u"{}  -  {}  -  {} columna{}".format(mark, ct.shape_text(self.polygon) if self.polygon else u"?",
+                                                  len(self.columns), u"" if len(self.columns) == 1 else u"s")
 
 
 def _storeys(columns):
@@ -662,9 +669,13 @@ class CuadroWindow(forms.WPFWindow):
 
 
 if __name__ == "__main__":
-    types = collect_types()
+    # only the types with steel: a column table shows the steel (2026-11-26)
+    types = [t for t in collect_types() if t.has_steel()]
+    types.sort(key=lambda t: (ct.natural_key((re.search(r"\((B\d+)\)", t.name) or re.search(r"()", u"")).group(1)),
+                              ct.natural_key(t.label()), u"NUDO" in t.name.upper()))
     if not types:
-        forms.alert(u"El modelo no tiene columnas.", title="Cuadro de columnas")
+        forms.alert(u"Ningún tipo de columna tiene acero configurado: configúralo con Acero Columna.",
+                    title="Cuadro de columnas")
     else:
         window = CuadroWindow(os.path.join(SCRIPT_DIR, "CuadroForm.xaml"), types)
         window.ShowDialog()
