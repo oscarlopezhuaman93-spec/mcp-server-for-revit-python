@@ -73,6 +73,7 @@ BAR_SLOT_DEFAULTS = [u'1/2"', u'5/8"', u'3/4"', u'1"']  # the four "Barras" opti
 # pyRevit settings shared by the Acero buttons (column and beam): bar
 # options, splice and hook lengths per diameter.
 CONFIG_SECTION = "OLSTR_Acero"
+EXTRA_DRAW_OFFSET_M = 0.03  # bastones / balancines drawn this far in from the main bars (drawing only)
 
 
 def load_bar_slots():
@@ -3032,7 +3033,11 @@ class AceroWindow(forms.WPFWindow):
             leg0, leg1 = bx.extra_legs(extra)  # its own hooks
             positions = bx.placed_positions(extra, bars, rs.BAR_DIAMETERS_MM)
             for k_pos, (x, y) in enumerate(positions):
-                path = rs.beam_bar_points(x, y, d, s0, s1, 0.0, False, leg0, leg1)
+                # drawn 3 cm in from the main bars (2026-11-27, the user): a
+                # baston / balancin of the same layer reads apart from them in
+                # the elevation and the detail - generated where it really goes
+                y_draw = y - EXTRA_DRAW_OFFSET_M if extra["face"] == bx.TOP else y + EXTRA_DRAW_OFFSET_M
+                path = rs.beam_bar_points(x, y_draw, d, s0, s1, 0.0, False, leg0, leg1)
                 if line.variable:
                     path = rs.follow_profile(path, line.shift_at(y), line.breaks)
                 bar_paths.append((path, d / 2.0))
