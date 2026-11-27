@@ -35,7 +35,7 @@
     <DockPanel Margin="12">
         <!-- Two tabs over the same window: what the left panel and the sketch
              tools show (the generation makes everything at once) -->
-        <TabControl DockPanel.Dock="Top" x:Name="tab_steel" Margin="0,0,0,8" SelectionChanged="tab_changed"
+        <TabControl DockPanel.Dock="Top" x:Name="tab_steel" Visibility="Collapsed" Margin="0,0,0,8" SelectionChanged="tab_changed"
                     Background="Transparent" BorderThickness="0,1,0,0">
             <TabItem Header="Estribos" Padding="12,4" FontWeight="Bold"/>
             <TabItem Header="Acero longitudinal" Padding="12,4" FontWeight="Bold"/>
@@ -56,24 +56,87 @@
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="370"/>
+                <ColumnDefinition Width="186"/>
+                <ColumnDefinition Width="380"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition x:Name="col_shapes" Width="0"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Left: types + configuration -->
-            <DockPanel Grid.Column="0" Margin="0,0,10,0">
+            <!-- Side menu (2026-11-27): each item opens its settings -->
+            <Border Grid.Column="0" Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Margin="0,0,10,0">
+                <ListBox x:Name="list_nav" BorderThickness="0" Margin="4" SelectionChanged="nav_changed"/>
+            </Border>
+
+            <!-- Types + the open section's settings -->
+            <DockPanel Grid.Column="1" Margin="0,0,10,0">
                 <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
-                           Text="1. Marca los tipos de viga a configurar (o selecciona vigas en el modelo)."/>
+                           Text="Marca los tipos de viga a configurar (o selecciona vigas en el modelo)."/>
                 <Button DockPanel.Dock="Top" x:Name="button_pick" Content="SELECCIONAR VIGAS" Height="34"
                         FontWeight="Bold" Click="pick_click"/>
                 <TextBlock DockPanel.Dock="Top" x:Name="txt_picked" Foreground="Gray" HorizontalAlignment="Center"
                            Margin="0,4,0,6" Text="No hay vigas seleccionadas en el modelo."/>
                 <CheckBox DockPanel.Dock="Top" x:Name="chk_all" Content="Seleccionar todo" Margin="0,0,0,4"
                           Click="all_click"/>
+                <ListBox DockPanel.Dock="Top" x:Name="list_types" Height="150" SelectionMode="Single" SelectionChanged="type_selected"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                <TextBlock DockPanel.Dock="Top" x:Name="txt_section_title" FontWeight="Bold" FontSize="14" Margin="0,10,0,4"
+                           Foreground="#FF16324F"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+
+                <StackPanel x:Name="panel_cfg">
+                    <CheckBox x:Name="chk_group" Content="Agrupar barras iguales en un conjunto (3&#216;5/8&quot;)" Margin="0,0,0,6"
+                              Click="group_changed"
+                              ToolTip="Al generar, las barras iguales (mismo di&#225;metro, forma y largo) en una fila salen como un solo conjunto de Revit: la etiqueta las cuenta todas."/>
+                </StackPanel>
+
+                <StackPanel x:Name="panel_main">
+                    <GroupBox Header="Longitud de doblado y extensi&#243;n (esta viga)" Margin="0,8,0,0" Padding="6,4">
+                        <Grid x:Name="grid_main_edit">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="110"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="24"/>
+                                <RowDefinition Height="28"/>
+                                <RowDefinition Height="28"/>
+                                <RowDefinition Height="28"/>
+                                <RowDefinition Height="28"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Column="1" Text="Inicio (m)" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="Final (m)" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Text="Superior doblez" VerticalAlignment="Center"/>
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="txt_sup_h0" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBox Grid.Row="1" Grid.Column="2" x:Name="txt_sup_h1" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBlock Grid.Row="2" Text="Superior +largo" VerticalAlignment="Center"/>
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="txt_sup_d0" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBox Grid.Row="2" Grid.Column="2" x:Name="txt_sup_d1" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBlock Grid.Row="3" Text="Inferior doblez" VerticalAlignment="Center"/>
+                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="txt_inf_h0" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBox Grid.Row="3" Grid.Column="2" x:Name="txt_inf_h1" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBlock Grid.Row="4" Text="Inferior +largo" VerticalAlignment="Center"/>
+                            <TextBox Grid.Row="4" Grid.Column="1" x:Name="txt_inf_d0" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBox Grid.Row="4" Grid.Column="2" x:Name="txt_inf_d1" Margin="4,2" KeyDown="main_edit_key" LostFocus="main_edit_apply"/>
+                            <TextBlock Grid.Row="5" Grid.ColumnSpan="3" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"
+                                       Text="Doblez: la pata del gancho (0 = recta). +largo: m&#225;s (o menos, con -) en ese extremo. Vac&#237;o = como lo calcula el plugin. Tambi&#233;n con clic en la barra del alzado."/>
+                        </Grid>
+                    </GroupBox>
+                </StackPanel>
+
+                <StackPanel x:Name="panel_top"/>
+                <StackPanel x:Name="panel_bot"/>
+                <StackPanel x:Name="panel_mid">
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
+                               Text="Barras centrales (de piel) en vigas peraltadas: elige un di&#225;metro en Barras principales y haz clic en la secci&#243;n, a media altura y junto al estribo. Corren por toda la viga como las barras principales."/>
+                    <TextBlock x:Name="txt_mid_bars" FontWeight="Bold" TextWrapping="Wrap"/>
+                </StackPanel>
+                <StackPanel x:Name="panel_splice">
 
                 <!-- Lap splices of the longitudinal bars (settings kept per user) -->
-                <Expander DockPanel.Dock="Bottom" x:Name="exp_splice" Header="4. Empalme y gancho de barras longitudinales" Margin="0,8,0,0">
+                <Expander x:Name="exp_splice" Header="Empalme y gancho de barras longitudinales" Margin="0,8,0,0">
                     <StackPanel Margin="6,4,6,4">
                         <CheckBox x:Name="chk_splice" Click="splice_changed"
                                   Content="Empalmar las barras que superen la longitud maxima"
@@ -91,9 +154,11 @@
                         <WrapPanel x:Name="panel_legs"/>
                     </StackPanel>
                 </Expander>
+                </StackPanel>
 
+                <StackPanel x:Name="panel_bars">
                 <!-- Longitudinal bars: four diameters (drawing tool) and their Revit bar type -->
-                <Expander DockPanel.Dock="Bottom" x:Name="exp_bars" Header="3. Configuraci&#243;n de barra longitudinal" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
+                <Expander x:Name="exp_bars" Header="Di&#225;metros de barra (clic en la secci&#243;n)" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="False">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="34"/>
@@ -136,8 +201,10 @@
                                   ToolTip="Tipo de barra de armadura de Revit de este di&#225;metro (todos los del proyecto). Autom&#225;tico: el del tipo de viga."/>
                     </Grid>
                 </Expander>
+                </StackPanel>
 
-                <Expander DockPanel.Dock="Bottom" x:Name="exp_stirrups" Header="2. Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
+                <StackPanel x:Name="panel_stir">
+                <Expander x:Name="exp_stirrups" Header="Configuraci&#243;n de estribos" Margin="0,8,0,0" Padding="6,4,6,6" IsExpanded="True">
                     <Grid x:Name="grid_stirrups">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170"/>
@@ -184,14 +251,14 @@
                                 ToolTip="La configuraci&#243;n queda en el tipo: la usan todas sus vigas."/>
                     </Grid>
                 </Expander>
+                </StackPanel>
 
-
-                <ListBox x:Name="list_types" SelectionMode="Single" SelectionChanged="type_selected"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                </StackPanel>
+                </ScrollViewer>
             </DockPanel>
 
             <!-- Right: section drawing -->
-            <DockPanel Grid.Column="1">
+            <DockPanel Grid.Column="2">
                 <TextBlock DockPanel.Dock="Top" x:Name="txt_section" FontWeight="Bold" Margin="0,0,0,4"
                            Text="Seccion: elige un tipo en la lista"/>
                 <!-- Custom stirrup sketch ("Boceto"): tool + the steel it uses -->
@@ -291,7 +358,7 @@
                      left drag orbits. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.5*"/>
+                        <ColumnDefinition Width="2.4*"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
@@ -299,7 +366,7 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Column="1" Grid.Row="1">
+                    <DockPanel Grid.Column="1" Grid.Row="0" Grid.RowSpan="2">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
                             <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>
@@ -312,7 +379,8 @@
                         </Border>
                     </DockPanel>
 
-                    <DockPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,6">
+                    <!-- the 3D view: off (2026-11-27, the user) - kept hidden for the code that fills it -->
+                    <DockPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,6" Visibility="Collapsed">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="view3d_fit_click"/>
                             <ComboBox DockPanel.Dock="Right" x:Name="cbo_detail" Width="80" Margin="0,0,6,0"
@@ -379,7 +447,7 @@
             </DockPanel>
 
             <!-- Right: rebar shape browser, always shown -->
-            <GroupBox Grid.Column="2" x:Name="box_shapes" Visibility="Collapsed" Header="Formas de armadura" Margin="10,0,0,0" Padding="4">
+            <GroupBox Grid.Column="3" x:Name="box_shapes" Visibility="Collapsed" Header="Formas de armadura" Margin="10,0,0,0" Padding="4">
                 <DockPanel>
                     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                         <TextBlock Text="Buscar: " VerticalAlignment="Center"/>

@@ -61,7 +61,7 @@ from System.Windows.Controls import Border, ComboBox, Dock, DockPanel, Grid, Wra
 from System.Windows.Controls import (Button, Canvas, CheckBox, ListBoxItem, Orientation, StackPanel,
                                      TextBlock, TextBox)
 from System.Windows.Media import (Color, DoubleCollection, PenLineCap, PenLineJoin, PointCollection,
-                                  SolidColorBrush)
+                                  SolidColorBrush, FontFamily)
 from System.Windows.Shapes import Ellipse, Line, Polygon, Polyline
 
 output = script.get_output()
@@ -301,6 +301,24 @@ class State(object):
         self.form = None  # last form field values
         self.scope = "model"  # "pick" when beams were picked in the model
         self.line_edits = {}  # beam line key (element ids) -> its own settings (bx), edited
+        self.group_sets = load_group_sets()  # equal bars as one Revit set (2026-11-27)
+        self.section = 0  # the side menu's open section (2026-11-27)
+
+
+def load_group_sets():
+    try:
+        return script.get_config(CONFIG_SECTION).get_option("viga_conjuntos", u"1") != u"0"
+    except Exception:
+        return True
+
+
+def save_group_sets(on):
+    try:
+        config = script.get_config(CONFIG_SECTION)
+        config.viga_conjuntos = u"1" if on else u"0"
+        script.save_config()
+    except Exception:
+        pass
 
 
 class _BeamFilter(ISelectionFilter):
@@ -544,6 +562,476 @@ class AceroWindow(forms.WPFWindow):
             self._select_type(active)
         self._row_heights = [row.Height for row in self.grid_stirrups.RowDefinitions]
         self._show_tab(self.tab_steel.SelectedIndex == 1)
+        self._fill_nav()  # the side menu (2026-11-27)
+
+    # -- side menu (2026-11-27): each item opens its settings; the 3D view is off --
+    NAV = [(u"Configuración", "cfg"), (u"Barras principales", "main"), (u"Refuerzo superior", "top"),
+           (u"Refuerzo inferior", "bot"), (u"Barra central", "mid"), (u"Estribos", "stir")]
+
+    def _nav_icon(self, key):
+        c = Canvas()
+        c.Width, c.Height = 24, 18
+        blue, green = brush(45, 140, 240), brush(29, 158, 117)
+
+        def rect(x, y, w, h, stroke, fill=None, r=0):
+            from System.Windows.Shapes import Rectangle
+            s = Rectangle()
+            s.Width, s.Height, s.Stroke, s.StrokeThickness = w, h, stroke, 1.6
+            s.RadiusX = s.RadiusY = r
+            if fill is not None:
+                s.Fill = fill
+            Canvas.SetLeft(s, x)
+            Canvas.SetTop(s, y)
+            c.Children.Add(s)
+
+        def line(x1, y1, x2, y2, stroke, t=2.2):
+            ln = Line()
+            ln.X1, ln.Y1, ln.X2, ln.Y2, ln.Stroke, ln.StrokeThickness = x1, y1, x2, y2, stroke, t
+            c.Children.Add(ln)
+        if key == "cfg":
+            e = Ellipse()
+            e.Width = e.Height = 14
+            e.Stroke, e.StrokeThickness = blue, 1.8
+            Canvas.SetLeft(e, 5)
+            Canvas.SetTop(e, 2)
+            c.Children.Add(e)
+            d = Ellipse()
+            d.Width = d.Height = 5
+            d.Fill = blue
+            Canvas.SetLeft(d, 9.5)
+            Canvas.SetTop(d, 6.5)
+            c.Children.Add(d)
+        elif key == "main":
+            rect(1, 2, 22, 14, blue)
+            for x in (5, 11, 17):
+                for y in (5, 11):
+                    dot = Ellipse()
+                    dot.Width = dot.Height = 2.6
+                    dot.Fill = blue
+                    Canvas.SetLeft(dot, x)
+                    Canvas.SetTop(dot, y)
+                    c.Children.Add(dot)
+        elif key == "top":
+            rect(1, 2, 22, 14, blue)
+            line(4, 6, 20, 6, blue)
+        elif key == "bot":
+            rect(1, 2, 22, 14, blue)
+            line(4, 12, 20, 12, blue)
+        elif key == "mid":
+            rect(1, 2, 22, 14, blue)
+            pl = Polyline()
+            pts = PointCollection()
+            for x, y in ((4, 9), (8, 6), (12, 9), (16, 12), (20, 9)):
+                pts.Add(Point(x, y))
+            pl.Points, pl.Stroke, pl.StrokeThickness = pts, blue, 1.8
+            c.Children.Add(pl)
+        else:
+            rect(6, 1, 12, 16, green, None, 3)
+        return c
+
+    def _fill_nav(self):
+        for name, key in self.NAV:
+            row = StackPanel()
+            row.Orientation = Orientation.Horizontal
+            row.Margin = Thickness(2, 6, 2, 6)
+            row.Children.Add(self._nav_icon(key))
+            tb = TextBlock()
+            tb.Text = u"  " + name
+            tb.FontWeight = FontWeights.Bold
+            tb.VerticalAlignment = VerticalAlignment.Center
+            row.Children.Add(tb)
+            item = ListBoxItem()
+            item.Content = row
+            item.Tag = key
+            self.list_nav.Items.Add(item)
+        self.chk_group.IsChecked = bool(self.state.group_sets)
+        self.list_nav.SelectedIndex = int(getattr(self.state, "section", 0) or 0)
+
+    def nav_changed(self, sender, args):
+        k = self.list_nav.SelectedIndex
+        if k < 0:
+            return
+        self.state.section = k
+        name, key = self.NAV[k]
+        self.txt_section_title.Text = name.upper()
+        longitudinal = key != "stir"
+        if hasattr(self, "_row_heights"):
+            self._show_tab(longitudinal)
+        panels = {"cfg": ("panel_cfg", "panel_splice", "panel_stir"), "main": ("panel_bars", "panel_main"),
+                  "top": ("panel_top",), "bot": ("panel_bot",), "mid": ("panel_mid", "panel_bars"),
+                  "stir": ("panel_stir",)}[key]
+        for p in ("panel_cfg", "panel_splice", "panel_bars", "panel_main", "panel_top", "panel_bot", "panel_mid",
+                  "panel_stir"):
+            getattr(self, p).Visibility = Visibility.Visible if p in panels else Visibility.Collapsed
+        if key in ("main", "mid"):
+            self.exp_bars.IsExpanded = True
+        self._refresh_sections()
+
+    def group_changed(self, sender, args):
+        self.state.group_sets = bool(self.chk_group.IsChecked)
+        save_group_sets(self.state.group_sets)
+
+    def _section_key(self):
+        k = self.list_nav.SelectedIndex if hasattr(self, "list_nav") else -1
+        return self.NAV[k][1] if 0 <= k < len(self.NAV) else None
+
+    def _refresh_sections(self):
+        """The open section's panel, from the beam on view."""
+        key = self._section_key()
+        try:
+            if key == "main":
+                self._fill_main_edit()
+            elif key == "top":
+                self._build_reinf(bx.TOP)
+            elif key == "bot":
+                self._build_reinf(bx.BOTTOM)
+            elif key == "mid":
+                ys = [y for x, y, k in self.design["bars"]]
+                if ys:
+                    top, bot = max(ys), min(ys)
+                    mid = [k for x, y, k in self.design["bars"] if bot + 0.03 < y < top - 0.03]
+                    self.txt_mid_bars.Text = (u"En esta sección: {} barra(s) central(es) {}".format(
+                        len(mid), u", ".join(sorted(set(mid)))) if mid else u"Esta sección no tiene barras centrales.")
+        except Exception as e:
+            self._status(u"No se pudo mostrar la sección: {}".format(e))
+
+    # -- main bars: bends (hook legs) and extensions, per beam --------------------
+    MAIN_BOXES = [("txt_sup_h0", bx.TOP, "h0"), ("txt_sup_h1", bx.TOP, "h1"), ("txt_sup_d0", bx.TOP, "d0"),
+                  ("txt_sup_d1", bx.TOP, "d1"), ("txt_inf_h0", bx.BOTTOM, "h0"), ("txt_inf_h1", bx.BOTTOM, "h1"),
+                  ("txt_inf_d0", bx.BOTTOM, "d0"), ("txt_inf_d1", bx.BOTTOM, "d1")]
+
+    def _fill_main_edit(self):
+        line = self._view_line
+        enabled = line is not None
+        settings = self._line_settings(line) if enabled else {}
+        self._filling_main = True
+        for name, face, k in self.MAIN_BOXES:
+            box = getattr(self, name)
+            box.IsEnabled = enabled
+            v = bx.main_edit(settings, face).get(k)
+            box.Text = u"" if v is None else u"{:g}".format(float(v))
+        self._filling_main = False
+
+    def main_edit_key(self, sender, args):
+        if args.Key in (Key.Enter, Key.Return):
+            self.main_edit_apply(sender, args)
+
+    def main_edit_apply(self, sender, args):
+        if getattr(self, "_filling_main", False) or self._view_line is None:
+            return
+        settings = self._edit_settings()
+        changed = False
+        for name, face, k in self.MAIN_BOXES:
+            text = (getattr(self, name).Text or u"").strip().replace(u",", u".")
+            edit = settings.setdefault("main", {}).setdefault(face, {})
+            old = edit.get(k)
+            if not text:
+                if old is not None:
+                    edit.pop(k, None)
+                    changed = True
+                continue
+            try:
+                v = float(text)
+            except ValueError:
+                self._status(u"Valor no válido: {}".format(text))
+                return
+            if k.startswith("h"):
+                v = max(0.0, v)
+            if old is None or abs(float(old) - v) > 1e-6:
+                edit[k] = round(v, 3)
+                changed = True
+        if changed:
+            self._changed()
+
+    # -- top / bottom reinforcement by support / span ------------------------------
+    def _gap_of(self, extra, g):
+        mid = (extra["s0"] + extra["s1"]) / 2.0
+        return min(range(len(g)), key=lambda i: 0 if g[i][0] - 1e-6 <= mid <= g[i][1] + 1e-6
+                   else min(abs(mid - g[i][0]), abs(mid - g[i][1])))
+
+    def _build_reinf(self, face):
+        panel = self.panel_top if face == bx.TOP else self.panel_bot
+        panel.Children.Clear()
+        now = getattr(self, "_beam_now", None)
+        if not now or not now[1]:
+            panel.Children.Add(self._note(u"Elige un tipo de viga y una viga en 'Viga' (arriba del alzado)."))
+            return
+        line, spans, start_face, end_face = now[0], now[1], now[2], now[3]
+        settings = self._line_settings(line)
+        extras = settings.get("extras") or []
+        if face == bx.TOP:
+            g = bx.gaps(spans, start_face, end_face)
+            places = [(u"INICIO", "start", [0])]
+            if len(g) > 2:
+                places.append((u"CENTRO", "mid", list(range(1, len(g) - 1))))
+            places.append((u"FINAL", "end", [len(g) - 1]))
+            for title, role, idxs in places:
+                panel.Children.Add(self._reinf_box(face, title, role, idxs, g, spans, extras, start_face, end_face))
+        else:
+            panel.Children.Add(self._reinf_box(face, u"TRAMOS", "span", list(range(len(spans))), None, spans,
+                                               extras, start_face, end_face))
+        hint = self._note(u"Agregar capa añade el acero con los valores de arriba; elige una fila y "
+                          u"Cambiar capa la reemplaza. Medidas: Ln/4 en los extremos, Ln/3 en los apoyos "
+                          u"interiores (bastones) y 0.15 Ln de cada cara (balancines).")
+        panel.Children.Add(hint)
+
+    def _note(self, text):
+        tb = TextBlock()
+        tb.Text = text
+        tb.TextWrapping = TextWrapping.Wrap
+        tb.Foreground = brush(120, 120, 120)
+        tb.FontSize = 11
+        tb.Margin = Thickness(0, 6, 0, 0)
+        return tb
+
+    def _reinf_box(self, face, title, role, idxs, g, spans, extras, start_face, end_face):
+        """One block (INICIO / CENTRO / FINAL / TRAMOS): its location, the bar
+        and lengths to add, its layers (the extras there) as a list."""
+        from System.Windows.Controls import GroupBox, TextBox as _TB, ListBox as _LB
+        sel_store = self.__dict__.setdefault("_reinf_loc", {})
+        box = GroupBox()
+        box.Header = title
+        box.Margin = Thickness(0, 4, 0, 4)
+        box.Padding = Thickness(6, 4, 6, 4)
+        body = StackPanel()
+        box.Content = body
+        loc = [sel_store.get((face, role), idxs[0])]
+        if loc[0] not in idxs:
+            loc[0] = idxs[0]
+        if len(idxs) > 1:
+            row = StackPanel()
+            row.Orientation = Orientation.Horizontal
+            lb = TextBlock()
+            lb.Text = u"Ubicación "
+            lb.VerticalAlignment = VerticalAlignment.Center
+            row.Children.Add(lb)
+            cbo = ComboBox()
+            cbo.Width = 190
+            names = [(u"Apoyo {}".format(i + 1) if role != "span" else u"Tramo {}".format(i + 1)) for i in idxs]
+            cbo.ItemsSource = List[str](names)
+            cbo.SelectedIndex = idxs.index(loc[0])
+
+            def loc_changed(s, e, face=face, role=role, idxs=idxs, cbo=cbo):
+                sel_store[(face, role)] = idxs[cbo.SelectedIndex]
+                self._refresh_sections()
+            cbo.SelectionChanged += loc_changed
+            row.Children.Add(cbo)
+            body.Children.Add(row)
+        body.Children.Add(self._reinf_sketch(role))
+        # what is there now
+        if role == "span":
+            here = [i for i, e in enumerate(extras) if e["face"] == face
+                    and bx.span_at((e["s0"] + e["s1"]) / 2.0, spans) == loc[0]]
+        else:
+            here = [i for i, e in enumerate(extras) if e["face"] == face and self._gap_of(e, g) == loc[0]]
+        n0, d0 = self._main_face(face)
+        # the fields
+        fields = {}
+        grid = WrapPanel()
+        grid.Margin = Thickness(0, 4, 0, 2)
+
+        def field(label, key, width=46):
+            t = TextBlock()
+            t.Text = label
+            t.VerticalAlignment = VerticalAlignment.Center
+            t.Margin = Thickness(6, 0, 2, 0)
+            grid.Children.Add(t)
+            tb = _TB()
+            tb.Width = width
+            grid.Children.Add(tb)
+            fields[key] = tb
+        tdia = TextBlock()
+        tdia.Text = u"Barra Ø"
+        tdia.VerticalAlignment = VerticalAlignment.Center
+        grid.Children.Add(tdia)
+        cd = ComboBox()
+        cd.Width = 64
+        cd.ItemsSource = List[str](rs.bar_diameter_keys())
+        cd.SelectedItem = d0
+        grid.Children.Add(cd)
+        field(u"n", "n", 30)
+        fields["n"].Text = str(n0)
+        names = {"start": [(u"La", "la"), (u"L", "l")], "end": [(u"La", "la"), (u"L", "l")],
+                 "mid": [(u"L1", "l1"), (u"L2", "l2")], "span": [(u"Izq.", "a0"), (u"Der.", "a1")]}[role]
+        for label, key in names:
+            field(label, key)
+        body.Children.Add(grid)
+        auto = self._reinf_auto(role, loc[0], g, spans)
+        for key, v in auto.items():
+            fields[key].Text = u"{:.2f}".format(v)
+        lst = _LB()
+        lst.Height = 84
+        lst.FontFamily = FontFamily("Consolas")
+        head = {"start": u"Capa Barra  n   La    L", "end": u"Capa Barra  n   La    L",
+                "mid": u"Capa Barra  n   L1    L2", "span": u"Capa Barra  n   Izq.  Der."}[role]
+        for j, i in enumerate(here):
+            e = extras[i]
+            vals = self._reinf_values(role, e, loc[0], g, spans)
+            item = ListBoxItem()
+            item.Content = u"{:<4} {:<6} {:<3} {:<5} {:<5}".format(
+                j + 1, e["d"], int(e["n"]), u"{:.2f}".format(vals[0]) if vals[0] is not None else u"-",
+                u"{:.2f}".format(vals[1]) if vals[1] is not None else u"-")
+            item.Tag = i
+            lst.Items.Add(item)
+
+        def pick_row(s, e, role=role, lst=lst):
+            it = lst.SelectedItem
+            if it is None:
+                return
+            ex = (self._line_settings(self._view_line).get("extras") or [])[it.Tag]
+            cd.SelectedItem = ex["d"]
+            fields["n"].Text = str(int(ex["n"]))
+            vals = self._reinf_values(role, ex, loc[0], g, spans)
+            for (label, key), v in zip(names, vals):
+                fields[key].Text = u"" if v is None else u"{:.2f}".format(v)
+        lst.SelectionChanged += pick_row
+        btns = WrapPanel()
+        btns.Margin = Thickness(0, 4, 0, 4)
+        for text, action in ((u"Agregar capa", "add"), (u"Cambiar capa", "set"), (u"Borrar capa", "del"),
+                             (u"Medidas automáticas", "auto")):
+            b = Button()
+            b.Content = text
+            b.Padding = Thickness(8, 2, 8, 2)
+            b.Margin = Thickness(0, 0, 4, 0)
+
+            def click(s, e, action=action, role=role, lst=lst):
+                self._reinf_action(action, face, role, loc[0], g, spans, start_face, end_face, cd, fields, names, lst)
+            b.Click += click
+            btns.Children.Add(b)
+        body.Children.Add(btns)
+        hd = TextBlock()
+        hd.Text = head
+        hd.FontFamily = FontFamily("Consolas")
+        hd.FontWeight = FontWeights.Bold
+        body.Children.Add(hd)
+        body.Children.Add(lst)
+        return box
+
+    def _reinf_sketch(self, role):
+        """The little drawing of the block: the support (dashed) and the bar."""
+        c = Canvas()
+        c.Width, c.Height = 300, 40
+        gray, blue = brush(140, 140, 140), brush(45, 140, 240)
+
+        def seg(x1, y1, x2, y2, stroke, t=1.0, dash=False):
+            ln = Line()
+            ln.X1, ln.Y1, ln.X2, ln.Y2, ln.Stroke, ln.StrokeThickness = x1, y1, x2, y2, stroke, t
+            if dash:
+                dc = DoubleCollection()
+                dc.Add(3)
+                dc.Add(2)
+                ln.StrokeDashArray = dc
+            c.Children.Add(ln)
+
+        def label(x, y, text):
+            tb = TextBlock()
+            tb.Text = text
+            tb.FontSize = 10
+            tb.Foreground = gray
+            Canvas.SetLeft(tb, x)
+            Canvas.SetTop(tb, y)
+            c.Children.Add(tb)
+        if role == "start":
+            for a in ((10, 4, 10, 38), (30, 4, 30, 38)):
+                seg(a[0], a[1], a[2], a[3], gray, 1, True)
+            seg(16, 30, 16, 10, blue, 3)
+            seg(16, 10, 170, 10, blue, 3)
+            label(90, 12, u"L")
+            label(18, 18, u"La")
+        elif role == "end":
+            for a in ((270, 4, 270, 38), (290, 4, 290, 38)):
+                seg(a[0], a[1], a[2], a[3], gray, 1, True)
+            seg(130, 10, 284, 10, blue, 3)
+            seg(284, 10, 284, 30, blue, 3)
+            label(200, 12, u"L")
+            label(262, 18, u"La")
+        elif role == "mid":
+            for a in ((140, 14, 140, 38), (160, 14, 160, 38)):
+                seg(a[0], a[1], a[2], a[3], gray, 1, True)
+            seg(40, 10, 260, 10, blue, 3)
+            label(80, 12, u"L1")
+            label(200, 12, u"L2")
+        else:
+            for a in ((10, 4, 10, 38), (30, 4, 30, 38), (270, 4, 270, 38), (290, 4, 290, 38)):
+                seg(a[0], a[1], a[2], a[3], gray, 1, True)
+            seg(70, 30, 230, 30, brush(216, 90, 48), 3)
+            label(40, 16, u"Izq.")
+            label(236, 16, u"Der.")
+        return c
+
+    def _reinf_auto(self, role, k, g, spans):
+        """The usual lengths: Ln/4 at the beam ends, Ln/3 each side of an
+        inner support, 0.15 Ln from each face for a balancin."""
+        if role == "start":
+            a, b = spans[0]
+            return {"la": 0.20, "l": (b - a) / 4.0}
+        if role == "end":
+            a, b = spans[-1]
+            return {"la": 0.20, "l": (b - a) / 4.0}
+        if role == "mid":
+            left, right = spans[k - 1], spans[k]
+            return {"l1": (left[1] - left[0]) / 3.0, "l2": (right[1] - right[0]) / 3.0}
+        a, b = spans[k]
+        return {"a0": 0.15 * (b - a), "a1": 0.15 * (b - a)}
+
+    def _reinf_values(self, role, e, k, g, spans):
+        """The block's two values of an extra (from the support faces)."""
+        if role == "start":
+            return [e.get("h0"), max(0.0, e["s1"] - g[0][1])]
+        if role == "end":
+            return [e.get("h1"), max(0.0, g[-1][0] - e["s0"])]
+        if role == "mid":
+            return [max(0.0, g[k][0] - e["s0"]), max(0.0, e["s1"] - g[k][1])]
+        a, b = spans[k]
+        return [max(0.0, e["s0"] - a), max(0.0, b - e["s1"])]
+
+    def _reinf_action(self, action, face, role, k, g, spans, start_face, end_face, cd, fields, names, lst):
+        if action == "auto":
+            for key, v in self._reinf_auto(role, k, g, spans).items():
+                fields[key].Text = u"{:.2f}".format(v)
+            return
+        settings = self._edit_settings()
+        extras = settings.setdefault("extras", [])
+        it = lst.SelectedItem
+        if action == "del":
+            if it is None:
+                self._status(u"Elige primero una capa de la lista.")
+                return
+            extras.pop(it.Tag)
+            self._changed()
+            return
+        try:
+            n = int(fields["n"].Text)
+            vals = [float((fields[key].Text or u"0").replace(u",", u".")) for _, key in names]
+        except ValueError:
+            self._status(u"Revisa n y las longitudes: deben ser números.")
+            return
+        if n < 1 or any(v < 0 for v in vals):
+            self._status(u"n debe ser 1 o más y las longitudes no negativas.")
+            return
+        key = cd.SelectedItem
+        if role == "start":
+            e = {"s0": round(start_face, 3), "s1": round(g[0][1] + vals[1], 3), "h0": round(vals[0], 3)}
+        elif role == "end":
+            e = {"s0": round(g[-1][0] - vals[1], 3), "s1": round(end_face, 3), "h1": round(vals[0], 3)}
+        elif role == "mid":
+            e = {"s0": round(g[k][0] - vals[0], 3), "s1": round(g[k][1] + vals[1], 3)}
+        else:
+            a, b = spans[k]
+            e = {"s0": round(a + vals[0], 3), "s1": round(b - vals[1], 3)}
+        if e["s1"] - e["s0"] < 0.10:
+            self._status(u"El acero queda muy corto: revisa las longitudes.")
+            return
+        e.update({"kind": bx.BASTON if face == bx.TOP else bx.BALANCIN, "face": face, "n": n, "d": key})
+        if action == "set" and it is not None:
+            old = extras[it.Tag]
+            for kk in ("pos", "h0", "h1"):
+                if kk in old and kk not in e and not (kk == "pos" and int(old["n"]) != n):
+                    e[kk] = old[kk]
+            extras[it.Tag] = e
+        else:
+            extras.append(e)
+        self._changed()
 
     def tab_changed(self, sender, args):
         if args.OriginalSource is self.tab_steel and hasattr(self, "_row_heights"):
@@ -571,7 +1059,7 @@ class AceroWindow(forms.WPFWindow):
         for k, row in enumerate(self.grid_stirrups.RowDefinitions):
             row.Height = GridLength(0) if (longitudinal and k not in keep) else self._row_heights[k]
         self.exp_stirrups.Header = (u"Recubrimiento y anclaje" if longitudinal
-                                    else u"2. Configuración de estribos")
+                                    else u"Configuración de estribos")
         if longitudinal:
             self.exp_bars.IsExpanded = True
             self.exp_splice.IsExpanded = True
@@ -2603,7 +3091,8 @@ class AceroWindow(forms.WPFWindow):
         if self._selected_index() is None and hasattr(self, "sel_bar"):
             self.sel_bar.Visibility = Visibility.Collapsed  # another beam: nothing selected
         self._draw_elevation()
-        self._build_3d()
+        # the 3D view is off (2026-11-27, the user): the side menu's section instead
+        self._refresh_sections()
 
     def _elev_fitted(self):
         width, height = self.canvas_elev.ActualWidth, self.canvas_elev.ActualHeight
@@ -4525,6 +5014,19 @@ try:
             for kind in KINDS:
                 agg[kind] += kg[kind]
             total_bars += bars
+
+    # equal bars as one Revit set ("3Ø5/8\"", 2026-11-27): the same type and
+    # shape, in a line, evenly spaced - tagged as one (rebar_group, as columns)
+    if getattr(state, "group_sets", True):
+        import rebar_group as rg
+        for line, _, created in done:
+            for element in line.elements:
+                longs = dict((item[0].Id.IntegerValue, item[0]) for item in created.get(id_of(element.Id)) or []
+                             if item[2] == rc.LONGITUDINAL and item[0].IsValidObject)
+                try:
+                    rg.group_loose(doc, list(longs.values()))
+                except Exception as e:
+                    warnings.append(u"Viga {}: no se pudieron agrupar sus barras ({})".format(id_of(element.Id), e))
 
     if dry_run:
         t.RollBack()
