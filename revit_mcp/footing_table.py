@@ -122,20 +122,65 @@ def df_text(values):
     return u" / ".join(u"{:.2f}".format(v) for v in distinct) if distinct else u"-"
 
 
-def column_x():
+def column_x(widths=None):
     xs, x = [], 0.0
-    for _, w in COLUMNS:
+    for w in (widths or [w for _, w in COLUMNS]):
         xs.append(x)
         x += w
     return xs, x
 
 
-def draw_table(d, items, title, solado):
+# fitted cells (2026-11-27, the user: cells too big, texts with too much
+# room): each column as wide as its longest text, each row as tall as its
+# four steel lines - the Cuadro Zapatas' own rule
+CHAR_W = 0.68  # a character's width per mm of text height (Bahnschrift, measured on the legend)
+SIZE_HEAD, SIZE_VALUE = 2.5, 2.4
+PAD = 7.0  # mm of margin in a cell (both sides)
+LINE = 3.9  # mm between the steel lines of a row
+FIT_TITLE_H, FIT_HEAD1_H, FIT_HEAD2_H = 10.0, 6.5, 6.0
+FIT_ROW_H = 4 * LINE + 2.0
+
+
+def _tw(text, size):
+    return max(len(line) for line in (text or u"").split(u"\n")) * size * CHAR_W
+
+
+def fit_widths(items, solado):
+    def num(v):
+        return u"{:.2f}".format(v) if v is not None else u"-"
+    marks = [it.mark for it in items] + [u"TIPO"]
+    out = [max(_tw(m, SIZE_HEAD) for m in marks) + PAD]
+    for i, head, key in ((1, u"b (m)", "b"), (2, u"L (m)", "L"), (3, u"h (m)", "h")):
+        out.append(max([_tw(head, SIZE_HEAD)] + [_tw(num(getattr(it, key)), SIZE_VALUE) for it in items]) + PAD)
+    out.append(max(_tw(u"Solado", SIZE_HEAD), _tw(num(solado), SIZE_VALUE)) + PAD)
+    for side in (u"b", u"L"):
+        texts = [u"As superior", u"As inferior"] + [u"  " + it.steel[f][side] for it in items for f in (u"sup", u"inf")]
+        out.append(max(_tw(t, SIZE_VALUE) for t in texts) + PAD)
+    out.append(max([_tw(u"ALTURA", SIZE_HEAD)] + [_tw(it.df, SIZE_VALUE) for it in items]) + PAD)
+    # the group headers fit too: DIMENSIONES over b..Solado, ACERO over the two
+    need = _tw(u"DIMENSIONES", SIZE_HEAD) + PAD
+    have = sum(out[1:5])
+    if have < need:
+        out[1:5] = [w + (need - have) / 4.0 for w in out[1:5]]
+    return out
+
+
+def draw_table(d, items, title, solado, fit=True):
     """The table (items: .mark, .b, .L, .h, .df, .steel {"sup"/"inf": {"b",
     "L"}: text}) through a drawer (as column_table: line, polyline,
-    region, text). Returns (width, height) in paper mm."""
-    xs, total = column_x()
-    widths = [w for _, w in COLUMNS]
+    region, text). fit (default): cells fitted to their texts. Returns
+    (width, height) in paper mm."""
+    widths = fit_widths(items, solado) if fit else [w for _, w in COLUMNS]
+    xs, total = column_x(widths)
+    TITLE_H, HEAD1_H, HEAD2_H, ROW_H = ((FIT_TITLE_H, FIT_HEAD1_H, FIT_HEAD2_H, FIT_ROW_H) if fit else
+                                        (globals()["TITLE_H"], globals()["HEAD1_H"], globals()["HEAD2_H"],
+                                         globals()["ROW_H"]))
+    total = max(total, _tw(title, 3.8) + 2 * PAD) if fit else total
+    if fit and total > xs[-1] + widths[-1] + 1e-6:  # a long title: the extra to the steel columns
+        extra = total - (xs[-1] + widths[-1])
+        widths[5] += extra / 2.0
+        widths[6] += extra / 2.0
+        xs, total = column_x(widths)
     y_head2 = TITLE_H + HEAD1_H
     y_body = y_head2 + HEAD2_H
     bottom = y_body + ROW_H * len(items)
@@ -180,10 +225,12 @@ def draw_table(d, items, title, solado):
         for i, value in cells:
             d.text(xs[i] + widths[i] / 2.0, mid, u"{:.2f}".format(value) if value is not None else u"-", T_VALUE)
         for i, side in ((5, u"b"), (6, u"L")):
-            x = xs[i] + 2.0
-            d.text(x, y + 3.6, u"As superior", T_LABEL, align=u"left")
-            d.text(x + 2.0, y + 9.0, item.steel[u"sup"][side], T_VALUE, align=u"left")
-            d.text(x, y + 14.6, u"As inferior", T_LABEL, align=u"left")
-            d.text(x + 2.0, y + 20.0, item.steel[u"inf"][side], T_VALUE, align=u"left")
+            x = xs[i] + (PAD / 2.0 if fit else 2.0)
+            step = LINE if fit else 5.5
+            y0 = y + (1.0 + LINE / 2.0 if fit else 3.6)
+            d.text(x, y0, u"As superior", T_LABEL, align=u"left")
+            d.text(x + 2.0, y0 + step, item.steel[u"sup"][side], T_VALUE, align=u"left")
+            d.text(x, y0 + 2 * step, u"As inferior", T_LABEL, align=u"left")
+            d.text(x + 2.0, y0 + 3 * step, item.steel[u"inf"][side], T_VALUE, align=u"left")
         d.text(xs[7] + widths[7] / 2.0, mid, item.df, T_VALUE)
     return total, bottom

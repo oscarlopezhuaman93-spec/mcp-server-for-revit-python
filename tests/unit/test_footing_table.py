@@ -85,5 +85,17 @@ def test_table():
               "As superior", "As inferior", "A", "B", "C", "D"):
         assert t in texts
     assert [c[1] for c in d.calls[:3]] == [ft.BAND_TITLE, ft.BAND_HEAD, ft.BAND_SIDE]
+    # fitted (2026-11-27): narrower and lower than the fixed 208 mm / 24 mm rows
+    assert w < 208.0
+    assert h == pytest.approx(ft.FIT_TITLE_H + ft.FIT_HEAD1_H + ft.FIT_HEAD2_H + 2 * ft.FIT_ROW_H)
+    # every column at least as wide as its own text
+    widths = ft.fit_widths([Item(), Item()], 0.10)
+    assert widths[0] >= ft._tw(u"TIPO", ft.SIZE_HEAD)
+    assert widths[5] >= ft._tw(u"As superior", ft.SIZE_VALUE)
+
+
+def test_table_fixed_as_before():
+    d = Recorder()
+    w, h = ft.draw_table(d, [Item(), Item()], "CUADRO DE ZAPATAS", 0.10, fit=False)
     assert w == pytest.approx(208.0)
     assert h == pytest.approx(ft.TITLE_H + ft.HEAD1_H + ft.HEAD2_H + 2 * ft.ROW_H)
