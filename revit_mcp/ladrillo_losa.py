@@ -136,6 +136,35 @@ class Layouts(object):
         return out, failed
 
 
+def old_bricks(doc, floor):
+    """The plugin's bricks of a slab: tagged for it, or of a brick family
+    hosted by it (2026-11-26: bricks copied from another floor keep that
+    floor's tag - left behind, the new ones fell on them as duplicates)."""
+    from System.Collections.Generic import List
+    tag = rsl.BRICK_TAG + str(id_of(floor.Id))
+    out = []
+    for e in (DB.FilteredElementCollector(doc).OfCategory(DB.BuiltInCategory.OST_GenericModel)
+              .WhereElementIsNotElementType()):
+        c = e.get_Parameter(DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)
+        if c is not None and (c.AsString() or u"") == tag:
+            out.append(e.Id)
+            continue
+        host = getattr(e, "Host", None)
+        sym = getattr(e, "Symbol", None)
+        if host is not None and host.Id == floor.Id and sym is not None:
+            fam = sym.FamilyName.upper()
+            if any(w in fam for w in rsl.BRICK_WORDS) or u"BOKI_LADRILLO" in fam:
+                out.append(e.Id)
+    return List[DB.ElementId](out)
+
+
+def delete_old(doc, floor):
+    ids = old_bricks(doc, floor)
+    if ids.Count:
+        doc.Delete(ids)
+    return ids.Count
+
+
 def place(doc, ids, settings_by_id, layouts=None):
     """Replaces the plugin's bricks of the picked slabs with the planned
     ones (the steel left as it is). Returns (placed, failed)."""
@@ -157,7 +186,7 @@ def place(doc, ids, settings_by_id, layouts=None):
             floor = model.element
             try:
                 rsl.write_settings(floor, settings)
-                rsl.delete_bricks(doc, floor)
+                delete_old(doc, floor)
                 model.plan(settings, MM, None, lib)  # its frame as laid out
                 placed += rsl.place_bricks(model, rib, types)
             except Exception as e:
@@ -177,7 +206,7 @@ def remove(doc, ids):
     try:
         for element_id in ids:
             floor = doc.GetElement(DB.ElementId(element_id))
-            n += rsl.delete_bricks(doc, floor) or 0
+            n += delete_old(doc, floor)
         t.Commit()
     except Exception:
         t.RollBack()

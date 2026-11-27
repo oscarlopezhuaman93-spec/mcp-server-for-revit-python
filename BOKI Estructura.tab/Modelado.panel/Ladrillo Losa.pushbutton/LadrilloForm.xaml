@@ -39,26 +39,32 @@
             <StackPanel Grid.Column="0" Margin="0,0,12,0">
                 <TextBlock Text="1. Losas" FontWeight="Bold" Margin="0,0,0,4"/>
                 <Button Content="SELECCIONAR LOSAS" Height="32" Click="pick_click"/>
-                <ListBox x:Name="list_slabs" Height="150" Margin="0,6,0,10" SelectionChanged="slab_changed"/>
+                <ListBox x:Name="list_slabs" Height="150" Margin="0,6,0,10" SelectionChanged="slab_changed"
+                         ToolTip="La losa marcada se resalta en azul en la planta."/>
                 <TextBlock Text="2. Ladrillo" FontWeight="Bold" Margin="0,0,0,4"/>
                 <ComboBox x:Name="cbo_brick" SelectionChanged="form_changed"
                           ToolTip="Los tipos de ladrillo del proyecto. Define tambi&#233;n el espaciamiento de las viguetas (el mismo que usa Acero Losa)."/>
                 <CheckBox x:Name="chk_cut" Content="Cortar lo que sobresale (pieza a medida)" Margin="0,6,0,0" Click="form_changed"/>
                 <TextBlock Text="3. Direcci&#243;n de viguetas" FontWeight="Bold" Margin="0,12,0,4"/>
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="Girar " VerticalAlignment="Center"/>
-                    <TextBox x:Name="txt_angle" Width="50" TextChanged="form_changed"
-                             ToolTip="Grados (antihorario desde X). Vac&#237;o: autom&#225;tica, a lo largo del lado m&#225;s largo."/>
-                    <TextBlock Text=" &#176;" VerticalAlignment="Center"/>
-                    <Button Content="Girar 90&#176;" Padding="6,0" Margin="8,0,0,0" Click="turn_click"/>
-                    <Button Content="Autom&#225;tica" Padding="6,0" Margin="4,0,0,0" Click="auto_click"/>
+                <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap"
+                           Text="Cada pa&#241;o tiene su bot&#243;n &#8635; en la planta: clic = girar ese pa&#241;o 90&#176;; clic derecho = direcci&#243;n autom&#225;tica."/>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <Button Content="Girar todas 90&#176;" Padding="8,2" Click="turn_all_click"/>
+                    <Button Content="Todas autom&#225;tica" Padding="8,2" Margin="6,0,0,0" Click="auto_all_click"/>
                 </StackPanel>
                 <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,14,0,0"
-                           Text="Costados: clic en la cota roja de la planta para cambiar la distancia entre la viga y la primera o la &#250;ltima fila de ladrillos (0 = pegado a la viga)."/>
+                           Text="Costados: cada pa&#241;o tiene sus dos cotas rojas; clic en una para cambiar la distancia entre la viga y la primera o la &#250;ltima fila de ladrillos (0 = pegado a la viga)."/>
                 <TextBlock x:Name="txt_status" TextWrapping="Wrap" Margin="0,12,0,0" FontWeight="Bold"/>
             </StackPanel>
             <DockPanel Grid.Column="1">
-                <TextBlock DockPanel.Dock="Top" Text="PLANTA (clic en una cota roja para editarla)" FontWeight="Bold" Margin="0,0,0,4"/>
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <TextBlock Text="Nivel: " VerticalAlignment="Center"/>
+                        <ComboBox x:Name="cbo_level" Width="200" SelectionChanged="level_changed"
+                                  ToolTip="Las losas de qu&#233; nivel se ven en la planta (todas se colocan)."/>
+                    </StackPanel>
+                    <TextBlock Text="PLANTA: todas las losas seleccionadas" FontWeight="Bold" VerticalAlignment="Center"/>
+                </DockPanel>
                 <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                     <Canvas x:Name="canvas_plan" Background="White" SizeChanged="plan_resized"/>
                 </Border>
