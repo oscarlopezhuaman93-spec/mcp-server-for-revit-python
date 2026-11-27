@@ -100,7 +100,7 @@
 
                         <StackPanel x:Name="panel_alig" Visibility="Collapsed">
                             <TextBlock Foreground="Gray" FontSize="11" TextWrapping="Wrap" Margin="0,2,0,2"
-                                       Text="La distribuci&#243;n de viguetas y los ladrillos est&#225;n en la pesta&#241;a 'Ladrillos de techo'."/>
+                                       Text="La distribuci&#243;n de viguetas est&#225; en la pesta&#241;a 'Viguetas'. Los ladrillos: bot&#243;n 'Ladrillo Losa'."/>
                             <Border x:Name="panel_roof" Visibility="Collapsed" Background="#FFFFF4D6" BorderBrush="#FFE0B050"
                                     BorderThickness="1" Padding="6,4" Margin="0,8,0,2">
                                 <StackPanel>
@@ -170,10 +170,10 @@
                     </StackPanel>
                 </Expander>
                 </TabItem>
-                <TabItem Header="Ladrillos de techo">
+                <TabItem Header="Viguetas">
                     <StackPanel Margin="6,6,6,4">
                         <TextBlock TextWrapping="Wrap" Margin="0,0,0,6"
-                                   Text="Solo para losas aligeradas. Coloca los ladrillos de techo sin tocar el acero (en losas inclinadas, inclinados con la pendiente)."/>
+                                   Text="Solo para losas aligeradas: distribuci&#243;n de las viguetas. Los ladrillos se colocan con el bot&#243;n 'Ladrillo Losa' (panel Modelado), con estas mismas viguetas."/>
                         <TextBlock x:Name="txt_bricks_kind" Foreground="#FFB02020" TextWrapping="Wrap" Margin="0,0,0,4"/>
                         <TextBlock Text="Viguetas" FontWeight="Bold" Margin="0,2,0,2"/>
                             <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
@@ -199,8 +199,8 @@
                             <TextBlock Text="Ladrillo de techo (tipos de la familia cargada):" Margin="0,6,0,1"/>
                             <ComboBox x:Name="cbo_brick" Margin="16,0,0,2" SelectionChanged="form_changed"
                                       ToolTip="Los tipos de ladrillo del proyecto, como en la paleta de propiedades. Para completar los extremos y los bordes se usan los tipos m&#225;s cortos o angostos de la misma familia y altura."/>
-                            <CheckBox x:Name="chk_brick" Content="Colocarlos tambi&#233;n al generar el acero" Margin="16,2,0,2" Click="form_changed"/>
-                            <CheckBox x:Name="chk_cut" Content="Cortar lo que sobresale (pieza a medida)" Margin="16,0,0,4" Click="form_changed"
+                            <CheckBox x:Name="chk_brick" Visibility="Collapsed" Content="Colocarlos tambi&#233;n al generar el acero" Margin="16,2,0,2" Click="form_changed"/>
+                            <CheckBox x:Name="chk_cut" Visibility="Collapsed" Content="Cortar lo que sobresale (pieza a medida)" Margin="16,0,0,4" Click="form_changed"
                                       ToolTip="Ning&#250;n ladrillo sale de la losa ni entra en una viga: el que sobresale se coloca cortado, con un tipo de la misma familia a esa medida (se crea si no existe)."/>
                             <StackPanel Orientation="Horizontal" Margin="16,1,0,1">
                                 <TextBlock Text="Ensanche " VerticalAlignment="Center"/>
@@ -208,11 +208,10 @@
                                 <TextBox x:Name="txt_ens" Width="36" Margin="4,0,0,0" TextChanged="form_changed"/>
                                 <TextBlock Text=" m" VerticalAlignment="Center"/>
                             </StackPanel>
-                        <Button x:Name="button_bricks" Content="COLOCAR SOLO LADRILLOS" Height="34" FontWeight="Bold" Margin="0,12,0,4"
-                                Click="bricks_only_click"
-                                ToolTip="Coloca (o vuelve a colocar) los ladrillos de techo de las losas seleccionadas, sin crear ni borrar acero."/>
-                        <TextBlock Foreground="Gray" FontSize="10" TextWrapping="Wrap"
-                                   Text="Los ladrillos que el plugin coloc&#243; antes en esas losas se reemplazan. La planta y los cortes muestran c&#243;mo quedan."/>
+                        <Button x:Name="button_bricks" Visibility="Collapsed" Content="COLOCAR SOLO LADRILLOS" Height="34" FontWeight="Bold" Margin="0,12,0,4"
+                                Click="bricks_only_click"/>
+                        <TextBlock Foreground="Gray" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0"
+                                   Text="El tipo de ladrillo define el ancho entre viguetas. Si cambias las viguetas, vuelve a colocar los ladrillos con 'Ladrillo Losa'."/>
                     </StackPanel>
                 </TabItem>
                 </TabControl>

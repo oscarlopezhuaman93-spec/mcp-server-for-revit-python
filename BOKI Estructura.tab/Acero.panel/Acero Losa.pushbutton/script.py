@@ -1332,15 +1332,8 @@ def generate_all(state, models, splice):
                     count += sum(r.Quantity for r in roof_bars)
                 count += sum(r.Quantity for r, _, _ in made)
                 warnings += found
-                if settings.get("kind") == sr.ALIGERADA:
-                    rsl.delete_bricks(doc, floor)
-                    if sr.ribbed(settings).get("place", True):
-                        types = rsl.brick_types(doc)
-                        if lib:
-                            _, rib, _ = model.plan(settings, MM, splice, lib)
-                            bricks += rsl.place_bricks(model, rib, types)
-                        else:
-                            warnings.append(u"no hay tipo de ladrillo elegido: no se colocaron ladrillos")
+                # the bricks: their own button now, Ladrillo Losa (2026-11-26) - the
+                # steel leaves them as they are
             except Exception as e:
                 failed.append(u"Losa id {}: {}".format(element_id, e))
         t.Commit()

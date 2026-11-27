@@ -158,3 +158,12 @@ def test_rib_layout_on_a_grid():
     centers, strips = rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, phase=0.25)
     assert centers[0] == pytest.approx(0.25)
     assert strips[0] == pytest.approx((0.0, 0.20))  # the cut piece by the face
+
+
+def test_rib_layout_far_side_gap():
+    # Ladrillo losa (2026-11-26): the gap by the far face is kept free
+    _, strips = sr.rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, start=0.05, end=0.08)
+    assert strips[0][0] == pytest.approx(0.05)
+    assert strips[-1][1] <= 2.0 - 0.08 + 1e-9
+    _, plain = sr.rib_layout((0.0, 2.0), 0.10, 0.40, 0.30, start=0.05)
+    assert plain[-1][1] > strips[-1][1]
