@@ -531,7 +531,8 @@ class TestDrawing:
         assert leg_candidates(-0.05, -0.20, 0.125, 0.25) == [(0.0, -1.0), (-1.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
         # the whole leg, every 2 cm, and the tip plus the cover
         assert leg_samples(0.20) == pytest.approx([0.02 * k for k in range(1, 11)] + [0.225])
-        assert leg_samples(0.05) == pytest.approx([0.025, 0.05, 0.075])
+        # a short leg: every 2 cm too (3 steps of 1.67 cm), then the tip plus the cover
+        assert leg_samples(0.05) == pytest.approx([0.05 / 3.0, 0.10 / 3.0, 0.05, 0.075])
 
     def test_joint_by_count(self):
         from revit_mcp.rebar_spec import joint_count_text, joint_positions_count, parse_joint
