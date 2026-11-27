@@ -59,19 +59,21 @@
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="186"/>
-                <ColumnDefinition Width="380"/>
+                <ColumnDefinition Width="390"/>
+                <ColumnDefinition x:Name="col_plan" Width="0"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition x:Name="col_shapes" Width="0"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Side menu (2026-11-27): each item opens its settings -->
-            <Border Grid.Column="0" Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1" Margin="0,0,10,0">
+            <!-- Left (2026-11-27): the side menu on top, the types and the open
+                 section's settings under it - the rest of the width for the elevation -->
+            <DockPanel Grid.Column="0" Margin="0,0,10,0">
+            <Border DockPanel.Dock="Top" Background="White" BorderBrush="#FFD0D7DF" BorderThickness="1">
                 <ListBox x:Name="list_nav" BorderThickness="0" Margin="4" SelectionChanged="nav_changed"/>
             </Border>
 
             <!-- Types + the open section's settings -->
-            <DockPanel Grid.Column="1" Margin="0,0,10,0">
+            <DockPanel Margin="0,8,0,0">
                 <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6"
                            Text="Marca los tipos de viga a configurar (o selecciona vigas en el modelo)."/>
                 <Button DockPanel.Dock="Top" x:Name="button_pick" Content="SELECCIONAR VIGAS" Height="34"
@@ -259,6 +261,22 @@
                 </StackPanel>
                 </ScrollViewer>
             </DockPanel>
+            </DockPanel>
+
+            <!-- The section plan (to draw stirrups): its own column, by the left
+                 one, open only for Estribos (2026-11-27) -->
+            <DockPanel Grid.Column="1" x:Name="panel_plan" Visibility="Collapsed" Margin="0,0,10,0">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
+                    <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
+                    <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
+                    <Canvas x:Name="canvas" Background="White"
+                            MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
+                            MouseMove="canvas_move" SizeChanged="canvas_resized"
+                            MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
+                </Border>
+            </DockPanel>
 
             <!-- Right: section drawing -->
             <DockPanel Grid.Column="2">
@@ -360,30 +378,13 @@
                      zooms, middle button drag pans, "Ajustar" refits; in 3D a
                      left drag orbits. -->
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition x:Name="col_plan" Width="0"/>
-                    </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" x:Name="panel_plan" Visibility="Collapsed">
-                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
-                            <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
-                            <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </DockPanel>
-                        <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
-                            <Canvas x:Name="canvas" Background="White"
-                                    MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
-                                    MouseMove="canvas_move" SizeChanged="canvas_resized"
-                                    MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
-                        </Border>
-                    </DockPanel>
-
                     <!-- the 3D view: off (2026-11-27, the user) - kept hidden for the code that fills it -->
-                    <DockPanel Grid.Column="1" Grid.Row="0" Margin="0,0,0,6" Visibility="Collapsed">
+                    <DockPanel Grid.Row="0" Margin="0,0,0,6" Visibility="Collapsed">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="view3d_fit_click"/>
                             <ComboBox DockPanel.Dock="Right" x:Name="cbo_detail" Width="80" Margin="0,0,6,0"

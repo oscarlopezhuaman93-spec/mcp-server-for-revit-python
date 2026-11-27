@@ -669,7 +669,7 @@ class AceroWindow(forms.WPFWindow):
         # at its side, narrower, only for Estribos and the bars of the section
         # (2026-11-27, the user)
         plan = key in ("stir", "main", "mid")
-        self.col_plan.Width = GridLength(380) if plan else GridLength(0)
+        self.col_plan.Width = GridLength(360) if plan else GridLength(0)
         self.panel_plan.Visibility = Visibility.Visible if plan else Visibility.Collapsed
         self._refresh_sections()
         if plan:
