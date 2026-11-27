@@ -503,7 +503,11 @@ def strip_runs(slab_tris, support_tris, axis, t0, t1):
     """Where a brick strip t0..t1 can go along `axis`: inside the slab and off
     the supports along its two edges and its middle (nothing sticks out)."""
     runs = None
-    for t in (t0 + 1e-7, (t0 + t1) / 2.0, t1 - 1e-7):
+    # the edges sampled 2 mm in (2026-11-26): a strip ending right at the
+    # slab's edge by a beam was lost to rounding (a 1e-7 line fell off the
+    # slab) - a whole row left empty by the beam
+    inset = min(0.002, (t1 - t0) / 4.0)
+    for t in (t0 + inset, (t0 + t1) / 2.0, t1 - inset):
         here = []
         for chord in line_intervals(slab_tris, axis, t):
             here += clear_and_gaps(chord, line_intervals(support_tris, axis, t))[0]

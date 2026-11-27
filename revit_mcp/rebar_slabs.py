@@ -830,6 +830,10 @@ def trim_bricks(model, ribbed_plan, step=0.02, shortest=0.10, avoid=None):
         return _in_tris(p, tris) and not (avoid and _in_tris(p, avoid, eps=-1e-4))
 
     def ts(t0, t1):  # the end's corners (and its middle, against a beam)
+        # its sides checked 2 mm in (2026-11-26): a row flush with the slab's
+        # edge by a beam fell off it by rounding and was dropped whole
+        k = min(0.002, (t1 - t0) / 4.0)
+        t0, t1 = t0 + k, t1 - k
         return (t0, t1, (t0 + t1) / 2.0) if avoid else (t0, t1)
 
     def fits(s0, s1, t0, t1):
