@@ -1033,6 +1033,43 @@ class AceroWindow(forms.WPFWindow):
             extras.append(e)
         self._changed()
 
+    # -- the elevation's detail in Revit (2026-11-27) ------------------------------
+    def _detail_info(self):
+        line = self._view_line
+        f = self._get_form()
+        t = self.by_id.get(self.state.active)
+
+        def label(top):
+            count = {}
+            for x, y, key in self.design["bars"]:
+                if (y > 0) == top:
+                    count[key] = count.get(key, 0) + 1
+            return u" + ".join(u"{}Ø{}".format(n, key) for key, n in sorted(count.items()))
+        dist = (f.get("edge_dist") or u"").strip()
+        short = getattr(t, "short_name", u"") if t else u""
+        short = short() if callable(short) else short
+        return {"title": u"DETALLE {} - VIGA {}".format(short, id_of(line.elements[0].Id)),
+                "top_label": label(True), "bot_label": label(False),
+                "stirrup_text": u"Estribos Ø{}: {}".format(f.get("edge") or u"", dist) if dist else None}
+
+    def detail_click(self, sender, args):
+        import viga_detalle as vd
+        reload(vd)
+        if self._view_line is None or self._elev_data is None:
+            forms.alert(u"Elige un tipo de viga y una viga en 'Viga' (arriba del alzado).", title=u"Acero")
+            return
+        try:
+            info = self._detail_info()
+            view = vd.make(doc, self._elev_data, info, u"BOKI Detalle viga {}".format(id_of(self._view_line.elements[0].Id)))
+        except Exception as e:
+            forms.alert(u"No se pudo crear el detalle: {}".format(e), title=u"Acero")
+            return
+        self.state.detail_view = view.Id
+        if forms.alert(u"Detalle creado: {}\n\n¿Abrirlo ahora? (se cierra esta ventana)".format(view.Name),
+                       title=u"Acero", yes=True, no=True):
+            self.action = "detail"
+            self.Close()
+
     def tab_changed(self, sender, args):
         if args.OriginalSource is self.tab_steel and hasattr(self, "_row_heights"):
             self._show_tab(self.tab_steel.SelectedIndex == 1)
@@ -4800,6 +4837,12 @@ while True:
     if window.action == "sketch":
         sketch_flow()
         continue
+    if window.action == "detail":  # the elevation's detail just made: open it
+        try:
+            revit.uidoc.ActiveView = doc.GetElement(state.detail_view)
+        except Exception:
+            pass
+        script.exit()
     if window.action != "run":
         script.exit()
     break
