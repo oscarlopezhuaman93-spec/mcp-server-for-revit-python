@@ -361,15 +361,15 @@
                      left drag orbits. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2.4*"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition x:Name="col_plan" Width="0"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <DockPanel Grid.Column="1" Grid.Row="0" Grid.RowSpan="2">
+                    <DockPanel Grid.Column="1" Grid.Row="0" Grid.RowSpan="2" x:Name="panel_plan" Visibility="Collapsed">
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
                             <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
                             <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>

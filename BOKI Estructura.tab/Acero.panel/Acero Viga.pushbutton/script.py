@@ -665,7 +665,19 @@ class AceroWindow(forms.WPFWindow):
             getattr(self, p).Visibility = Visibility.Visible if p in panels else Visibility.Collapsed
         if key in ("main", "mid"):
             self.exp_bars.IsExpanded = True
+        # the elevation takes the whole width; the plan (to draw the section) opens
+        # at its side, narrower, only for Estribos and the bars of the section
+        # (2026-11-27, the user)
+        plan = key in ("stir", "main", "mid")
+        self.col_plan.Width = GridLength(380) if plan else GridLength(0)
+        self.panel_plan.Visibility = Visibility.Visible if plan else Visibility.Collapsed
         self._refresh_sections()
+        if plan:
+            try:
+                self.UpdateLayout()
+                self.redraw()  # the plan drawn at its new size
+            except Exception:
+                pass
 
     def group_changed(self, sender, args):
         self.state.group_sets = bool(self.chk_group.IsChecked)
@@ -1956,6 +1968,11 @@ class AceroWindow(forms.WPFWindow):
                 self.tb_tie_leg.Text = text
         frame = self._frame()
         if frame is None:
+            if getattr(self, "_view_line", None) is not None or self.state.active is not None:
+                try:
+                    self._maybe_refresh_views()  # the plan closed: the elevation still drawn
+                except Exception:
+                    pass
             return
         section, scale = frame[0], frame[1]
         bars = self.design["bars"]
@@ -2077,6 +2094,11 @@ class AceroWindow(forms.WPFWindow):
                 self.cursor_m, self.cursor_on_bar) is None
             self._dot(frame, self.cursor_m[0], self.cursor_m[1], 4 if refused else 3,
                       C_REFUSED if refused else C_CURSOR)
+        self._maybe_refresh_views()
+
+    def _maybe_refresh_views(self):
+        """The elevation and the side menu's panel, when what they show
+        changed (also with the plan closed, 2026-11-27)."""
         splice_now = self._splice_from_form() if hasattr(self, "lap_boxes") else None
         legs_now = self._legs_from_form() if hasattr(self, "leg_boxes") else None
         signature = (self.state.active, self._line_key(self._view_line),
