@@ -402,7 +402,10 @@ def fitted_bars(design, cfg, diameters_mm):
     return out
 
 
-def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
+def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm, column_style=False):
+    """column_style (2026-11-27, Cuadro Columnas only): bars against the
+    stirrup and the labels by rows / columns. Off (the default): as it was -
+    Cuadro Vigas draws its sections with this one and keeps its own rules."""
     """The section drawn true to size at 1:scale, its steel at the chosen
     detail: HIGH - every bar and stirrup by its outline, bends and hooks
     (as Revit shows rebar at fine detail); MEDIUM - solid colored bars;
@@ -451,7 +454,7 @@ def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
                 d.polyline([P(q) for q in bar_strip(a, b, dia)], True, u"BOKI Cuadro Acero Fino")
             else:
                 d.region([[P(q) for q in bar_strip(a, b, dia)]], u"BOKI Cuadro Estribo")
-        for x, y, key in fitted_bars(design, item.cfg, diameters_mm):
+        for x, y, key in (fitted_bars(design, item.cfg, diameters_mm) if column_style else design["bars"]):
             px, py = P((x, y))
             r = diameters_mm[key] / 2000.0 * k
             if detail == DETAIL_HIGH:
@@ -464,7 +467,8 @@ def draw_section(d, item, x0, x1, y0, y1, scale, detail, diameters_mm):
     d.text(x0 + 3.0, y1 - 4.0, u"ESC. 1/ {}".format(scale), u"BOKI Cuadro Escala", align=u"left")
     annotate = getattr(d, "annotate", None)
     if callable(annotate) and design:
-        notes = section_notes(item, P, diameters_mm)
+        notes = (section_notes(item, P, diameters_mm) if column_style
+                 else section_notes_v1(item, P, diameters_mm))
         notes["scale"] = scale
         annotate(notes)
 
@@ -543,6 +547,32 @@ def _right_edge(polygon, y):
             x = max(ax, bx) if abs(by - ay) < 1e-9 else x
             best = x if best is None else max(best, x)
     return best if best is not None else max(p[0] for p in polygon)
+
+
+def section_notes_v1(item, P, diameters_mm):
+    """The labels as they were before 2026-11-26 (Cuadro Vigas keeps them):
+    {"outline", "labels": [(text, (x, y) pointed at)]} - a label per bar
+    diameter (count and Ø, at its outermost bar on the right) and one for
+    the stirrups."""
+    design = item.design
+    labels = []
+    by_key = {}
+    for x, y, key in design["bars"]:
+        by_key.setdefault(key, []).append((x, y))
+    for key in sorted(by_key, key=lambda k: -diameters_mm.get(k, 0)):
+        pts = by_key[key]
+        far = max(pts, key=lambda p: (p[0], p[1]))
+        labels.append((u"{}Ø{}".format(len(pts), key), P(far)))
+    stirrups = design.get("stirrups", [])
+    if stirrups:
+        pts = list(stirrups[0][1])
+        right = max(pts, key=lambda p: p[0])
+        lower = min((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
+        upper = max((p for p in pts if abs(p[0] - right[0]) < 1e-3), key=lambda p: p[1])
+        mid = (right[0], (lower[1] + upper[1]) / 2.0)
+        diam = (item.cfg.get("EA_Estribo_Borde_Diametro") or u"").strip()
+        labels.append((u"Est. Ø{}".format(diam), P(mid)))
+    return {"outline": [P(p) for p in item.polygon], "labels": labels}
 
 
 def section_notes(item, P, diameters_mm):
@@ -639,5 +669,5 @@ def draw_table(d, items, title, scale, detail, diameters_mm):
             d.text(mid, ys[2] + rows[2][1] / 2.0, u"(sin estribos configurados)", u"BOKI Cuadro 2mm")
         bars = item.design["bars"] if item.design else []
         d.text(mid, ys[3] + DIAM_H / 2.0, bars_text(bars, diameters_mm) if bars else u"-", u"BOKI Cuadro 2.8mm")
-        draw_section(d, item, x, x + w, ys[4], ys[5], scale, detail, diameters_mm)
+        draw_section(d, item, x, x + w, ys[4], ys[5], scale, detail, diameters_mm, column_style=True)
     return total, bottom
