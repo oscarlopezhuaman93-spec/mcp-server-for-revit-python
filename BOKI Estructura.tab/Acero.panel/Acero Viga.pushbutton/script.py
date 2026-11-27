@@ -670,8 +670,11 @@ class AceroWindow(forms.WPFWindow):
         # at its side, narrower, only for Estribos and the bars of the section
         # (2026-11-27, the user)
         plan = key in ("stir", "main", "mid")
-        self.col_plan.Width = GridLength(360) if plan else GridLength(0)
+        # the plan in the cuts' place, under the elevation (the cuts hidden then)
+        self.col_plan.Width = GridLength(0)
         self.panel_plan.Visibility = Visibility.Visible if plan else Visibility.Collapsed
+        self.scroll_cuts.Visibility = Visibility.Collapsed if plan else Visibility.Visible
+        self.border_cuts.Height = 300 if plan else 176
         self._refresh_sections()
         if plan:
             try:

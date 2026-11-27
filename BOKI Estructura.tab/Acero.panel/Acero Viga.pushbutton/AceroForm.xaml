@@ -263,21 +263,6 @@
             </DockPanel>
             </DockPanel>
 
-            <!-- The section plan (to draw stirrups): its own column, by the left
-                 one, open only for Estribos (2026-11-27) -->
-            <DockPanel Grid.Column="1" x:Name="panel_plan" Visibility="Collapsed" Margin="0,0,10,0">
-                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,2">
-                    <Button DockPanel.Dock="Right" Content="Ajustar" Width="60" Click="plan_fit_click"/>
-                    <TextBlock Text="PLANTA" FontWeight="Bold" VerticalAlignment="Center"/>
-                </DockPanel>
-                <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
-                    <Canvas x:Name="canvas" Background="White"
-                            MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
-                            MouseMove="canvas_move" SizeChanged="canvas_resized"
-                            MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
-                </Border>
-            </DockPanel>
-
             <!-- Right: section drawing -->
             <DockPanel Grid.Column="2">
                 <TextBlock DockPanel.Dock="Top" x:Name="txt_section" FontWeight="Bold" Margin="0,0,0,4"
@@ -435,10 +420,26 @@
                                 <Button Content="&#10005;" Padding="5,0" Margin="4,0,0,0" Click="sel_close_click" ToolTip="Quitar la selecci&#243;n"/>
                             </StackPanel>
                         </Border>
-                        <Border DockPanel.Dock="Bottom" BorderBrush="#FF9A9A9A" BorderThickness="1,0,1,1" Background="White" Height="176">
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-                                <StackPanel x:Name="panel_cuts" Orientation="Horizontal" Margin="4"/>
-                            </ScrollViewer>
+                        <Border DockPanel.Dock="Bottom" x:Name="border_cuts" BorderBrush="#FF9A9A9A" BorderThickness="1,0,1,1" Background="White" Height="176">
+                            <Grid>
+                                <ScrollViewer x:Name="scroll_cuts" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                    <StackPanel x:Name="panel_cuts" Orientation="Horizontal" Margin="4"/>
+                                </ScrollViewer>
+                                <!-- the section plan (to draw stirrups and bars): here, in place of
+                                     the cuts, only for Estribos and the section's bars (2026-11-27) -->
+                                <DockPanel x:Name="panel_plan" Visibility="Collapsed" Margin="4">
+                                    <StackPanel DockPanel.Dock="Left" Width="70" Margin="0,0,6,0">
+                                        <TextBlock Text="PLANTA" FontWeight="Bold"/>
+                                        <Button Content="Ajustar" Margin="0,4,0,0" Click="plan_fit_click"/>
+                                    </StackPanel>
+                                    <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
+                                        <Canvas x:Name="canvas" Background="White"
+                                                MouseLeftButtonDown="canvas_left" MouseRightButtonDown="canvas_right"
+                                                MouseMove="canvas_move" SizeChanged="canvas_resized"
+                                                MouseWheel="plan_wheel" MouseDown="plan_mouse_down" MouseUp="plan_mouse_up"/>
+                                    </Border>
+                                </DockPanel>
+                            </Grid>
                         </Border>
                         <Border BorderBrush="#FF9A9A9A" BorderThickness="1" Background="White" ClipToBounds="True">
                             <Canvas x:Name="canvas_elev" Background="White" SizeChanged="elev_resized"
