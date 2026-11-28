@@ -5107,6 +5107,25 @@ try:
                 warnings.append(u"Viga {}: no se pudieron agrupar sus barras ({})".format(
                     id_of(line.elements[0].Id), e))
 
+    # Acero Viga's own layout rules (2026-11-27, with the user): longitudinal
+    # bars (main, bastones, balancines, skin) by count - "Número fijo", their
+    # tag "3Ø5/8\"" with no spacing; stirrups and ties keep "Número con
+    # espaciado" (their spacing is the zone's). A longitudinal set left by
+    # spacing is turned to a fixed number where it is.
+    from Autodesk.Revit.DB.Structure import RebarLayoutRule as _Rule
+    for line, _, created in done:
+        for element in line.elements:
+            for item in created.get(id_of(element.Id)) or []:
+                bar = item[0]
+                if (item[2] == rc.LONGITUDINAL and bar.IsValidObject and bar.NumberOfBarPositions > 1
+                        and bar.LayoutRule == _Rule.NumberWithSpacing):
+                    try:
+                        acc = bar.GetShapeDrivenAccessor()
+                        acc.SetLayoutAsFixedNumber(bar.NumberOfBarPositions, acc.ArrayLength, acc.BarsOnNormalSide,
+                                                   bar.IncludeFirstBar, bar.IncludeLastBar)
+                    except Exception:
+                        pass
+
     if dry_run:
         t.RollBack()
     else:
