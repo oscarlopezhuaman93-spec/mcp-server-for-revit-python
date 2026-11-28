@@ -5093,13 +5093,19 @@ try:
     if getattr(state, "group_sets", True):
         import rebar_group as rg
         for line, _, created in done:
-            for element in line.elements:
-                longs = dict((item[0].Id.IntegerValue, item[0]) for item in created.get(id_of(element.Id)) or []
-                             if item[2] == rc.LONGITUDINAL and item[0].IsValidObject)
-                try:
-                    rg.group_loose(doc, list(longs.values()))
-                except Exception as e:
-                    warnings.append(u"Viga {}: no se pudieron agrupar sus barras ({})".format(id_of(element.Id), e))
+            # the whole beam's bars at once (2026-11-27): a bar running over
+            # several elements is listed under another one - grouped element
+            # by element a row of 3 came apart (2 + 1); group_loose keeps each
+            # host's bars apart by itself
+            longs = dict((item[0].Id.IntegerValue, item[0])
+                         for element in line.elements for item in created.get(id_of(element.Id)) or []
+                         if item[2] == rc.LONGITUDINAL and item[0].IsValidObject)
+            try:
+                # 6 mm: bars a few mm off even spacing (drawn by hand) still one set (2026-11-27)
+                rg.group_loose(doc, list(longs.values()), tol=0.006)
+            except Exception as e:
+                warnings.append(u"Viga {}: no se pudieron agrupar sus barras ({})".format(
+                    id_of(line.elements[0].Id), e))
 
     if dry_run:
         t.RollBack()

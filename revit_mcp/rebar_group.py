@@ -27,8 +27,8 @@ def _signature(rebar):
             tuple((round((p - o).X * FT, 3), round((p - o).Y * FT, 3), round((p - o).Z * FT, 3)) for p in pts))
 
 
-def _lines(rebars):
-    """Runs of bars in a line, equally spaced (largest found first)."""
+def _lines(rebars, tol=GROUP_TOL_M):
+    """Runs of bars in a line, equally spaced within `tol` (largest found first)."""
     origin = dict((r.Id, _points(r)[0]) for r in rebars)
     used, out = set(), []
     for a in rebars:
@@ -49,14 +49,14 @@ def _lines(rebars):
             line.sort(key=lambda r: (origin[r.Id] - origin[a.Id]).DotProduct(u))
             s = [(origin[r.Id] - origin[line[0].Id]).DotProduct(u) for r in line]
             gaps = [s[i + 1] - s[i] for i in range(len(s) - 1)]
-            if len(line) >= 2 and (max(gaps) - min(gaps)) * FT < GROUP_TOL_M:
+            if len(line) >= 2 and (max(gaps) - min(gaps)) * FT < tol:
                 out.append(line)
                 used.update(r.Id for r in line)
     return out
 
 
-def _merge(doc, line):
-    """One set from the bars of `line`; None if a bar would move."""
+def _merge(doc, line, tol=GROUP_TOL_M):
+    """One set from the bars of `line`; None if a bar would move more than `tol`."""
     wanted = [_points(r) for r in line]
     n = len(line)
     for order in (list(range(n)), list(range(n))[::-1]):
@@ -70,7 +70,7 @@ def _merge(doc, line):
                 base.GetShapeDrivenAccessor().SetLayoutAsFixedNumber(n, length, side, True, True)
                 doc.Regenerate()
                 err = max(max(p.DistanceTo(q) for p, q in zip(_points(base, k), want[k])) for k in range(n))
-                if err * FT < GROUP_TOL_M:
+                if err * FT < tol:
                     for r in line:
                         if r.Id != base.Id:
                             doc.Delete(r.Id)
@@ -82,9 +82,11 @@ def _merge(doc, line):
     return None
 
 
-def group_loose(doc, rebars):
+def group_loose(doc, rebars, tol=GROUP_TOL_M):
     """Join the loose bars among `rebars` into sets. Returns the ids of
-    the bars deleted (now positions of another bar's set)."""
+    the bars deleted (now positions of another bar's set). `tol`
+    (2026-11-27, optional - Acero Viga passes 6 mm): how uneven the
+    spacing may be, the bars evened out (columns keep the 3 mm)."""
     by = {}
     for r in rebars:
         if r is None or not r.IsValidObject or r.LayoutRule != RebarLayoutRule.Single or not r.IsRebarShapeDriven():
@@ -94,9 +96,9 @@ def group_loose(doc, rebars):
     for bars in by.values():
         if len(bars) < 2:
             continue
-        for line in _lines(bars):
+        for line in _lines(bars, tol):
             ids = [r.Id for r in line]
-            base = _merge(doc, line)
+            base = _merge(doc, line, tol)
             if base is not None:
                 gone.update(i for i in ids if i != base.Id)
     return gone
