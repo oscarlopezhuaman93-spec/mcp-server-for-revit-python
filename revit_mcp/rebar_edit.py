@@ -167,8 +167,14 @@ class BarEdit(object):
                                      RebarHookOrientation.Right, RebarHookOrientation.Right, True, True)
         if old.Quantity > 1 and acc is not None:
             try:
-                new.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(
-                    old.Quantity, old.MaxSpacing, True, True, True)
+                if old.LayoutRule == DB.Structure.RebarLayoutRule.FixedNumber:
+                    # a set by count stays by count (2026-11-27, the user: "3Ø5/8\"" with
+                    # no spacing on its tag) - remade as "Número con espaciado" before
+                    new.GetShapeDrivenAccessor().SetLayoutAsFixedNumber(
+                        old.Quantity, acc.ArrayLength, acc.BarsOnNormalSide, True, True)
+                else:
+                    new.GetShapeDrivenAccessor().SetLayoutAsNumberWithSpacing(
+                        old.Quantity, old.MaxSpacing, True, True, True)
             except Exception:
                 pass
         for bip in (DB.BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, DB.BuiltInParameter.ALL_MODEL_MARK):
